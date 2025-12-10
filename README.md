@@ -69,6 +69,28 @@ Autonomous visual QA workflow using Browser MCP for screenshots. Agent self-corr
 
 **Requirements:** Browser MCP (Playwright or Puppeteer)
 
+### Django Engineer Workflow (`CLAUDE_django_engineer_workflow.md`)
+
+Backend development workflow for Django/DRF projects with strict conventions.
+
+**Key concepts:**
+- Conda environment per project (auto-detect/create/activate)
+- pytest with mocks only (no database in tests)
+- OpenAPI/Swagger documentation on all endpoints
+- Black code formatting
+
+**Flow:**
+1. Agent activates/creates conda environment
+2. Agent implements (serializer, view, URL, tests)
+3. Agent validates (black, pytest, schema validation)
+4. Agent reports changes with endpoint table
+
+**Conventions:**
+- Serializers: All fields have `help_text` for OpenAPI
+- Views: All have `@extend_schema` decorators
+- Tests: Use `@patch` mocks, never database
+- Commits: `api(<type>): <description>`
+
 ## Tools
 
 ### Figma Screenshot Fetcher
@@ -148,6 +170,8 @@ Approve/Reject
 ├── CLAUDE_visual_qa_workflow.md            # Autonomous visual QA workflow (Browser MCP)
 ├── CLAUDE_visual_qa_workflow_ref.md        # Visual QA human reference & MCP setup
 ├── CLAUDE_visual_qa_workflow_setup.py      # Visual QA setup script (macOS)
+├── CLAUDE_django_engineer_workflow.md      # Django backend development workflow
+├── CLAUDE_django_engineer_workflow_ref.md  # Django workflow human reference
 ├── CLAUDE_figma_screenshots_README.md      # Figma fetcher documentation
 └── CLAUDE_fetch_figma_screenshot.py        # Figma screenshot tool
 ```
