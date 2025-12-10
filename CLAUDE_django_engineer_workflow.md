@@ -1,4 +1,4 @@
-# Django Engineer Workflow (v1)
+# Django Engineer Workflow (v2)
 
 ---
 
@@ -11,6 +11,147 @@ A **Django backend development workflow** with strict conventions for environmen
 - pytest with mocks (no database in tests)
 - OpenAPI/Swagger documentation everywhere
 - Black-formatted code
+
+---
+
+## Quick Reference
+
+```mermaid
+flowchart TD
+    A["1. INIT<br/>Human provides task"] --> B["2. ENVIRONMENT<br/>Check/create conda env"]
+    B --> C["3. INSPECT<br/>Check/create context file"]
+    C --> D{Complexity?}
+    D -->|Lightweight| F["5. IMPLEMENT<br/>Make changes + validate"]
+    D -->|Standard| E["4. PLAN<br/>Session plan + baseline commit"]
+    E --> F
+    F --> G["6. REPORT<br/>Changes + endpoints"]
+    G --> H{Approved?}
+    H -->|Yes + More| F
+    H -->|Yes + Done| I["7. COMPLETE<br/>Update context file"]
+    H -->|No| J["Adjust based on feedback"]
+    J --> F
+```
+
+**KEY FILES:**
+- `CLAUDE_django_context.md` - Long-term codebase knowledge (persists)
+- `CLAUDE_session_plan.md` - Task-specific state + recovery (temporary)
+
+**GIT CHECKPOINTS (Standard mode):**
+- Baseline commit before starting
+- Checkpoint commit after each human approval
+- Session plan tracks commit hashes for rollback
+
+---
+
+## How to Start a Session
+
+### Option 1: New Task (Copy-Paste This)
+
+```
+Read CLAUDE_django_engineer_workflow.md and follow the workflow.
+
+Task: [describe what you need - API endpoint, model, feature]
+```
+
+### Option 2: With Existing Context
+
+If you've used this workflow before and have a context file:
+
+```
+Read CLAUDE_django_engineer_workflow.md and CLAUDE_django_context.md.
+
+Task: [describe task]
+```
+
+### Option 3: Resume Crashed Session
+
+If session crashed and you have a session plan:
+
+```
+[paste recovery prompt from CLAUDE_session_plan.md]
+```
+
+### Option 4: After Context Compression
+
+If agent seems to have forgotten workflow details:
+
+```
+Context seems compressed. Re-read the workflow:
+- CLAUDE_django_engineer_workflow.md
+- CLAUDE_session_plan.md (if exists)
+- CLAUDE_django_context.md (if exists)
+
+Continue from where we left off.
+```
+
+**Signs of compression:**
+- Agent stops using structured report formats
+- Agent forgets to run validation (black, pytest)
+- Agent doesn't mention git checkpoints
+- Responses become more generic
+
+---
+
+## Task Complexity Tiers
+
+Determine which mode to use based on task complexity:
+
+### Lightweight Mode (No Session Plan)
+
+Skip session plan creation. Just implement and report.
+
+**Criteria (ANY of these):**
+- Single file change
+- Simple bug fix
+- Estimated < 15 minutes
+- No clarification needed
+
+**Examples:**
+- "Fix the typo in the serializer help_text"
+- "Add missing help_text to one field"
+- "Update the endpoint description"
+- "Fix the test mock"
+
+**Workflow:**
+```
+Human: task
+Agent: implement → validate → report → done
+```
+
+### Standard Mode (With Session Plan)
+
+Create session plan to persist details and enable recovery.
+
+**Criteria (ANY of these):**
+- Multi-file changes
+- New endpoint/feature
+- Multiple iterations expected
+- Clarification questions needed
+- Complex business logic
+
+**Examples:**
+- "Create a new CRUD endpoint for orders"
+- "Add authentication to the product endpoints"
+- "Refactor the user serializers"
+- "Implement a new service layer"
+
+**Workflow:**
+```
+Human: task
+Agent: clarify → create session plan → implement → validate → report → iterate → complete
+```
+
+### Complexity Decision Tree
+
+```mermaid
+flowchart TD
+    A{Single file change?} -->|NO| B[STANDARD]
+    A -->|YES| C{New endpoint?}
+    C -->|YES| B
+    C -->|NO| D{< 15 min?}
+    D -->|YES| E[LIGHTWEIGHT]
+    D -->|NO| B
+```
 
 ---
 
@@ -89,6 +230,204 @@ Agent: "I found the issue with the test. Would you like me to:
 
 Which do you prefer?"
 ```
+
+---
+
+## Context File: `CLAUDE_django_context.md`
+
+A living document that captures the Django project understanding. Located in project root.
+
+### Purpose
+- Eliminates redundant codebase exploration across sessions
+- Provides consistent reference for apps, models, patterns
+- Tracks drift when codebase evolves
+
+### Agent Startup Check
+
+**AGENT checks for `CLAUDE_django_context.md`:**
+
+- **IF EXISTS**: "I found the Django context file. Ready to work. Want me to verify it's still accurate, or proceed?"
+- **IF NOT EXISTS**: Proceeds to Codebase Inspection to create it
+
+### Structure Template
+
+```markdown
+# Django Project Context
+
+## Last Updated
+[Date] - [Brief note on what changed]
+
+## 1. Project Overview
+- **Project name**: [name]
+- **Django version**: [x.x]
+- **DRF version**: [x.x]
+- **Python version**: [x.x]
+- **Database**: [PostgreSQL, SQLite, etc.]
+
+## 2. Apps Structure
+| App | Purpose | Key Models |
+|-----|---------|------------|
+| core | Shared utilities, base models | BaseModel |
+| users | Authentication, profiles | User, Profile |
+| products | Product catalog | Product, Category |
+| orders | Order management | Order, OrderItem |
+
+## 3. URL Structure
+| Prefix | App | Router/Include |
+|--------|-----|----------------|
+| /api/v1/users/ | users | UserViewSet |
+| /api/v1/products/ | products | ProductViewSet |
+| /api/v1/orders/ | orders | OrderViewSet |
+| /api/docs/ | - | Swagger UI |
+| /api/schema/ | - | OpenAPI schema |
+
+## 4. Key Models & Relationships
+```
+User (auth)
+  └── Profile (1:1)
+  └── Order (1:N)
+        └── OrderItem (1:N)
+              └── Product (N:1)
+
+Product
+  └── Category (N:1)
+```
+
+## 5. Authentication
+- **Method**: [JWT, Session, Token]
+- **Package**: [rest_framework_simplejwt, etc.]
+- **Protected routes**: [List or pattern]
+
+## 6. Key Patterns
+- All models inherit from `core.models.BaseModel`
+- All serializers use `help_text` for OpenAPI
+- All views use `@extend_schema` decorators
+- Tests use mocks, no database
+
+## 7. Service Layer
+Location: `[path/to/services]`
+
+| Service | Path | Purpose |
+|---------|------|---------|
+| email_service | services/email.py | Send notifications |
+| payment_service | services/payment.py | Stripe integration |
+
+## 8. Custom Permissions
+| Permission | Location | Usage |
+|------------|----------|-------|
+| IsOwner | core/permissions.py | Object-level ownership |
+| IsAdminOrReadOnly | core/permissions.py | Admin write, public read |
+
+## 9. Known Issues / Tech Debt
+- [List any known issues]
+- [Areas needing refactor]
+- [Missing tests]
+```
+
+### Lifecycle
+
+1. **Created**: When agent first inspects codebase
+2. **Updated**: After each session completion with new patterns/changes
+3. **Verified**: Agent can re-verify accuracy on request
+
+---
+
+## Session Plan File
+
+### Purpose
+
+For Standard mode tasks, agent creates a session plan to persist critical details:
+
+- Task scope and objectives
+- Files to be modified
+- Decisions made during clarification
+- Progress tracking
+- Git checkpoint references
+
+### File Location
+
+```
+CLAUDE_session_plan.md
+```
+
+### Template
+
+```markdown
+# Session Plan: [Feature/Task Name]
+
+## Created
+[Date] - [Brief description]
+
+## Objective
+[What we're building - 1-2 sentences]
+
+## Target Files
+| File | Action | Status |
+|------|--------|--------|
+| `myapp/serializers/order.py` | Create | ⏳ Pending |
+| `myapp/views/order.py` | Create | ⏳ Pending |
+| `myapp/urls.py` | Modify | ⏳ Pending |
+| `tests/test_order_views.py` | Create | ⏳ Pending |
+
+## Decisions Made
+Clarifications and choices made during the session:
+
+1. **Endpoint structure**: Using ViewSet with standard CRUD
+2. **Permissions**: IsAuthenticated for all, IsOwner for update/delete
+3. **Pagination**: Using default page size of 20
+
+## Tasks
+- [ ] Create Order serializer with help_text
+- [ ] Create OrderViewSet with extend_schema
+- [ ] Add URL routes
+- [ ] Write unit tests with mocks
+- [ ] Run validation (black, pytest, schema)
+
+## Progress Log
+| Time | Update |
+|------|--------|
+| Start | Created plan, reviewed existing patterns |
+| ... | Completed serializer |
+| ... | ViewSet done, moving to tests |
+
+## Git Checkpoints
+| Checkpoint | Commit Hash | Description | Rollback |
+|------------|-------------|-------------|----------|
+| Baseline | `abc1234` | Before starting task | `git reset --hard abc1234` |
+| Task 1 | `def5678` | Serializer complete | `git reset --hard def5678` |
+
+**Latest stable**: `def5678`
+
+## Validation Status
+- [ ] `black .` passes
+- [ ] `pytest` passes
+- [ ] `python manage.py spectacular --validate` passes
+
+---
+
+## Recovery Prompt
+**Copy and paste this into a new session if this session crashes:**
+
+> Continue Django development session for [Feature Name].
+>
+> Read the session plan: `CLAUDE_session_plan.md`
+> Read the Django context: `CLAUDE_django_context.md`
+>
+> Current status:
+> - Last completed: [Task X - description]
+> - Next task: [Task Y - description]
+> - Blocking issues: [None / description]
+>
+> Continue from where we left off.
+
+**Last updated**: [Timestamp or step description]
+```
+
+### Lifecycle
+
+1. **Created**: At start of Standard mode task
+2. **Updated**: As work progresses (mark tasks complete, add checkpoints)
+3. **Archived/Deleted**: When task is complete
 
 ---
 
@@ -373,30 +712,58 @@ pytest
 
 ## Workflow Phases
 
-### Phase 1: Environment Setup
+### Phase 1: Initialization
 
-Agent checks/creates conda environment:
+**HUMAN provides:**
+- Task description
+- Any specific requirements or constraints
 
-```
-Agent: "Checking environment...
+**AGENT does:**
+1. Check/activate conda environment
+2. Check for `CLAUDE_django_context.md`
+3. Determine task complexity (Lightweight vs Standard)
 
-- Project directory: /projects/myapp
-- Expected conda env: myapp
-- Status: Environment exists and activated
-- Python: 3.11.4
-- Django: 4.2.7
+### Phase 2: Codebase Inspection (if no context file)
 
-Ready for your task."
-```
+Agent systematically explores the codebase:
 
-### Phase 2: Understand Task
+**Inspection Checklist:**
+- [ ] **Project structure**: Find apps, check installed apps
+- [ ] **Models**: Catalog models and relationships
+- [ ] **Serializers**: Find existing patterns, help_text usage
+- [ ] **Views**: Find existing patterns, extend_schema usage
+- [ ] **URLs**: Map API structure
+- [ ] **Tests**: Find test patterns, mock usage
+- [ ] **Services**: Find service layer if exists
 
-Agent clarifies if needed:
-- What resource/model is involved?
-- What methods/actions needed?
-- Any existing code to integrate with?
+After inspection, agent creates `CLAUDE_django_context.md`.
 
-### Phase 3: Implementation
+### Phase 3: Ready Signal
+
+**AGENT reports:**
+> "I've analyzed the codebase and created/updated `CLAUDE_django_context.md`
+>
+> Summary:
+> - Django: 4.2.x with DRF 3.14.x
+> - Apps: users, products, orders
+> - Pattern: ViewSets with extend_schema decorators
+>
+> Ready for your task. What would you like me to do?"
+
+### Phase 3.5: Session Plan Creation (Standard Mode Only)
+
+**AGENT creates `CLAUDE_session_plan.md` with:**
+- Objective
+- Target files
+- Decisions made during clarification
+- Task checklist
+- Git baseline commit
+
+> "I've created a session plan at `CLAUDE_session_plan.md` to track this task. Starting implementation..."
+
+**Skip if**: Task is lightweight.
+
+### Phase 4: Implementation
 
 Agent implements following conventions:
 1. Model (if needed)
@@ -405,7 +772,7 @@ Agent implements following conventions:
 4. URL routing
 5. Tests (with mocks)
 
-### Phase 4: Validation
+### Phase 5: Validation
 
 Before reporting, agent runs:
 ```bash
@@ -419,7 +786,7 @@ pytest
 python manage.py spectacular --validate
 ```
 
-### Phase 5: Report
+### Phase 6: Report
 
 ```markdown
 ## Changes Made
@@ -433,9 +800,9 @@ python manage.py spectacular --validate
 - `myapp/urls.py` - Added product routes
 
 ### Validation:
-- Black formatted
-- All tests pass (12 passed)
-- OpenAPI schema valid
+- Black formatted ✓
+- All tests pass (12 passed) ✓
+- OpenAPI schema valid ✓
 
 ### API Endpoints Added:
 | Method | Path | Description |
@@ -447,11 +814,77 @@ python manage.py spectacular --validate
 | DELETE | /api/v1/products/{id}/ | Delete product |
 ```
 
+### Phase 7: Completion
+
+**Step 1: UPDATE CONTEXT FILE**
+
+Update `CLAUDE_django_context.md` with:
+- New models/serializers/views created
+- New URL routes
+- New patterns introduced
+
+**Step 2: CLEANUP (Standard mode)**
+- Archive or delete `CLAUDE_session_plan.md`
+
+**Step 3: SUMMARY**
+> "Session complete.
+>
+> Validation: ✓ Black, ✓ Tests, ✓ Schema
+>
+> Files modified: [list]
+>
+> Context file updated. Ready for next session!"
+
 ---
 
-## Git Integration
+## Agent Behaviors
+
+### When to Ask Clarifying Questions
+
+Ask before implementing when:
+
+| Scenario | Example Question |
+|----------|------------------|
+| **Ambiguous scope** | "Should this endpoint be public or require authentication?" |
+| **Missing requirements** | "What fields should the serializer include?" |
+| **Multiple valid approaches** | "Should I use a ViewSet or separate APIViews?" |
+| **Breaking change potential** | "This will change the response format. Is that okay?" |
+| **Pattern conflict** | "Existing code uses function views, but ViewSets are more common. Which pattern?" |
+
+### Change Reporting Format
+
+After each implementation:
+
+```markdown
+## Changes Made
+
+### Files Modified:
+- `myapp/views/product.py` - Added filtering by category
+- `myapp/serializers/product.py` - Added category_id field
+
+### Files Created:
+- `tests/test_product_filters.py` - Tests for new filter
+
+### Key Changes:
+1. **Filter**: Added `category` query parameter to list endpoint
+2. **Serializer**: Added `category_id` with help_text
+3. **Tests**: 4 new tests for filter scenarios
+
+### Validation:
+- Black formatted ✓
+- Tests: 16 passed ✓
+- Schema valid ✓
+
+**Ready for your review.**
+```
+
+---
+
+## Git Checkpoint Strategy
 
 ### Commit Message Format
+
+**Always one-liner, max 1 sentence. Use conventional commit prefix:**
 
 ```
 api(<type>): <short description>
@@ -464,13 +897,113 @@ api(<type>): <short description>
 | `api(test)` | Adding/updating tests |
 | `api(refactor)` | Code restructure |
 | `api(docs)` | Documentation/OpenAPI updates |
+| `api(chore)` | Cleanup, baseline commits |
 
-### Examples
+### When to Commit
 
+| Trigger | Commit Message Example |
+|---------|------------------------|
+| **Before starting** | `api(chore): baseline before order endpoints` |
+| **After human approval** | `api(feat): add order CRUD endpoints` |
+| **Before risky change** | `api(chore): checkpoint before auth refactor` |
+| **End of session** | `api(feat): complete order management feature` |
+
+### Commit Workflow
+
+**1. Baseline (before starting)**
 ```bash
-git commit -m "api(feat): add product CRUD endpoints with OpenAPI docs"
-git commit -m "api(test): add unit tests for product views"
-git commit -m "api(fix): correct validation on product price field"
+git add -A
+git commit -m "api(chore): baseline before order endpoints"
+```
+Record hash in session plan.
+
+**2. After Each Approval**
+```bash
+git add -A
+git commit -m "api(feat): add order serializer with OpenAPI docs"
+```
+Update session plan with new checkpoint.
+
+**3. Quick Reference Commands**
+```bash
+# View recent checkpoints
+git log --oneline -10
+
+# Rollback to specific checkpoint
+git reset --hard <commit-hash>
+
+# View what changed since checkpoint
+git diff <commit-hash>
+```
+
+### Skip Commits When
+
+- Lightweight mode (simple single-file changes)
+- Human explicitly says "don't commit"
+- Project doesn't use git
+- Changes are experimental (commit only after approval)
+
+---
+
+## Drift Detection
+
+When human requests drift check (or periodically):
+
+```markdown
+## Drift Check Report
+
+### Verified Accurate:
+- ✅ App structure unchanged
+- ✅ URL patterns match documentation
+- ✅ Test patterns consistent
+
+### Drift Detected:
+- ⚠️ New app: `notifications` (not in context file)
+- ⚠️ New model: `AuditLog` in core app
+- ⚠️ Service added: `notification_service.py`
+
+### Recommendations:
+1. Add notifications app to context
+2. Document AuditLog model
+3. Update service layer section
+
+Shall I update CLAUDE_django_context.md with these changes?
+```
+
+---
+
+## Error Communication
+
+### For Test Failures
+
+Human provides:
+1. Paste pytest output
+2. Note which test(s) failed
+
+### For Import/Runtime Errors
+
+Human provides:
+1. Paste error message and traceback
+2. Note which command triggered it
+
+### For Schema Validation Errors
+
+Human provides:
+1. Paste `spectacular --validate` output
+2. Note which serializer/view is problematic
+
+### Example Error Report
+
+```
+Tests failing after your last change:
+
+FAILED tests/test_views.py::test_create_order_returns_201
+  - AssertionError: Expected 201, got 400
+
+Pytest output:
+[paste full output]
+
+Triggered when: Running pytest
 ```
 
 ---
@@ -484,4 +1017,4 @@ Before completing any API task:
 - [ ] View/ViewSet has docstring
 - [ ] All actions have @extend_schema decorator
 - [ ] Schema includes: summary, description, tags
-- [ ] python manage.py spectacular --validate passes
+- [ ] `python manage.py spectacular --validate` passes
