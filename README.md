@@ -50,6 +50,25 @@ Iterative agent-human workflow for refactoring or building frontend UI component
 4. Human reviews via screenshot, provides feedback
 5. Iterate until done, then update context file
 
+### Visual QA Workflow (`CLAUDE_visual_qa_workflow.md`)
+
+Autonomous visual QA workflow using Browser MCP for screenshots. Agent self-corrects until implementation matches design.
+
+**Key concepts:**
+- Agent takes screenshots autonomously via Browser MCP
+- Self-correction loop (max 3 attempts before escalation)
+- Human reviews at milestone checkpoints only
+- Supports multi-screen batch processing
+
+**Flow:**
+1. Human provides design reference + route
+2. Agent implements, screenshots, compares
+3. Agent self-corrects if mismatch (autonomous loop)
+4. Human approves at checkpoint
+5. Repeat for next screen
+
+**Requirements:** Browser MCP (Playwright or Puppeteer)
+
 ## Tools
 
 ### Figma Screenshot Fetcher
@@ -121,12 +140,16 @@ Approve/Reject
 ## File Structure
 
 ```
-├── CLAUDE_orchestrator.md              # Core milestone framework
-├── CLAUDE_orchestrator_ref.md          # Quick reference & UI patterns
+├── CLAUDE_orchestrator.md                  # Core milestone framework
+├── CLAUDE_orchestrator_ref.md              # Quick reference & UI patterns
 ├── CLAUDE_orchestrator_figma_visual_qa.md  # Figma visual QA workflow
-├── CLAUDE_frontend_refactor_workflow.md    # Frontend refactor/build workflow
-├── CLAUDE_figma_screenshots_README.md  # Figma fetcher documentation
-└── CLAUDE_fetch_figma_screenshot.py    # Figma screenshot tool
+├── CLAUDE_frontend_refactor_workflow.md    # Frontend refactor/build workflow (manual)
+├── CLAUDE_frontend_refactor_workflow_ref.md # Frontend workflow human reference
+├── CLAUDE_visual_qa_workflow.md            # Autonomous visual QA workflow (Browser MCP)
+├── CLAUDE_visual_qa_workflow_ref.md        # Visual QA human reference & MCP setup
+├── CLAUDE_visual_qa_workflow_setup.py      # Visual QA setup script (macOS)
+├── CLAUDE_figma_screenshots_README.md      # Figma fetcher documentation
+└── CLAUDE_fetch_figma_screenshot.py        # Figma screenshot tool
 ```
 
 ## Requirements
@@ -134,7 +157,8 @@ Approve/Reject
 - Python 3.8+ (for Figma screenshot fetcher)
 - `requests` library
 - Figma Personal Access Token (for Figma workflows)
-- Playwright (for browser screenshots in Visual QA workflow)
+- Playwright (for browser screenshots in Figma Visual QA workflow)
+- Browser MCP - Playwright or Puppeteer (for autonomous Visual QA workflow)
 
 ## License
 
