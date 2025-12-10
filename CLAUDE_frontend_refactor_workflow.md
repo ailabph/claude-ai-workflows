@@ -75,6 +75,13 @@ Check Figma via MCP: [figma-url]
 Compare with theme config and fix.
 ```
 
+### Multi-Screen Batch (Next Screen)
+```
+[Screen X] approved. Next, do [Screen Y].
+
+Current [image-1], design [image-2].
+```
+
 ---
 
 ## Overview
@@ -547,29 +554,44 @@ The recovery prompt section should be updated:
 
 For standard mode, use git commits as rollback checkpoints.
 
+### Commit Message Format
+
+**Always one-liner, max 1 sentence. Use conventional commit prefix:**
+
+```
+ui(<type>): <short description>
+```
+
+| Type | When |
+|------|------|
+| `ui(feat)` | New component or feature |
+| `ui(fix)` | Bug fix, visual correction |
+| `ui(refactor)` | Code restructure, no visual change |
+| `ui(style)` | Spacing, colors, typography adjustments |
+| `ui(chore)` | Cleanup, removing unused code |
+
 ### When to Commit
 
-| Trigger | Action | Commit Message Format |
-|---------|--------|----------------------|
-| **Before starting** | Create baseline | `checkpoint: baseline before [task]` |
-| **After human approval** | Checkpoint approved work | `checkpoint: [task] - approved` |
-| **Before risky change** | Save stable state | `checkpoint: before [risky change]` |
-| **End of session** | Final state | `checkpoint: session end - [summary]` |
+| Trigger | Commit Message Example |
+|---------|------------------------|
+| **Before starting** | `ui(chore): baseline before settings page refactor` |
+| **After human approval** | `ui(style): update header spacing and colors` |
+| **Before risky change** | `ui(chore): checkpoint before grid layout change` |
+| **End of session** | `ui(refactor): complete settings page migration to tailwind` |
 
 ### Commit Workflow
 
 **1. Baseline (before starting)**
 ```bash
 git add -A
-git commit -m "checkpoint: baseline before settings page refactor"
+git commit -m "ui(chore): baseline before settings page refactor"
 ```
 Record hash in session plan.
 
 **2. After Each Approval**
 ```bash
-# Human approved the header changes
 git add -A
-git commit -m "checkpoint: header spacing - approved"
+git commit -m "ui(style): update header spacing to match design"
 ```
 Update session plan with new checkpoint.
 
@@ -594,7 +616,7 @@ After human approves a change:
 
 ```bash
 git add -A
-git commit -m "checkpoint: header spacing updated - approved"
+git commit -m "ui(style): update header spacing to 32px"
 ```
 
 > "✓ Checkpoint created: `def5678`. Updated session plan with rollback info. Proceeding to next task..."
@@ -636,6 +658,76 @@ Refer to **Task Complexity Tiers** at the top of this document.
 |------|--------------|----------|
 | Lightweight | No | Button color, padding fix, typo |
 | Standard | Yes | Multi-file refactor, Figma implementation, new components |
+
+---
+
+## Multi-Screen Implementation
+
+When implementing multiple screens in one session (e.g., "make these 5 pages match the design"):
+
+### Session Plan Strategy: Replace, Don't Append
+
+```
+Screen 1: Create session plan → implement → approve → checkpoint
+Screen 2: REPLACE plan content → implement → approve → checkpoint
+Screen 3: REPLACE plan content → implement → approve → checkpoint
+...
+```
+
+**Why replace?**
+- Keeps plan focused on current screen
+- Prevents context bloat
+- Git checkpoints preserve history of completed screens
+
+### Agent Behavior
+
+After human approves Screen N and says "next, do Screen M":
+
+1. **Checkpoint** current screen: `git commit -m "ui(feat): complete [Screen N] implementation"`
+2. **Update context file** with patterns learned from Screen N
+3. **Replace session plan** with Screen M details (new objective, files, specs)
+4. **Keep recovery prompt** pointing to latest checkpoint
+5. Proceed with Screen M implementation
+
+### Session Plan Between Screens
+
+```markdown
+## Session Plan: [Screen M] ← Updated title
+
+## Completed This Session
+- ✅ Screen N (checkpoint: `abc123`)
+- ✅ Screen O (checkpoint: `def456`)
+- ⏳ Screen M (current)
+
+## Objective
+[Screen M specific objective]
+
+## Target Files
+[Screen M specific files]
+...
+```
+
+### When to Split Into New Session
+
+| Scenario | Action |
+|----------|--------|
+| Same day, similar screens | Continue in one session |
+| Screen needs 3+ feedback iterations | Consider new session after |
+| Context compression detected | New session with recovery prompt |
+| Screens span multiple days | New session per day |
+| Switching to unrelated codebase area | New session |
+
+### Quick Reference
+
+```
+Human: "Homepage done, next do the dashboard"
+
+Agent:
+1. git commit -m "ui(feat): complete homepage implementation"
+2. Update CLAUDE_frontend_context.md (patterns learned)
+3. Replace session plan objective/files for dashboard
+4. "✓ Homepage checkpointed. Session plan updated for Dashboard. Ready to proceed."
+```
 
 ---
 
