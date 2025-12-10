@@ -1,4 +1,4 @@
-# Frontend Refactor/Build Workflow (v2)
+# Frontend Refactor/Build Workflow (v3)
 
 ---
 
@@ -140,40 +140,27 @@ Continue from where we left off.
 
 ## Quick Reference
 
+```mermaid
+flowchart TD
+    A["1. INIT<br/>Human provides page/screenshot"] --> B["2. INSPECT<br/>Check/create context file"]
+    B --> C["3. TASK<br/>Human gives task"]
+    C --> D{Complexity?}
+    D -->|Lightweight| F["5. IMPLEMENT<br/>Make changes + report"]
+    D -->|Standard| E["4. PLAN<br/>Session plan + baseline commit"]
+    E --> F
+    F --> G["6. ITERATE<br/>Human approves → checkpoint"]
+    G -->|More tasks| F
+    G -->|Done| H["7. COMPLETE<br/>Validate + update context"]
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  WORKFLOW AT A GLANCE                                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  1. INIT        Human provides page/screenshot                               │
-│                 Agent checks for CLAUDE_frontend_context.md                  │
-│                          ↓                                                   │
-│  2. INSPECT     If no context file: inspect codebase, create it             │
-│                 If exists: ready (or verify if human requests)               │
-│                          ↓                                                   │
-│  3. TASK        Human gives task                                             │
-│                 Agent assesses complexity → lightweight or standard?         │
-│                          ↓                                                   │
-│  4. PLAN        Standard only: create session plan + baseline commit         │
-│                 Lightweight: skip planning, just do it                       │
-│                          ↓                                                   │
-│  5. IMPLEMENT   Make changes → report → human reviews with screenshot        │
-│                          ↓                                                   │
-│  6. ITERATE     Human approves → git checkpoint → next task (loop)           │
-│                          ↓                                                   │
-│  7. COMPLETE    Validate → update context file → cleanup session plan        │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
 
-KEY FILES:
-• CLAUDE_frontend_context.md  - Long-term codebase knowledge (persists)
-• CLAUDE_session_plan.md      - Task-specific state + recovery (temporary)
+**KEY FILES:**
+- `CLAUDE_frontend_context.md` - Long-term codebase knowledge (persists)
+- `CLAUDE_session_plan.md` - Task-specific state + recovery (temporary)
 
-GIT CHECKPOINTS (Standard mode):
-• Baseline commit before starting
-• Checkpoint commit after each human approval
-• Session plan tracks commit hashes for rollback
-```
+**GIT CHECKPOINTS (Standard mode):**
+- Baseline commit before starting
+- Checkpoint commit after each human approval
+- Session plan tracks commit hashes for rollback
 
 ---
 
@@ -230,21 +217,14 @@ Agent: clarify → create session plan → implement → report → iterate → 
 
 ### Complexity Decision Tree
 
-```
-                    Is it a single file change?
-                           /          \
-                         YES           NO
-                          ↓             ↓
-                  Any design specs    STANDARD
-                  to remember?
-                    /        \
-                  YES         NO
-                   ↓           ↓
-               STANDARD    < 15 min?
-                            /     \
-                          YES      NO
-                           ↓        ↓
-                      LIGHTWEIGHT  STANDARD
+```mermaid
+flowchart TD
+    A{Single file change?} -->|NO| B[STANDARD]
+    A -->|YES| C{Design specs to remember?}
+    C -->|YES| B
+    C -->|NO| D{< 15 min?}
+    D -->|YES| E[LIGHTWEIGHT]
+    D -->|NO| B
 ```
 
 ---
@@ -612,21 +592,12 @@ git diff <commit-hash>
 
 After human approves a change:
 
+```bash
+git add -A
+git commit -m "checkpoint: header spacing updated - approved"
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│                                                                              │
-│  "Creating git checkpoint for approved changes..."                          │
-│                                                                              │
-│  $ git add -A                                                                │
-│  $ git commit -m "checkpoint: header spacing updated - approved"            │
-│                                                                              │
-│  ✓ Checkpoint created: `def5678`                                             │
-│                                                                              │
-│  Updated session plan with rollback info.                                    │
-│  Proceeding to next task...                                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+
+> "✓ Checkpoint created: `def5678`. Updated session plan with rollback info. Proceeding to next task..."
 
 ### Recovery Prompt Update
 
@@ -672,217 +643,150 @@ Refer to **Task Complexity Tiers** at the top of this document.
 
 ### Phase 1: Initialization
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  HUMAN                                                                       │
-│  Provides starting point:                                                    │
-│  • Page URL or route (e.g., "/dashboard/settings")                          │
-│  • Screenshot of current state                                               │
-│  • Brief context ("This is the settings page, I want to refactor...")       │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│  Checks for CLAUDE_frontend_context.md:                                      │
-│                                                                              │
-│  IF EXISTS:                                                                  │
-│    "I found the frontend context file. Ready to work with this context.     │
-│     Would you like me to verify it's still accurate, or proceed with        │
-│     your task?"                                                              │
-│                                                                              │
-│  IF NOT EXISTS (or human requests inspection):                              │
-│    Proceeds to Phase 2: Codebase Inspection                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**HUMAN provides:**
+- Page URL or route (e.g., "/dashboard/settings")
+- Screenshot of current state
+- Brief context ("This is the settings page, I want to refactor...")
+
+**AGENT checks for `CLAUDE_frontend_context.md`:**
+
+- **IF EXISTS**: "I found the frontend context file. Ready to work. Want me to verify it's still accurate, or proceed?"
+- **IF NOT EXISTS**: Proceeds to Phase 2: Codebase Inspection
 
 ### Phase 2: Codebase Inspection
 
 Agent systematically explores the codebase:
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  INSPECTION CHECKLIST                                                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│  □ 1. Styling Framework                                                      │
-│       • Check package.json for CSS framework (tailwind, styled-components)  │
-│       • Find config files (tailwind.config.js, postcss.config.js)           │
-│       • Identify design system (shadcn, radix, custom)                      │
-│       • Note theme/color conventions                                         │
-│                                                                              │
-│  □ 2. Routes Setup                                                           │
-│       • Identify router (Next.js App/Pages, React Router, etc.)             │
-│       • Map route structure                                                  │
-│       • Note layout/middleware patterns                                      │
-│       • Identify auth/protected routes                                       │
-│                                                                              │
-│  □ 3. Shared Components                                                      │
-│       • Find components directory                                            │
-│       • Catalog UI primitives (Button, Input, Card, etc.)                   │
-│       • Note prop patterns and variants                                      │
-│       • Identify composition patterns                                        │
-│                                                                              │
-│  □ 4. Page-Specific Components                                               │
-│       • Find components related to target page                               │
-│       • Understand component hierarchy                                       │
-│       • Note any page-specific utilities                                     │
-│                                                                              │
-│  □ 5. Service Layer                                                          │
-│       • Find services/api directory                                          │
-│       • Identify data fetching patterns                                      │
-│       • Note any hooks for data (useQuery, useSWR)                          │
-│       • Understand cache/state patterns                                      │
-│                                                                              │
-│  □ 6. Page Purpose                                                           │
-│       • Read target page code                                                │
-│       • Understand user flows                                                │
-│       • Note interactions and state                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**Inspection Checklist:**
+
+- [ ] **1. Styling Framework**
+  - Check package.json for CSS framework (tailwind, styled-components)
+  - Find config files (tailwind.config.js, postcss.config.js)
+  - Identify design system (shadcn, radix, custom)
+  - Note theme/color conventions
+
+- [ ] **2. Routes Setup**
+  - Identify router (Next.js App/Pages, React Router, etc.)
+  - Map route structure
+  - Note layout/middleware patterns
+  - Identify auth/protected routes
+
+- [ ] **3. Shared Components**
+  - Find components directory
+  - Catalog UI primitives (Button, Input, Card, etc.)
+  - Note prop patterns and variants
+  - Identify composition patterns
+
+- [ ] **4. Page-Specific Components**
+  - Find components related to target page
+  - Understand component hierarchy
+  - Note any page-specific utilities
+
+- [ ] **5. Service Layer**
+  - Find services/api directory
+  - Identify data fetching patterns
+  - Note any hooks for data (useQuery, useSWR)
+  - Understand cache/state patterns
+
+- [ ] **6. Page Purpose**
+  - Read target page code
+  - Understand user flows
+  - Note interactions and state
 
 After inspection, agent creates or updates `CLAUDE_frontend_context.md`.
 
 ### Phase 3: Ready Signal
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│                                                                              │
-│  "I've analyzed the codebase and created/updated CLAUDE_frontend_context.md │
-│                                                                              │
-│  Summary:                                                                    │
-│  • Framework: React + Next.js App Router                                    │
-│  • Styling: Tailwind CSS with Shadcn components                             │
-│  • Target page: /dashboard/settings (app/dashboard/settings/page.tsx)       │
-│  • Key components: SettingsForm, ProfileCard, NotificationPrefs             │
-│  • Data: React Query with userService                                        │
-│                                                                              │
-│  Ready for your task. What would you like me to do?"                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**AGENT reports:**
+> "I've analyzed the codebase and created/updated `CLAUDE_frontend_context.md`
+>
+> Summary:
+> - Framework: React + Next.js App Router
+> - Styling: Tailwind CSS with Shadcn components
+> - Target page: /dashboard/settings
+> - Key components: SettingsForm, ProfileCard, NotificationPrefs
+>
+> Ready for your task. What would you like me to do?"
 
-### Phase 3.5: Session Plan Creation
+### Phase 3.5: Session Plan Creation (Standard Mode Only)
 
-After receiving task and clarifying questions:
+**AGENT creates `CLAUDE_session_plan.md` with:**
+- Objective
+- Target files
+- Design specs (from Figma MCP / theme / human input)
+- Decisions made during clarification
+- Task checklist
+- Git baseline commit
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│                                                                              │
-│  Creates CLAUDE_session_plan.md with:                                        │
-│  • Objective                                                                 │
-│  • Target files                                                              │
-│  • Design specs (from Figma MCP / theme / human input)                      │
-│  • Decisions made during clarification                                       │
-│  • Task checklist                                                            │
-│                                                                              │
-│  "I've created a session plan at CLAUDE_session_plan.md to track this task. │
-│   Starting implementation now..."                                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+> "I've created a session plan at `CLAUDE_session_plan.md` to track this task. Starting implementation..."
 
-**Skip session plan if**: Task is trivial (single small change, no design specs to preserve).
+**Skip if**: Task is lightweight (single small change, no design specs).
 
 ### Phase 4: Task Loop
 
+```mermaid
+flowchart TD
+    A[HUMAN provides task] --> B[AGENT implements]
+    B --> C[AGENT reports changes]
+    C --> D[HUMAN reviews with screenshot]
+    D --> E{Approved?}
+    E -->|Yes| F{More tasks?}
+    E -->|No| G[AGENT adjusts based on feedback]
+    G --> C
+    F -->|Yes| A
+    F -->|No| H[Phase 5: Complete]
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  HUMAN provides task:                                                        │
-│  "Refactor the settings form to use a two-column layout on desktop,         │
-│   single column on mobile. Also update the save button to be sticky."       │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT:                                                                      │
-│  1. Understands task (or asks clarifying questions)                          │
-│  2. Plans approach                                                           │
-│  3. Implements changes                                                       │
-│  4. Reports what was changed                                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  HUMAN reviews:                                                              │
-│  • Takes screenshot of updated UI                                            │
-│  • Provides feedback: "Looks good!" OR "The spacing is off, see screenshot" │
-└─────────────────────────────────────────────────────────────────────────────┘
-                                    ↓
-                    ┌───────────────┴───────────────┐
-                    ↓                               ↓
-            [Approved]                      [Needs Changes]
-                    ↓                               ↓
-          Next task or done              Agent adjusts based on
-                                         feedback + screenshot
-                                                    ↓
-                                         Loop back to review
-```
+
+**AGENT steps during implementation:**
+1. Understand task (or ask clarifying questions)
+2. Plan approach
+3. Implement changes
+4. Report what was changed
+
+**HUMAN review includes:**
+- Take screenshot of updated UI
+- Provide feedback: "Looks good!" OR "The spacing is off, see screenshot"
 
 ### Phase 5: Completion
 
-When all tasks are done:
+**Step 1: VALIDATE**
+- [ ] App runs (`npm run dev` works)
+- [ ] No console errors
+- [ ] Changed components render correctly
+- [ ] Lint passes (`npm run lint`)
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│                                                                              │
-│  Step 1: VALIDATE                                                            │
-│  ─────────────────                                                           │
-│  • Verify app runs (`npm run dev` works)                                    │
-│  • Check for console errors                                                  │
-│  • Confirm changed components render                                         │
-│  • Run linter if available (`npm run lint`)                                 │
-│                                                                              │
-│  Step 2: UPDATE CONTEXT FILE                                                 │
-│  ───────────────────────────                                                 │
-│  Update CLAUDE_frontend_context.md with:                                     │
-│  • New components created                                                    │
-│  • Modified components                                                       │
-│  • New patterns introduced                                                   │
-│  • Any tech debt addressed or created                                        │
-│                                                                              │
-│  Step 3: CLEANUP (Standard mode only)                                        │
-│  ─────────────────────────────────────                                       │
-│  • Archive or delete CLAUDE_session_plan.md                                  │
-│  • Or keep for reference if human prefers                                    │
-│                                                                              │
-│  Step 4: SUMMARY                                                             │
-│  ────────────────                                                            │
-│  "Session complete.                                                          │
-│                                                                              │
-│   Validation:                                                                │
-│   ✓ App runs without errors                                                  │
-│   ✓ No console errors                                                        │
-│   ✓ Lint passes                                                              │
-│                                                                              │
-│   Files modified:                                                            │
-│   - src/components/SettingsForm.tsx (modified)                              │
-│   - src/components/ui/ResponsiveGrid.tsx (created)                          │
-│                                                                              │
-│   Context file updated with:                                                 │
-│   - Added: ResponsiveGrid component                                          │
-│   - Modified: SettingsForm (now uses two-column layout)                     │
-│   - Pattern: Sticky action buttons via `sticky bottom-0`                    │
-│                                                                              │
-│   Ready for next session or additional tasks."                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+**Step 2: UPDATE CONTEXT FILE**
+
+Update `CLAUDE_frontend_context.md` with:
+- New components created
+- Modified components
+- New patterns introduced
+- Any tech debt addressed or created
+
+**Step 3: CLEANUP (Standard mode)**
+- Archive or delete `CLAUDE_session_plan.md`
+- Or keep for reference if human prefers
+
+**Step 4: SUMMARY**
+> "Session complete.
+>
+> Validation: ✓ App runs, ✓ No errors, ✓ Lint passes
+>
+> Files modified:
+> - src/components/SettingsForm.tsx (modified)
+> - src/components/ui/ResponsiveGrid.tsx (created)
+>
+> Context file updated. Ready for next session!"
 
 ### Lightweight Mode Completion
 
-For lightweight tasks, simplified completion:
+Simplified - no session plan cleanup:
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  AGENT                                                                       │
-│                                                                              │
-│  "Done. Changed `src/components/Button.tsx` - updated color to blue.        │
-│                                                                              │
-│   ✓ App still runs                                                           │
-│   ✓ No errors                                                                │
-│                                                                              │
-│   Anything else?"                                                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-No session plan to clean up, no context file update unless change is significant enough to note.
+> "Done. Changed `src/components/Button.tsx` - updated color to blue.
+>
+> ✓ App still runs, ✓ No errors
+>
+> Anything else?"
 
 ---
 
@@ -1535,3 +1439,4 @@ Shall I update CLAUDE_frontend_context.md with these changes?
 | 2.5 | 2024-12 | Added: Combine with Figma MCP for Precise Specs - using images for visual diff + MCP link for exact measurements |
 | 2.6 | 2024-12 | Added: Option 4 "After Context Compression" - signs of compression and recovery prompt |
 | 2.7 | 2024-12 | Added: Cheat Sheet at top of document - all copy-paste prompts in one place for quick access |
+| 3.0 | 2024-12 | Converted ASCII diagrams to Mermaid, simplified verbose boxes to markdown. Reduced from 1537 to 1441 lines (~6% reduction) |
