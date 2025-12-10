@@ -1,8 +1,140 @@
 # Frontend Refactor/Build Workflow (v2)
 
+---
+
+## 📋 Cheat Sheet (Copy-Paste Prompts)
+
+### New Session
+```
+Read CLAUDE_frontend_refactor_workflow.md and follow the workflow.
+
+[paste screenshot]
+
+I want to [describe task]
+```
+
+### With Existing Context
+```
+Read CLAUDE_frontend_refactor_workflow.md and CLAUDE_frontend_context.md.
+
+[paste screenshot]
+
+Task: [describe task]
+```
+
+### Resume Crashed Session
+```
+[paste recovery prompt from CLAUDE_session_plan.md]
+```
+
+### After Context Compression
+```
+Context seems compressed. Re-read the workflow:
+- CLAUDE_frontend_refactor_workflow.md
+- CLAUDE_session_plan.md (if exists)
+- CLAUDE_frontend_context.md (if exists)
+
+Continue from where we left off.
+```
+
+### Visual Comparison (Design vs Current)
+```
+Read CLAUDE_frontend_refactor_workflow.md.
+
+Check [page/route]. Design looks like this [image-1], currently looks like this [image-2].
+Identify differences and fix.
+```
+
+### With Figma MCP Link
+```
+Read CLAUDE_frontend_refactor_workflow.md.
+
+Check [page]. Current state [image-1], Figma design [image-2].
+Figma link for exact specs: [figma-url]
+
+Identify differences and fix.
+```
+
+### With Theme Reference
+```
+Read CLAUDE_frontend_refactor_workflow.md.
+
+Check [page]. Current [image-1], template [image-2].
+Theme files in [/path/to/theme/]
+
+Identify differences and fix using theme tokens.
+```
+
+### Site-Wide Color/Token Audit
+```
+Read CLAUDE_frontend_refactor_workflow.md.
+
+Colors seem off across the whole site.
+Check Figma via MCP: [figma-url]
+
+Compare with theme config and fix.
+```
+
+---
+
 ## Overview
 
 An **iterative agent-human workflow** for refactoring existing UI or building new frontend components. Designed for React + Tailwind but adaptable to any framework with CSS styling.
+
+---
+
+## How to Start a Session (Detailed)
+
+### Option 1: Kickstart Prompt (Copy-Paste This)
+
+```
+Read CLAUDE_frontend_refactor_workflow.md and follow the workflow.
+
+[paste screenshot of current UI]
+
+I want to [describe task - e.g., "refactor this settings page to match our design system"]
+```
+
+### Option 2: With Existing Context
+
+If you've used this workflow before and have a context file:
+
+```
+Read CLAUDE_frontend_refactor_workflow.md and CLAUDE_frontend_context.md.
+
+[paste screenshot]
+
+Task: [describe what you want to do]
+```
+
+### Option 3: Resume Crashed Session
+
+If session crashed and you have a session plan:
+
+```
+[paste recovery prompt from CLAUDE_session_plan.md]
+```
+
+The recovery prompt already contains instructions to read the necessary files.
+
+### Option 4: After Context Compression
+
+If you notice the agent seems to have forgotten workflow details (giving generic responses, not following the structured formats, missing steps):
+
+```
+Context seems compressed. Re-read the workflow:
+- CLAUDE_frontend_refactor_workflow.md
+- CLAUDE_session_plan.md (if exists)
+- CLAUDE_frontend_context.md (if exists)
+
+Continue from where we left off.
+```
+
+**Signs of compression:**
+- Agent stops using structured comparison tables
+- Agent forgets to update session plan/recovery prompt
+- Agent doesn't mention git checkpoints
+- Responses become more generic, less workflow-specific
 
 ---
 
@@ -840,6 +972,242 @@ When receiving a screenshot, agent should:
 
 ---
 
+## Visual Comparison (Design vs Implementation)
+
+When human provides both a design image and current implementation screenshot:
+
+### Agent Response Format
+
+```markdown
+## Visual Comparison: [Page/Component Name]
+
+### Images Received:
+- **Design**: [image-1] - Target design
+- **Current**: [image-2] - Current implementation
+
+### Differences Identified:
+
+| # | Element | Design | Current | Fix Required |
+|---|---------|--------|---------|--------------|
+| 1 | Header height | 72px | ~80px | Reduce height |
+| 2 | Card padding | 16px | 24px | Change p-6 to p-4 |
+| 3 | Button color | #EB5017 | #EF4444 | Update to correct hex |
+| 4 | Gap between cards | 12px | 16px | Change gap-4 to gap-3 |
+| 5 | Font weight | 600 | 400 | Add font-semibold |
+
+### Summary:
+- **Critical issues**: 2 (header height, button color)
+- **Minor issues**: 3 (padding, gap, font weight)
+- **Estimated complexity**: [Lightweight / Standard]
+
+### Proposed Approach:
+1. Fix header height in `Header.tsx`
+2. Update button color in theme or component
+3. Adjust card padding and gap
+4. Add font weight to heading
+
+Shall I proceed with these fixes?
+```
+
+### Combine with Theme/Design Reference
+
+If human also provides theme location or Figma link:
+
+1. **Read theme files first** - Understand available tokens (colors, spacing, typography)
+2. **Then compare images** - Map differences to theme tokens
+3. **Propose fixes using tokens** - Not hardcoded values
+
+```
+Human: "The /register page is off. Current state [image-1], template [image-2].
+        Theme files in /themes/"
+
+Agent: [Reads /themes/ first]
+
+       "I've reviewed the theme files in /themes/. Available tokens:
+        - Colors: --primary, --secondary, --bg-surface
+        - Spacing: --space-sm (8px), --space-md (16px), --space-lg (24px)
+
+        Now comparing template to current implementation:
+
+        | Element | Template | Current | Fix |
+        |---------|----------|---------|-----|
+        | Card bg | --bg-surface | #f5f5f5 | Use var(--bg-surface) |
+        | Button | --primary | #3b82f6 | Use var(--primary) |
+        | Padding | --space-lg | 16px | Use var(--space-lg) |
+
+        I'll fix these using your theme tokens for consistency."
+```
+
+### Combine with Figma MCP for Precise Specs
+
+When human provides images AND a Figma link:
+
+1. **Compare images first** - Identify visual differences (layout, spacing, alignment)
+2. **Use Figma MCP** - Fetch exact measurements for precision
+3. **Report with exact values** - Not "looks bigger" but "should be 24px, currently ~32px"
+
+```
+Human: "The site layout doesn't look the same as Figma. See /dashboard -
+        currently [image-1], on Figma [image-2].
+        Figma link: https://figma.com/design/ABC123/app?node-id=1-100"
+
+Agent: [Compares images visually]
+       [Uses MCP to fetch exact specs from Figma link]
+
+       "I've compared the images and fetched exact specs from Figma:
+
+        ## Layout Comparison: Dashboard
+
+        | Element | Figma (exact) | Current (approx) | Difference |
+        |---------|---------------|------------------|------------|
+        | Sidebar width | 240px | ~280px | 40px too wide |
+        | Content padding | 24px | ~16px | Needs more padding |
+        | Card gap | 16px | ~24px | Gap too large |
+        | Header height | 64px | ~72px | 8px too tall |
+
+        The main issues:
+        1. Sidebar is wider than spec (likely w-72 instead of w-60)
+        2. Content area using p-4 instead of p-6
+        3. Cards using gap-6 instead of gap-4
+
+        These are structural layout changes across multiple components.
+        Using Standard mode.
+
+        Shall I proceed with fixes?"
+```
+
+**Why both images AND MCP link?**
+- Images: Quick visual context, see the problem
+- MCP: Exact pixel values for precise fixes
+
+### Complexity Assessment
+
+After visual comparison, agent determines mode:
+
+| Differences Found | Mode |
+|-------------------|------|
+| 1-2 simple CSS changes | Lightweight |
+| 3+ changes OR multi-file | Standard |
+| Structural/layout changes | Standard |
+
+### Example Flow
+
+```
+Human: "Check /dashboard page. On the planned design it looks like this
+       [image-1], currently it looks like this [image-2].
+       Identify the issue and fix."
+
+Agent: [Analyzes both images]
+
+       "I've compared the design to the current implementation:
+
+       | Issue | Design | Current | Fix |
+       |-------|--------|---------|-----|
+       | Header bg | #1A1A1A | #000000 | Update bg-black to bg-[#1A1A1A] |
+       | Card radius | 12px | 8px | Change rounded-lg to rounded-xl |
+       | Spacing | 24px | 16px | Change gap-4 to gap-6 |
+
+       This is 3 changes across 2 files. I'll use Standard mode.
+       Creating session plan and baseline commit...
+
+       Shall I proceed?"
+```
+
+---
+
+## Design Token Audit (Site-Wide Issues)
+
+When human reports site-wide issues (colors, typography, spacing off across the whole site):
+
+### Trigger Phrases
+- "Colors are off across the whole site"
+- "Typography doesn't match Figma anywhere"
+- "Spacing is inconsistent everywhere"
+
+### Agent Approach
+
+**This is NOT a visual comparison.** It's a config-level audit:
+
+1. **Fetch design tokens from Figma** (via MCP)
+2. **Read current theme/config files**
+3. **Compare at token level** (not screenshot level)
+4. **Fix in config** (one change affects whole site)
+
+### Agent Response Format
+
+```markdown
+## Design Token Audit: Colors
+
+### Source: Figma (via MCP)
+Fetched from: [Figma link]
+
+| Token Name | Figma Value | Description |
+|------------|-------------|-------------|
+| Primary | #EB5017 | Main brand color |
+| Secondary | #1A1A1A | Text/headings |
+| Background | #FFFFFF | Page background |
+| Surface | #F5F5F5 | Card backgrounds |
+| Error | #DC2626 | Error states |
+
+### Current: tailwind.config.js
+| Token Name | Current Value | Match? |
+|------------|---------------|--------|
+| primary | #EF4444 | ❌ Wrong |
+| secondary | #1A1A1A | ✅ |
+| background | #FFFFFF | ✅ |
+| surface | #F3F4F6 | ⚠️ Close but not exact |
+| error | #DC2626 | ✅ |
+
+### Discrepancies Found:
+1. **Primary**: Figma #EB5017 vs Config #EF4444
+2. **Surface**: Figma #F5F5F5 vs Config #F3F4F6
+
+### Fix Location:
+- `tailwind.config.js` → theme.extend.colors
+- Or `src/styles/theme.ts` if using CSS variables
+
+### Impact:
+Fixing these 2 values will update colors **site-wide**.
+
+Shall I update the theme config?
+```
+
+### Example Flow
+
+```
+Human: "The colors seem off across the whole site. Check this dashboard
+        screen in Figma via MCP: https://figma.com/design/ABC123/app?node-id=1-100"
+
+Agent: [Uses MCP to fetch Figma design tokens]
+
+       "I've fetched the color specs from Figma and compared with your
+        tailwind.config.js:
+
+        | Color | Figma | Current | Status |
+        |-------|-------|---------|--------|
+        | Primary | #EB5017 | #EF4444 | ❌ Mismatch |
+        | Surface | #F5F5F5 | #F3F4F6 | ⚠️ Close |
+        | Text | #1A1A1A | #1A1A1A | ✅ Match |
+
+        The primary color is wrong - you're using Tailwind's red-500 instead
+        of the brand orange.
+
+        I'll update tailwind.config.js to fix this site-wide. This is a
+        single-file change but affects the whole site, so I'll use Standard
+        mode with a baseline commit.
+
+        Proceed?"
+```
+
+### Complexity: Always Standard Mode
+
+Even though it might be a single file change, site-wide theme changes are **always Standard mode**:
+- High impact (affects entire site)
+- Needs baseline commit for easy rollback
+- Human should verify multiple pages after fix
+
+---
+
 ## Design Reference
 
 ### Option 1: Figma MCP Link
@@ -1161,3 +1529,9 @@ Shall I update CLAUDE_frontend_context.md with these changes?
 | 1.3 | 2024-12 | Added: Recovery Prompt in session plan - auto-updated copy-paste prompt for session crash recovery |
 | 2.0 | 2024-12 | Major update: Added Quick Reference, Task Complexity Tiers (lightweight vs standard mode), Files Modified tracking, Pre-Completion Validation checklist, enhanced completion phase with validation steps |
 | 2.1 | 2024-12 | Added: Git Checkpoint Strategy - commit after approval, baseline commits, rollback commands, checkpoint tracking in session plan |
+| 2.2 | 2024-12 | Added: "How to Start a Session" with kickstart prompts for new session, existing context, and crash recovery |
+| 2.3 | 2024-12 | Added: Visual Comparison section - structured format for comparing design image vs implementation screenshot, includes combining with theme files |
+| 2.4 | 2024-12 | Added: Design Token Audit section - for site-wide issues comparing Figma tokens vs theme config (always Standard mode) |
+| 2.5 | 2024-12 | Added: Combine with Figma MCP for Precise Specs - using images for visual diff + MCP link for exact measurements |
+| 2.6 | 2024-12 | Added: Option 4 "After Context Compression" - signs of compression and recovery prompt |
+| 2.7 | 2024-12 | Added: Cheat Sheet at top of document - all copy-paste prompts in one place for quick access |
