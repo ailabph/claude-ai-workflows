@@ -10,6 +10,52 @@ A **self-verifying agent workflow** for implementing UI from Figma designs or re
 
 ---
 
+## IMPORTANT: Context Retention Instructions
+
+> **FOR CLAUDE AGENT**: This section contains critical instructions for maintaining workflow knowledge.
+
+### On Context Compression (`/compact`)
+
+When context is compacted or compressed, **you MUST**:
+
+1. **Immediately re-read this file**: `CLAUDE_frontend_visual_qa_workflow.md`
+2. **Re-read the session plan** (if exists): `CLAUDE_session_plan.md`
+3. **Re-read the frontend context** (if exists): `CLAUDE_frontend_context.md`
+
+### Critical Information to Retain
+
+Even after compression, always remember:
+
+| Item | Value |
+|------|-------|
+| **Workflow file** | `CLAUDE_frontend_visual_qa_workflow.md` |
+| **Viewport: Mobile** | 390 x 844 |
+| **Viewport: Tablet** | 768 x 1024 |
+| **Viewport: Desktop** | 1440 x 900 (default) |
+| **MCP tools** | Figma MCP + Chrome MCP |
+
+### Self-Check After Compression
+
+If you notice any of these, re-read the workflow file immediately:
+- You forgot viewport dimensions
+- You forgot to use Chrome MCP for screenshots
+- You forgot to use Figma MCP for design specs
+- You're asking user for screenshots instead of capturing them
+- You're not following the structured comparison format
+- You forgot about session plan or recovery prompts
+
+### Compression Recovery Command
+
+If context was compressed and you lost workflow details, tell the user:
+
+```
+"Context was compressed. Let me re-read the workflow files to continue properly."
+```
+
+Then read: `CLAUDE_frontend_visual_qa_workflow.md`, `CLAUDE_session_plan.md`, `CLAUDE_frontend_context.md`
+
+---
+
 ## Cheat Sheet (Copy-Paste Prompts)
 
 ### New Session - Figma Implementation
@@ -153,6 +199,47 @@ flowchart TD
 | Get console logs | Check for errors/warnings |
 | Click/interact | Verify hover states, interactions |
 | Wait for element | Ensure page fully loaded before screenshot |
+
+---
+
+## Viewport Defaults
+
+When user specifies a view type, use these exact dimensions with Chrome MCP:
+
+| View | Width | Height | When User Says |
+|------|-------|--------|----------------|
+| **Mobile** | 390px | 844px | "mobile", "mobile view", "phone" |
+| **Tablet** | 768px | 1024px | "tablet", "tablet view", "iPad" |
+| **Desktop** | 1440px | 900px | "desktop", "desktop view", or no specification |
+
+### Behavior Rules
+
+1. **Default is Desktop**: If user doesn't specify a viewport, use **1440 x 900** (desktop)
+2. **Explicit viewport**: If user says "mobile view", immediately set Chrome to **390 x 844**
+3. **Multi-viewport task**: When testing all viewports, use all three sizes above
+4. **Custom sizes**: If user provides specific dimensions, use those instead
+
+### Quick Reference
+
+```
+Mobile view  → chrome.set_viewport(390, 844)
+Tablet view  → chrome.set_viewport(768, 1024)
+Desktop view → chrome.set_viewport(1440, 900)
+```
+
+### Common User Phrases → Viewport
+
+| User Says | Agent Uses |
+|-----------|------------|
+| "check mobile" | 390 x 844 |
+| "test on phone" | 390 x 844 |
+| "mobile layout" | 390 x 844 |
+| "tablet size" | 768 x 1024 |
+| "iPad view" | 768 x 1024 |
+| "desktop" | 1440 x 900 |
+| "full screen" | 1440 x 900 |
+| "laptop view" | 1440 x 900 |
+| (nothing specified) | 1440 x 900 |
 
 ---
 

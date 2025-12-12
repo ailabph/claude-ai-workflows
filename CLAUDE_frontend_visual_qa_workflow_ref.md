@@ -1008,15 +1008,28 @@ When extracting colors from Figma:
 | Desktop | 1440 x 900 |
 | MacBook Pro 14" | 1512 x 982 |
 
-### Chrome MCP Viewport Settings
+### Chrome MCP Viewport Settings (DEFAULTS)
+
+**These are the standard viewport sizes the agent uses:**
+
+| View | Dimensions | Command |
+|------|------------|---------|
+| **Mobile** | 390 x 844 | `chrome.set_viewport(390, 844)` |
+| **Tablet** | 768 x 1024 | `chrome.set_viewport(768, 1024)` |
+| **Desktop** | 1440 x 900 | `chrome.set_viewport(1440, 900)` |
 
 ```
-// Common viewports for testing
-Mobile:  { width: 375, height: 812 }   // iPhone X-style
+// Default viewports (use these unless user specifies otherwise)
+Mobile:  { width: 390, height: 844 }   // iPhone 14 style
 Tablet:  { width: 768, height: 1024 }  // iPad portrait
-Desktop: { width: 1280, height: 800 }  // Standard desktop
-Wide:    { width: 1440, height: 900 }  // Large desktop
+Desktop: { width: 1440, height: 900 }  // Standard desktop (DEFAULT)
 ```
+
+**Rules:**
+- If user says nothing → use Desktop (1440 x 900)
+- If user says "mobile" / "phone" → use Mobile (390 x 844)
+- If user says "tablet" / "iPad" → use Tablet (768 x 1024)
+- If user provides custom dimensions → use those
 
 ---
 

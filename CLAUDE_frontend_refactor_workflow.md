@@ -2,6 +2,60 @@
 
 ---
 
+## Overview
+
+An **iterative agent-human workflow** for refactoring existing UI or building new frontend components. Designed for React + Tailwind but adaptable to any framework with CSS styling.
+
+**Key Feature**: Human provides screenshots for feedback, agent implements and iterates until approved.
+
+---
+
+## IMPORTANT: Context Retention Instructions
+
+> **FOR CLAUDE AGENT**: This section contains critical instructions for maintaining workflow knowledge.
+
+### On Context Compression (`/compact`)
+
+When context is compacted or compressed, **you MUST**:
+
+1. **Immediately re-read this file**: `CLAUDE_frontend_refactor_workflow.md`
+2. **Re-read the session plan** (if exists): `CLAUDE_session_plan.md`
+3. **Re-read the frontend context** (if exists): `CLAUDE_frontend_context.md`
+
+### Critical Information to Retain
+
+Even after compression, always remember:
+
+| Item | Value |
+|------|-------|
+| **Workflow file** | `CLAUDE_frontend_refactor_workflow.md` |
+| **Context file** | `CLAUDE_frontend_context.md` |
+| **Session plan** | `CLAUDE_session_plan.md` |
+| **Modes** | Lightweight (simple) vs Standard (complex) |
+| **Git checkpoints** | Baseline → approval-based commits |
+
+### Self-Check After Compression
+
+If you notice any of these, re-read the workflow file immediately:
+- You forgot about session plan or recovery prompts
+- You're not following the structured change report format
+- You forgot to ask for screenshots after changes
+- You forgot about git checkpoint strategy
+- You're not using the visual comparison table format
+- You forgot Lightweight vs Standard mode decision
+
+### Compression Recovery Command
+
+If context was compressed and you lost workflow details, tell the user:
+
+```
+"Context was compressed. Let me re-read the workflow files to continue properly."
+```
+
+Then read: `CLAUDE_frontend_refactor_workflow.md`, `CLAUDE_session_plan.md`, `CLAUDE_frontend_context.md`
+
+---
+
 ## 📋 Cheat Sheet (Copy-Paste Prompts)
 
 ### New Session
@@ -81,12 +135,6 @@ Compare with theme config and fix.
 
 Current [image-1], design [image-2].
 ```
-
----
-
-## Overview
-
-An **iterative agent-human workflow** for refactoring existing UI or building new frontend components. Designed for React + Tailwind but adaptable to any framework with CSS styling.
 
 ---
 

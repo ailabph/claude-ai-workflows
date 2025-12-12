@@ -4,6 +4,54 @@
 
 A **gated milestone workflow** for AI agents executing complex multi-step tasks. Ensures human oversight at critical checkpoints for review, validation, and course correction.
 
+**Architecture**: Two separate Claude sessions - one as Reviewer/Planner, one as Executor - communicating through structured prompts with human as intermediary.
+
+---
+
+## IMPORTANT: Context Retention Instructions
+
+> **FOR BOTH AGENTS**: This section contains critical instructions for maintaining workflow knowledge.
+
+### On Context Compression (`/compact`)
+
+**Reviewer Agent** - When context is compacted:
+1. Re-read this file: `CLAUDE_orchestrator.md`
+2. Re-read the plan document: `docs/[feature]/DOC_[feature]_plan.md`
+3. Check milestone progress: Which milestones are approved?
+
+**Executor Agent** - When context is compacted:
+1. Re-read this file: `CLAUDE_orchestrator.md`
+2. Re-read the plan document provided in your prompt
+3. Check: What milestone am I on? What's left to do?
+
+### Critical Information to Retain
+
+| Agent | Must Remember |
+|-------|---------------|
+| **Reviewer** | Plan doc path, current milestone #, approved milestones, blocking issues |
+| **Executor** | Plan doc path, current milestone #, deliverables checklist, test requirements |
+
+### Self-Check After Compression
+
+**Reviewer** - Re-read workflow if you:
+- Forgot which milestones are approved
+- Lost track of the plan document location
+- Can't remember the executor prompt format
+
+**Executor** - Re-read workflow if you:
+- Forgot the progress report format
+- Don't remember to STOP after milestone
+- Lost track of deliverables checklist
+
+### Compression Recovery Command
+
+If context was compressed, tell the user:
+```
+"Context was compressed. Let me re-read the workflow and plan to continue properly."
+```
+
+Then read: `CLAUDE_orchestrator.md` and the relevant plan document.
+
 ---
 
 ## Core Principles
@@ -532,34 +580,96 @@ For final milestone, add:
 
 ---
 
-## Kickstart Options
+## Kickstart Prompts (Copy-Paste)
 
-### Option A: Reference Directly
+### Reviewer Agent (First Claude Session)
+
 ```
-Read CLAUDE_orchestrator_planner_executor_v2.md and implement [FEATURE]
-using milestone workflow. Plan at docs/[path]/DOC_[feature]_plan.md.
-Execute Milestone 1 only, then stop and report.
+Read CLAUDE_orchestrator.md. You are the REVIEWER agent.
+
+Create an implementation plan for: [FEATURE DESCRIPTION]
+
+1. Research the codebase to understand existing patterns
+2. Create plan at: docs/[feature]/DOC_[feature]_plan.md
+3. Define 3-5 milestones with clear deliverables
+4. Generate the executor prompt for Milestone 1
+
+After creating the plan, show me the prompt to send to the executor agent.
 ```
 
-### Option B: Minimal Context
+### Executor Agent (Second Claude Session)
+
 ```
-Implement using milestone-based workflow with approval gates.
+Read CLAUDE_orchestrator.md. You are the EXECUTOR agent.
 
-RULES:
-1. Execute ONE milestone at a time
-2. STOP and generate progress report after each
-3. WAIT for approval before proceeding
-
-PLAN: [path or content]
-
-MILESTONES:
-1. [name + tasks]
-2. [name + tasks]
-3. [name + tasks]
-4. Final validation
-
-Begin Milestone 1. Stop and report when complete.
+[PASTE PROMPT FROM REVIEWER AGENT]
 ```
+
+### Reviewer: Continue After Milestone Approval
+
+```
+Milestone [N] approved.
+
+Generate the prompt for the executor to continue with Milestone [N+1].
+```
+
+### Reviewer: Request Changes
+
+```
+Milestone [N] needs changes:
+- [Issue 1]
+- [Issue 2]
+
+Generate a prompt for the executor to fix these issues.
+```
+
+### Executor: Continue After Approval
+
+```
+Milestone [N] approved. Continue with Milestone [N+1]:
+
+[PASTE NEXT MILESTONE DETAILS FROM REVIEWER]
+```
+
+---
+
+## Typical Session Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                           TWO-SESSION WORKFLOW                               │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  SESSION 1: REVIEWER                    SESSION 2: EXECUTOR                  │
+│  ─────────────────────                  ────────────────────                 │
+│                                                                              │
+│  1. "Create plan for X"                                                      │
+│     ↓                                                                        │
+│  2. Creates DOC_X_plan.md                                                    │
+│     ↓                                                                        │
+│  3. Outputs executor prompt ──────────► 4. Receives prompt                   │
+│                                            ↓                                 │
+│                                         5. Executes M1                       │
+│                                            ↓                                 │
+│  6. Reviews progress report ◄─────────── 6. Reports + STOPS                  │
+│     ↓                                                                        │
+│  7. "Approved, generate M2 prompt" ───► 8. Continues with M2                 │
+│     ↓                                      ↓                                 │
+│  [Repeat until all milestones done]                                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Human's Role
+
+| Step | Human Action |
+|------|--------------|
+| Start | Give feature request to Reviewer |
+| After plan | Review plan, approve or request changes |
+| After executor prompt | Copy prompt to Executor session |
+| After milestone report | Copy report to Reviewer session |
+| After review | Copy approval/changes to Executor session |
+| Repeat | Until all milestones complete |
 
 ---
 
@@ -584,6 +694,132 @@ Admins need to audit user actions. Follows existing admin module patterns.
 
 ---
 
+## Recovery Protocol
+
+### If Reviewer Session Crashes
+
+**Start new Reviewer session with:**
+
+```
+Read CLAUDE_orchestrator.md. You are the REVIEWER agent.
+
+Recovering session for: [FEATURE NAME]
+
+Plan document: docs/[feature]/DOC_[feature]_plan.md
+
+Current status:
+- Milestones approved: [1, 2, ...]
+- Current milestone: [N] (executor working / awaiting review)
+- Blocking issues: [None / description]
+
+[If executor submitted report, paste it here]
+
+Continue reviewing from where we left off.
+```
+
+### If Executor Session Crashes
+
+**Option A: Resume in same session (if possible)**
+```
+Context was compressed. Re-read:
+- CLAUDE_orchestrator.md
+- The plan document
+
+Continue Milestone [N] from where we left off.
+Last completed: [file/task]
+```
+
+**Option B: Start new Executor session**
+
+Ask Reviewer to generate a new executor prompt that includes:
+```
+Milestone [N] is IN PROGRESS. Previous executor crashed.
+
+Completed so far:
+- [file1] created
+- [task1] done
+
+Remaining:
+- [task2]
+- [task3]
+
+Continue from where the previous executor left off.
+```
+
+### Session State Tracking
+
+Reviewer should maintain a mental (or written) state:
+
+```markdown
+## Session State: [Feature]
+
+Plan: docs/[feature]/DOC_[feature]_plan.md
+
+| Milestone | Status | Commit |
+|-----------|--------|--------|
+| M1 | ✅ Approved | `abc123` |
+| M2 | ✅ Approved | `def456` |
+| M3 | 🔄 In Progress | - |
+| M4 | ⏳ Pending | - |
+
+Current: Executor working on M3
+Blocking: None
+```
+
+---
+
+## Git Checkpoint Strategy
+
+### When to Commit
+
+| Event | Who Commits | Message Format |
+|-------|-------------|----------------|
+| After milestone approved | Executor (before next milestone) | `feat([feature]): complete M[N] - [description]` |
+| Before risky change | Executor | `chore([feature]): checkpoint before [risky thing]` |
+| End of session | Executor | `wip([feature]): M[N] in progress - [status]` |
+
+### Commit Message Examples
+
+```bash
+# After milestone approval
+feat(user-activity): complete M1 - serializers and unit tests
+feat(user-activity): complete M2 - service layer with pagination
+feat(user-activity): complete M3 - view, routes, integration tests
+
+# Work in progress (session ending mid-milestone)
+wip(user-activity): M3 in progress - view done, tests pending
+
+# Checkpoint before risky change
+chore(user-activity): checkpoint before refactoring query logic
+```
+
+### Rollback Strategy
+
+Include in plan document:
+
+```markdown
+## Git Checkpoints
+
+| Milestone | Commit | Rollback Command |
+|-----------|--------|------------------|
+| Baseline | `abc123` | `git reset --hard abc123` |
+| M1 | `def456` | `git reset --hard def456` |
+| M2 | `ghi789` | `git reset --hard ghi789` |
+```
+
+### Executor: Checkpoint After Approval
+
+When Reviewer approves a milestone, Executor should:
+
+```bash
+git add -A
+git commit -m "feat([feature]): complete M[N] - [brief description]"
+```
+
+Then report the commit hash in the next progress report.
+
+---
+
 ## Best Practices
 
 | DO | DON'T |
@@ -592,6 +828,8 @@ Admins need to audit user actions. Follows existing admin module patterns.
 | Include tests in every milestone | Skip planning phase |
 | Provide clear file paths/patterns | Allow multiple milestones without review |
 | Specify exact report format | Mix unrelated tasks in one milestone |
+| Commit after each milestone approval | Accumulate uncommitted changes |
+| Track session state (Reviewer) | Lose track of progress |
 
 ---
 
@@ -602,3 +840,4 @@ Admins need to audit user actions. Follows existing admin module patterns.
 | 1.0 | 2024-12 | Initial framework |
 | 2.0 | 2025-12 | Optimized: consolidated templates, table formats, condensed example |
 | 2.1 | 2025-12 | Added two-agent workflow, plan templates (backend/frontend), handoff formats |
+| 2.2 | 2025-12 | Added context retention, recovery protocol, git checkpoints, updated kickstart prompts |
