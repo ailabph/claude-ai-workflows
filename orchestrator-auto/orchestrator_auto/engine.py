@@ -318,13 +318,14 @@ class Orchestrator:
 
         while True:
             # Send to planner with activity indicator
-            response = self._send_with_activity(planner, user_input, "Planner thinking")
+            self._output("\n")  # Add spacing before activity indicator
+            response = self._send_with_activity(planner, user_input, "→ Planner")
 
             # Log response
             self._log_message("planner", "assistant", response)
 
             # Output response
-            self._output(f"Planner: {response}\n")
+            self._output(f"\nPlanner: {response}\n")
 
             # Check for blockers
             response_type, data = parse_planner_response(response)
@@ -333,11 +334,11 @@ class Orchestrator:
                 return
 
             # Get user input
-            user_input = input("You: ").strip()
+            user_input = input("\nYou: ").strip()
             self._log_message("human", "user", user_input)
 
-            # Check for /ready command
-            if user_input.lower() == "/ready":
+            # Check for /ready command (flexible - can be anywhere in input)
+            if "/ready" in user_input.lower():
                 self._output("\n✓ Proceeding to planning phase...\n")
                 success, self.state, error = self.state_machine.transition(
                     self.session_id,
