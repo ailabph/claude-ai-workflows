@@ -8,11 +8,10 @@ with appropriate system prompts and tool permissions.
 import asyncio
 from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
-from claude_agent_sdk import query, ClaudeSDKClient
+from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
     ClaudeAgentOptions,
     AssistantMessage,
-    ResultMessage,
     TextBlock,
 )
 
@@ -61,6 +60,10 @@ class BaseAgent:
         self.cwd = cwd or Path.cwd()
         self._options: Optional[ClaudeAgentOptions] = None
 
+        # Client for conversation continuity
+        self._client: Optional[ClaudeSDKClient] = None
+        self._client_entered: bool = False
+
     def _get_options(self) -> ClaudeAgentOptions:
         """Get or create agent options."""
         if self._options is None:
@@ -73,6 +76,14 @@ class BaseAgent:
             )
         return self._options
 
+    async def _get_client(self) -> ClaudeSDKClient:
+        """Get or create the SDK client with conversation continuity."""
+        if self._client is None:
+            self._client = ClaudeSDKClient(self._get_options())
+            await self._client.__aenter__()
+            self._client_entered = True
+        return self._client
+
     async def send_message_async(
         self,
         content: str,
@@ -81,6 +92,8 @@ class BaseAgent:
         """
         Send a message to the agent and get response (async).
 
+        Maintains conversation continuity across multiple calls using ClaudeSDKClient.
+
         Args:
             content: Message content to send
             on_chunk: Optional callback for each text chunk (for streaming indicators)
@@ -88,19 +101,16 @@ class BaseAgent:
         Returns:
             String response from agent
         """
-        options = self._get_options()
+        client = await self._get_client()
         response_text = ""
-        result_message = None
 
-        async for message in query(prompt=content, options=options):
+        async for message in client.process_query(content):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         response_text += block.text
                         if on_chunk:
                             on_chunk(block.text)
-            elif isinstance(message, ResultMessage):
-                result_message = message
 
         return response_text
 
@@ -125,9 +135,17 @@ class BaseAgent:
         """Get the current session ID."""
         return self.session_id
 
+    async def close_async(self) -> None:
+        """Close the client connection (async)."""
+        if self._client and self._client_entered:
+            await self._client.__aexit__(None, None, None)
+            self._client = None
+            self._client_entered = False
+
     def close(self) -> None:
-        """Close the agent session (no-op for query-based approach)."""
-        pass
+        """Close the agent session."""
+        if self._client and self._client_entered:
+            asyncio.run(self.close_async())
 
 
 class PlannerAgent(BaseAgent):

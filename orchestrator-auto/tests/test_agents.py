@@ -99,8 +99,8 @@ class TestAgentInitialization:
 class TestAgentMessaging:
     """Test agent message sending and receiving."""
 
-    @patch("orchestrator_auto.agents.query")
-    def test_send_message(self, mock_query):
+    @patch("orchestrator_auto.agents.ClaudeSDKClient")
+    def test_send_message(self, mock_client_class):
         """Test sending a message to an agent."""
         # Mock the async iterator by mocking send_message_async directly
         agent = ExecutorAgent()
@@ -113,8 +113,8 @@ class TestAgentMessaging:
 
         assert result == "Agent response"
 
-    @patch("orchestrator_auto.agents.query")
-    def test_planner_validate_milestone_report(self, mock_query):
+    @patch("orchestrator_auto.agents.ClaudeSDKClient")
+    def test_planner_validate_milestone_report(self, mock_client_class):
         """Test that PlannerAgent can validate milestone reports."""
         agent = PlannerAgent()
 
@@ -126,8 +126,8 @@ class TestAgentMessaging:
 
         assert "[MILESTONE_APPROVED]" in result
 
-    @patch("orchestrator_auto.agents.query")
-    def test_executor_execute_milestone(self, mock_query):
+    @patch("orchestrator_auto.agents.ClaudeSDKClient")
+    def test_executor_execute_milestone(self, mock_client_class):
         """Test that ExecutorAgent can execute milestone prompts."""
         agent = ExecutorAgent()
 
