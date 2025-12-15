@@ -77,13 +77,32 @@ class TestPlannerResponseParser:
         assert "JWT" in data["question"]
 
     def test_parse_plan_ready(self):
-        """Test parsing PLAN_READY tag."""
+        """Test parsing PLAN_READY tag with new format."""
         content = """
-        [PLAN_READY] Implementation plan created at: docs/user-auth/DOC_user_auth_plan.md
+        [PLAN_READY]
+        Path: docs/user-auth/DOC_user_auth_plan.md
         Milestones: 5 total
 
-        The plan includes authentication, authorization, and session management.
-        Ready to start execution? (waiting for confirmation)
+        [PLAN_CONTENT]
+        # Implementation Plan: User Authentication
+
+        ## Overview
+        Add user authentication with login, logout, and session management.
+
+        ## Milestones
+
+        ### Milestone 1: Setup
+        **Deliverables:**
+        - Database schema
+        - User model
+
+        ### Milestone 2: Login
+        **Deliverables:**
+        - Login endpoint
+        - JWT tokens
+        [/PLAN_CONTENT]
+
+        Summary: The plan includes authentication, authorization, and session management.
         """
 
         response_type, data = parse_planner_response(content)
@@ -91,6 +110,8 @@ class TestPlannerResponseParser:
         assert response_type == PLANNER_PLAN_READY
         assert data["path"] == "docs/user-auth/DOC_user_auth_plan.md"
         assert data["milestones"] == 5
+        assert data["content"] is not None
+        assert "User Authentication" in data["content"]
 
     def test_parse_unknown_response(self):
         """Test parsing response without known tags."""

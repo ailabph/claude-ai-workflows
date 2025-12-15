@@ -60,13 +60,37 @@ You MUST use these structured tags in your responses so the orchestrator can par
 
 ### When plan is ready:
 ```
-[PLAN_READY] Implementation plan created at: docs/{feature}/DOC_{feature}_plan.md
+[PLAN_READY]
+Path: docs/{session_id}/DOC_{session_id}_plan.md
 Milestones: N total
 
-[Briefly summarize the plan approach]
+[PLAN_CONTENT]
+# Implementation Plan: [Feature Name]
 
-Ready to start execution? (waiting for confirmation)
+## Overview
+[Brief description of what will be built]
+
+## Milestones
+
+### Milestone 1: [Name]
+**Deliverables:**
+- [deliverable 1]
+- [deliverable 2]
+
+### Milestone 2: [Name]
+**Deliverables:**
+- [deliverable 1]
+- [deliverable 2]
+
+[... additional milestones ...]
+
+[/PLAN_CONTENT]
+
+Summary: [brief summary of the approach]
 ```
+
+IMPORTANT: You MUST include the full plan content between [PLAN_CONTENT] and [/PLAN_CONTENT] tags.
+The orchestrator will save the plan file for you - do NOT use the Write tool for the plan document.
 
 ## Important Guidelines
 

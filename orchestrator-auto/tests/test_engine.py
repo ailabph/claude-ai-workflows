@@ -86,31 +86,57 @@ class TestOrchestratorPlanning:
 
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_planning_with_plan_ready(self, mock_create_planner, temp_db):
-        """Test planning phase with successful plan creation."""
-        # Setup mocks - agents now return strings directly
+        """Test planning phase with successful plan creation via PLAN_CONTENT."""
+        # Setup mocks - agents now return strings with PLAN_CONTENT
         mock_planner = Mock()
-        mock_planner.send_message.return_value = """
-        [PLAN_READY] Implementation plan created at: docs/test/DOC_test_plan.md
-        Milestones: 3 total
 
-        Plan is ready for execution.
-        """
+        # Use a lambda to generate dynamic path based on session_id from prompt
+        def mock_send_message(prompt):
+            import re
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            session_id = match.group(1) if match else "test"
+            return f"""
+[PLAN_READY]
+Path: docs/{session_id}/DOC_{session_id}_plan.md
+Milestones: 3 total
+
+[PLAN_CONTENT]
+# Test Plan
+
+## Overview
+Test feature implementation
+
+## Milestones
+
+### Milestone 1: Setup
+**Deliverables:**
+- Setup complete
+
+### Milestone 2: Implementation
+**Deliverables:**
+- Feature implemented
+
+### Milestone 3: Testing
+**Deliverables:**
+- Tests passing
+[/PLAN_CONTENT]
+
+Summary: Plan is ready for execution.
+"""
+
+        mock_planner.send_message.side_effect = mock_send_message
         mock_create_planner.return_value = mock_planner
 
-        # Create the plan file (simulating what planner would do)
-        plan_dir = Path("docs/test")
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file = plan_dir / "DOC_test_plan.md"
-        plan_file.write_text("# Test Plan\n\n## Milestone 1\n## Milestone 2\n## Milestone 3")
+        # Create orchestrator in planning phase
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            on_output=lambda x: None
+        )
+        session_id = orch.session_id
+        plan_path = Path(f"docs/{session_id}/DOC_{session_id}_plan.md")
 
         try:
-            # Create orchestrator in planning phase
-            orch = Orchestrator(
-                feature_description="Test feature",
-                db_path=temp_db,
-                on_output=lambda x: None
-            )
-
             # Transition to planning
             db.update_session(
                 orch.session_id,
@@ -125,13 +151,13 @@ class TestOrchestratorPlanning:
             # Verify state transition
             assert orch.state.phase == "execution"
             assert orch.state.total_milestones == 3
-            assert "docs/test/DOC_test_plan.md" in orch.state.plan_path
+            assert plan_path.exists()  # Engine should have created the file
         finally:
-            # Cleanup the test plan file
-            if plan_file.exists():
-                plan_file.unlink()
-            if plan_dir.exists():
-                plan_dir.rmdir()
+            # Cleanup the test plan file created by engine
+            if plan_path.exists():
+                plan_path.unlink()
+            if plan_path.parent.exists():
+                plan_path.parent.rmdir()
 
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_planning_with_blocker(self, mock_create_planner, temp_db):

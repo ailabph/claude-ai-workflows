@@ -65,19 +65,45 @@ def parse_planner_response(content: str) -> Tuple[str, Dict[str, Any]]:
         return PLANNER_BLOCKED, {"question": question}
 
     # Check for PLAN_READY
-    plan_ready_pattern = r'\[PLAN_READY\]\s*Implementation plan created at:\s*([^\s\n]+)'
-    match = re.search(plan_ready_pattern, content, re.IGNORECASE | re.DOTALL)
-    if match:
-        plan_path = match.group(1).strip()
+    plan_ready_pattern = r'\[PLAN_READY\]'
+    if re.search(plan_ready_pattern, content, re.IGNORECASE):
+        # Extract path
+        path_pattern = r'Path:\s*([^\s\n]+)'
+        path_match = re.search(path_pattern, content, re.IGNORECASE)
+        plan_path = path_match.group(1).strip() if path_match else None
 
         # Try to extract milestone count
         milestone_count_pattern = r'Milestones?:\s*(\d+)'
         milestone_match = re.search(milestone_count_pattern, content, re.IGNORECASE)
         milestones = int(milestone_match.group(1)) if milestone_match else 0
 
-        return PLANNER_PLAN_READY, {"path": plan_path, "milestones": milestones}
+        # Extract plan content from [PLAN_CONTENT]...[/PLAN_CONTENT] tags
+        plan_content = extract_plan_content(content)
+
+        return PLANNER_PLAN_READY, {
+            "path": plan_path,
+            "milestones": milestones,
+            "content": plan_content
+        }
 
     return UNKNOWN, {}
+
+
+def extract_plan_content(content: str) -> Optional[str]:
+    """
+    Extract plan content from [PLAN_CONTENT]...[/PLAN_CONTENT] tags.
+
+    Args:
+        content: Text containing plan content tags
+
+    Returns:
+        Plan content string or None if not found
+    """
+    pattern = r'\[PLAN_CONTENT\](.*?)\[/PLAN_CONTENT\]'
+    match = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return None
 
 
 def parse_executor_response(content: str) -> Tuple[str, Dict[str, Any]]:

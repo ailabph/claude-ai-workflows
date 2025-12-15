@@ -265,16 +265,42 @@ class Orchestrator:
 
         planner = self._create_planner()
 
-        # Prompt planner to create plan
+        # Prompt planner to create plan with inline content
+        default_plan_path = f"docs/{self.session_id}/DOC_{self.session_id}_plan.md"
         plan_prompt = f"""
-        Create an implementation plan for: {self.state.feature_description}
+Create an implementation plan for: {self.state.feature_description}
 
-        1. Research the codebase to understand existing patterns
-        2. Create plan at: docs/{self.session_id}/DOC_{self.session_id}_plan.md
-        3. Define 3-5 milestones with clear deliverables
+1. Research the codebase to understand existing patterns
+2. Define 3-5 milestones with clear deliverables
+3. Output the plan using this EXACT format:
 
-        Respond with [PLAN_READY] when done.
-        """
+[PLAN_READY]
+Path: {default_plan_path}
+Milestones: N total
+
+[PLAN_CONTENT]
+# Implementation Plan: [Feature Name]
+
+## Overview
+[Brief description]
+
+## Milestones
+
+### Milestone 1: [Name]
+**Deliverables:**
+- [deliverable 1]
+- [deliverable 2]
+
+### Milestone 2: [Name]
+...
+
+[/PLAN_CONTENT]
+
+Summary: [brief summary of the approach]
+
+IMPORTANT: Include the FULL plan content between [PLAN_CONTENT] and [/PLAN_CONTENT] tags.
+The orchestrator will save the file for you.
+"""
 
         response = planner.send_message(plan_prompt)
 
@@ -288,17 +314,26 @@ class Orchestrator:
         response_type, data = parse_planner_response(response)
 
         if response_type == PLANNER_PLAN_READY:
-            plan_path = data.get("path", f"docs/{self.session_id}/DOC_{self.session_id}_plan.md")
+            plan_path = data.get("path") or default_plan_path
             total_milestones = data.get("milestones", 0)
+            plan_content = data.get("content")
 
-            # Verify plan file actually exists before transitioning
+            # If plan content was provided, save it
             from pathlib import Path
+            if plan_content:
+                self._output(f"\n→ Saving plan to: {plan_path}")
+                plan_file = Path(plan_path)
+                plan_file.parent.mkdir(parents=True, exist_ok=True)
+                plan_file.write_text(plan_content)
+                self._output(" ✓\n")
+
+            # Verify plan file exists
             if not Path(plan_path).exists():
                 self._output(f"\n⚠ Plan file not found at: {plan_path}")
-                self._output("Planner claimed [PLAN_READY] but file was not created.\n")
+                self._output("Planner did not provide plan content in [PLAN_CONTENT] tags.\n")
                 self._handle_blocker(
                     "planner",
-                    f"Plan file missing at {plan_path}. Please create the plan document before proceeding."
+                    f"Plan file missing at {plan_path}. Please provide the plan content between [PLAN_CONTENT] and [/PLAN_CONTENT] tags."
                 )
                 return
 

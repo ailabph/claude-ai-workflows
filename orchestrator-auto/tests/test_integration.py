@@ -39,33 +39,50 @@ class TestFullWorkflow:
 
     @patch('orchestrator_auto.engine.create_planner_agent')
     def test_complete_workflow_planning(self, mock_create_planner, temp_db):
-        """Test workflow through planning phase."""
+        """Test workflow through planning phase with PLAN_CONTENT."""
         from pathlib import Path as FilePath
+        import re
 
-        # Setup planner agent mock - returns string directly
+        # Setup planner agent mock - returns string with PLAN_CONTENT
         mock_planner = Mock()
-        mock_planner.send_message.return_value = """
-            [PLAN_READY] Implementation plan created at: docs/test/DOC_test_plan.md
-            Milestones: 3 total
 
-            The plan is ready for execution.
-            """
+        def mock_send_message(prompt):
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            session_id = match.group(1) if match else "test"
+            return f"""
+[PLAN_READY]
+Path: docs/{session_id}/DOC_{session_id}_plan.md
+Milestones: 3 total
+
+[PLAN_CONTENT]
+# Test Plan
+
+## Overview
+Test feature implementation
+
+## Milestones
+
+### Milestone 1: Setup
+### Milestone 2: Implementation
+### Milestone 3: Testing
+[/PLAN_CONTENT]
+
+Summary: The plan is ready for execution.
+"""
+
+        mock_planner.send_message.side_effect = mock_send_message
         mock_create_planner.return_value = mock_planner
 
-        # Create the plan file (simulating what planner would do)
-        plan_dir = FilePath("docs/test")
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file = plan_dir / "DOC_test_plan.md"
-        plan_file.write_text("# Test Plan\n\n## Milestone 1\n## Milestone 2\n## Milestone 3")
+        # Create orchestrator
+        orch = Orchestrator(
+            feature_description="Test feature implementation",
+            db_path=temp_db,
+            on_output=lambda x: None
+        )
+        session_id = orch.session_id
+        plan_path = FilePath(f"docs/{session_id}/DOC_{session_id}_plan.md")
 
         try:
-            # Create orchestrator
-            orch = Orchestrator(
-                feature_description="Test feature implementation",
-                db_path=temp_db,
-                on_output=lambda x: None
-            )
-
             # Verify initial state
             assert orch.state.phase == Phase.DISCOVERY
             assert orch.state.status == Status.ACTIVE
@@ -84,7 +101,7 @@ class TestFullWorkflow:
             # Verify transitioned to execution
             assert orch.state.phase == Phase.EXECUTION
             assert orch.state.total_milestones == 3
-            assert orch.state.plan_path == "docs/test/DOC_test_plan.md"
+            assert plan_path.exists()  # Engine should have created the file
 
             # Verify planner was called
             assert mock_planner.send_message.called
@@ -96,11 +113,11 @@ class TestFullWorkflow:
             # Cleanup
             orch._cleanup()
         finally:
-            # Cleanup the test plan file
-            if plan_file.exists():
-                plan_file.unlink()
-            if plan_dir.exists():
-                plan_dir.rmdir()
+            # Cleanup the test plan file created by engine
+            if plan_path.exists():
+                plan_path.unlink()
+            if plan_path.parent.exists():
+                plan_path.parent.rmdir()
 
     @patch('orchestrator_auto.engine.create_executor_agent')
     @patch('orchestrator_auto.engine.create_planner_agent')
@@ -213,23 +230,51 @@ class TestBlockerHandling:
     def test_resume_from_blocker(self, mock_create_planner, mock_create_executor, temp_db):
         """Test resuming workflow after blocker resolution."""
         from pathlib import Path as FilePath
+        import re
 
-        # Setup planner mock - returns strings directly
+        # Track which call we're on to return different responses
+        call_count = [0]
+        session_id_holder = [None]
+
+        def mock_planner_send(prompt):
+            call_count[0] += 1
+            # Extract session_id from prompt
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            if match:
+                session_id_holder[0] = match.group(1)
+
+            if call_count[0] == 1:
+                # First call - blocker
+                return "[HUMAN_INPUT_NEEDED] Need clarification on X"
+            elif call_count[0] == 2:
+                # Second call - plan ready with PLAN_CONTENT
+                sid = session_id_holder[0] or "test"
+                return f"""
+[PLAN_READY]
+Path: docs/{sid}/DOC_{sid}_plan.md
+Milestones: 1 total
+
+[PLAN_CONTENT]
+# Test Plan
+
+## Overview
+Using the clarification provided.
+
+## Milestones
+
+### Milestone 1: Done
+**Deliverables:**
+- Feature complete
+[/PLAN_CONTENT]
+
+Summary: Plan ready.
+"""
+            else:
+                # Third call - milestone review
+                return "[MILESTONE_APPROVED] Milestone 1 approved."
+
         mock_planner = Mock()
-        planner_responses = [
-            # Planning - blocker
-            "[HUMAN_INPUT_NEEDED] Need clarification on X",
-            # After resume - plan ready
-            """
-                [PLAN_READY] Implementation plan created at: docs/test/plan.md
-                Milestones: 1 total
-
-                Using the clarification provided.
-                """,
-            # Milestone review
-            "[MILESTONE_APPROVED] Milestone 1 approved.",
-        ]
-        mock_planner.send_message.side_effect = planner_responses
+        mock_planner.send_message.side_effect = mock_planner_send
         mock_create_planner.return_value = mock_planner
 
         # Setup executor mock - returns string directly
@@ -241,20 +286,16 @@ class TestBlockerHandling:
             """
         mock_create_executor.return_value = mock_executor
 
-        # Create the plan file (will be needed after resume)
-        plan_dir = FilePath("docs/test")
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file = plan_dir / "plan.md"
-        plan_file.write_text("# Test Plan\n\n## Milestone 1")
+        # Create orchestrator and trigger blocker
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            on_output=lambda x: None
+        )
+        session_id = orch.session_id
+        plan_path = FilePath(f"docs/{session_id}/DOC_{session_id}_plan.md")
 
         try:
-            # Create orchestrator and trigger blocker
-            orch = Orchestrator(
-                feature_description="Test feature",
-                db_path=temp_db,
-                on_output=lambda x: None
-            )
-
             # Go to planning
             orch.state_machine.transition(orch.session_id, "ready")
             orch.state = orch.state_machine.get_state(orch.session_id)
@@ -262,7 +303,6 @@ class TestBlockerHandling:
 
             # Verify paused
             assert orch.state.phase == Phase.PAUSED
-            session_id = orch.session_id
 
             # Cleanup first orchestrator
             orch._cleanup()
@@ -286,28 +326,46 @@ class TestBlockerHandling:
             # Cleanup
             orch2._cleanup()
         finally:
-            # Cleanup the test plan file
-            if plan_file.exists():
-                plan_file.unlink()
-            if plan_dir.exists():
-                plan_dir.rmdir()
+            # Cleanup the test plan file created by engine
+            if plan_path.exists():
+                plan_path.unlink()
+            if plan_path.parent.exists():
+                plan_path.parent.rmdir()
 
     @patch('orchestrator_auto.engine.create_executor_agent')
     @patch('orchestrator_auto.engine.create_planner_agent')
     def test_blocker_in_execution(self, mock_create_planner, mock_create_executor, temp_db):
         """Test blocker during execution phase."""
         from pathlib import Path as FilePath
+        import re
 
-        # Setup planner mock - returns string directly
+        # Setup planner mock - returns string with PLAN_CONTENT
+        def mock_planner_send(prompt):
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            session_id = match.group(1) if match else "test"
+            return f"""
+[PLAN_READY]
+Path: docs/{session_id}/DOC_{session_id}_plan.md
+Milestones: 1 total
+
+[PLAN_CONTENT]
+# Test Plan
+
+## Overview
+Test implementation
+
+## Milestones
+
+### Milestone 1: Setup
+**Deliverables:**
+- Setup complete
+[/PLAN_CONTENT]
+
+Summary: Plan ready.
+"""
+
         mock_planner = Mock()
-        planner_responses = [
-            # Planning
-            """
-                [PLAN_READY] Implementation plan created at: docs/test/plan.md
-                Milestones: 1 total
-                """,
-        ]
-        mock_planner.send_message.side_effect = planner_responses
+        mock_planner.send_message.side_effect = mock_planner_send
         mock_create_planner.return_value = mock_planner
 
         # Setup executor mock with blocker - returns string directly
@@ -319,20 +377,16 @@ class TestBlockerHandling:
             """
         mock_create_executor.return_value = mock_executor
 
-        # Create the plan file
-        plan_dir = FilePath("docs/test")
-        plan_dir.mkdir(parents=True, exist_ok=True)
-        plan_file = plan_dir / "plan.md"
-        plan_file.write_text("# Test Plan\n\n## Milestone 1")
+        # Create orchestrator
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            on_output=lambda x: None
+        )
+        session_id = orch.session_id
+        plan_path = FilePath(f"docs/{session_id}/DOC_{session_id}_plan.md")
 
         try:
-            # Create orchestrator
-            orch = Orchestrator(
-                feature_description="Test feature",
-                db_path=temp_db,
-                on_output=lambda x: None
-            )
-
             # Go to execution
             orch.state_machine.transition(orch.session_id, "ready")
             orch.state = orch.state_machine.get_state(orch.session_id)
@@ -355,11 +409,11 @@ class TestBlockerHandling:
             # Cleanup
             orch._cleanup()
         finally:
-            # Cleanup the test plan file
-            if plan_file.exists():
-                plan_file.unlink()
-            if plan_dir.exists():
-                plan_dir.rmdir()
+            # Cleanup the test plan file created by engine
+            if plan_path.exists():
+                plan_path.unlink()
+            if plan_path.parent.exists():
+                plan_path.parent.rmdir()
 
 
 class TestContextRecovery:

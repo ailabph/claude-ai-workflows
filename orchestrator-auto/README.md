@@ -503,6 +503,13 @@ Contributions are welcome! Please:
 
 ---
 
+## Future Features / TODO
+
+- [ ] **Model Selection CLI Options** - Add `--planner-model` and `--executor-model` flags to allow choosing different Claude models (e.g., use Haiku for executor to reduce costs)
+- [ ] **Activity Indicator** - Add CLI UI feedback (spinner, progress dots, or status messages) to show the user the agents are working and not lagging/stuck
+
+---
+
 ## License
 
 See parent repository for license information.
