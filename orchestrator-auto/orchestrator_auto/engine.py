@@ -306,15 +306,29 @@ class Orchestrator:
         Human ↔ Planner until user types /ready.
         """
         self._output("\n=== Phase 1: Discovery ===\n")
-        self._output("Discuss your feature requirements with the Planner.")
-        self._output("Type '/ready' when you're ready to proceed to planning.\n")
+        self._output(f"Feature: {self.state.feature_description}\n")
+        self._output("\nDiscuss your feature requirements with the Planner.")
+        self._output("\nType '/ready' when you're ready to proceed to planning.\n")
 
         planner = self._create_planner()
 
-        # Start conversation
-        user_input = self.state.feature_description
+        # Wait for user's first message before starting
+        user_input = input("\nYou: ").strip()
+        if not user_input:
+            # Use feature description as fallback if user just hits enter
+            user_input = self.state.feature_description
         self._log_message("human", "user", user_input)
-        self._output(f"You: {user_input}\n")
+
+        # Check for /ready command before sending to planner
+        if "/ready" in user_input.lower():
+            self._output("\n✓ Proceeding to planning phase...\n")
+            success, self.state, error = self.state_machine.transition(
+                self.session_id,
+                TransitionEvent.READY.value
+            )
+            if not success:
+                raise RuntimeError(f"Failed to transition to planning: {error}")
+            return
 
         while True:
             # Send to planner with activity indicator
