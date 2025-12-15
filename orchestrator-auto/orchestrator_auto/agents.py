@@ -6,6 +6,7 @@ with appropriate system prompts and tool permissions.
 """
 
 from typing import Optional, Dict, Any, List
+from pathlib import Path
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
     ClaudeAgentOptions,
@@ -36,6 +37,7 @@ class BaseAgent:
         model: str = "claude-sonnet-4-5-20250929",
         session_id: str = "default",
         hooks: Optional[Dict[str, Any]] = None,
+        cwd: Optional[Path] = None,
     ):
         """
         Initialize the agent.
@@ -46,12 +48,14 @@ class BaseAgent:
             model: Claude model to use
             session_id: Session ID for the agent
             hooks: Optional hooks configuration
+            cwd: Working directory for agent (default: current directory)
         """
         self.system_prompt = system_prompt
         self.allowed_tools = allowed_tools or DEFAULT_TOOLS
         self.model = model
         self.session_id = session_id
         self.hooks = hooks
+        self.cwd = cwd or Path.cwd()  # Default to current directory
         self._client: Optional[ClaudeSDKClient] = None
 
     def initialize(self) -> None:
@@ -65,6 +69,7 @@ class BaseAgent:
             allowed_tools=self.allowed_tools,
             model=self.model,
             hooks=self.hooks,
+            cwd=self.cwd,  # Ensures agent reads CLAUDE.md from project directory
         )
 
         # Create SDK client
