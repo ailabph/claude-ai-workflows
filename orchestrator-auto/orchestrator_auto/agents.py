@@ -12,6 +12,7 @@ from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
     ClaudeAgentOptions,
     AssistantMessage,
+    ResultMessage,
     TextBlock,
 )
 
@@ -123,6 +124,9 @@ class BaseAgent:
                         response_text += block.text
                         if on_chunk:
                             on_chunk(block.text)
+            elif isinstance(message, ResultMessage):
+                # Response complete - break out of loop
+                break
 
         return response_text
 
