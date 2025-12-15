@@ -291,6 +291,17 @@ class Orchestrator:
             plan_path = data.get("path", f"docs/{self.session_id}/DOC_{self.session_id}_plan.md")
             total_milestones = data.get("milestones", 0)
 
+            # Verify plan file actually exists before transitioning
+            from pathlib import Path
+            if not Path(plan_path).exists():
+                self._output(f"\n⚠ Plan file not found at: {plan_path}")
+                self._output("Planner claimed [PLAN_READY] but file was not created.\n")
+                self._handle_blocker(
+                    "planner",
+                    f"Plan file missing at {plan_path}. Please create the plan document before proceeding."
+                )
+                return
+
             self._output(f"\n✓ Plan created at: {plan_path}")
             self._output(f"✓ Total milestones: {total_milestones}\n")
 

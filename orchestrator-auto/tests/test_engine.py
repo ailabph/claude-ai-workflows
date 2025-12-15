@@ -97,28 +97,41 @@ class TestOrchestratorPlanning:
         """
         mock_create_planner.return_value = mock_planner
 
-        # Create orchestrator in planning phase
-        orch = Orchestrator(
-            feature_description="Test feature",
-            db_path=temp_db,
-            on_output=lambda x: None
-        )
+        # Create the plan file (simulating what planner would do)
+        plan_dir = Path("docs/test")
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file = plan_dir / "DOC_test_plan.md"
+        plan_file.write_text("# Test Plan\n\n## Milestone 1\n## Milestone 2\n## Milestone 3")
 
-        # Transition to planning
-        db.update_session(
-            orch.session_id,
-            {"phase": "planning"},
-            temp_db
-        )
-        orch.state = orch.state_machine.get_state(orch.session_id)
+        try:
+            # Create orchestrator in planning phase
+            orch = Orchestrator(
+                feature_description="Test feature",
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
 
-        # Run planning
-        orch._run_planning()
+            # Transition to planning
+            db.update_session(
+                orch.session_id,
+                {"phase": "planning"},
+                temp_db
+            )
+            orch.state = orch.state_machine.get_state(orch.session_id)
 
-        # Verify state transition
-        assert orch.state.phase == "execution"
-        assert orch.state.total_milestones == 3
-        assert "docs/test/DOC_test_plan.md" in orch.state.plan_path
+            # Run planning
+            orch._run_planning()
+
+            # Verify state transition
+            assert orch.state.phase == "execution"
+            assert orch.state.total_milestones == 3
+            assert "docs/test/DOC_test_plan.md" in orch.state.plan_path
+        finally:
+            # Cleanup the test plan file
+            if plan_file.exists():
+                plan_file.unlink()
+            if plan_dir.exists():
+                plan_dir.rmdir()
 
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_planning_with_blocker(self, mock_create_planner, temp_db):

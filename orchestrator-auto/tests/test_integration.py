@@ -40,6 +40,7 @@ class TestFullWorkflow:
     @patch('orchestrator_auto.engine.create_planner_agent')
     def test_complete_workflow_planning(self, mock_create_planner, temp_db):
         """Test workflow through planning phase."""
+        from pathlib import Path as FilePath
 
         # Setup planner agent mock - returns string directly
         mock_planner = Mock()
@@ -51,42 +52,55 @@ class TestFullWorkflow:
             """
         mock_create_planner.return_value = mock_planner
 
-        # Create orchestrator
-        orch = Orchestrator(
-            feature_description="Test feature implementation",
-            db_path=temp_db,
-            on_output=lambda x: None
-        )
+        # Create the plan file (simulating what planner would do)
+        plan_dir = FilePath("docs/test")
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file = plan_dir / "DOC_test_plan.md"
+        plan_file.write_text("# Test Plan\n\n## Milestone 1\n## Milestone 2\n## Milestone 3")
 
-        # Verify initial state
-        assert orch.state.phase == Phase.DISCOVERY
-        assert orch.state.status == Status.ACTIVE
+        try:
+            # Create orchestrator
+            orch = Orchestrator(
+                feature_description="Test feature implementation",
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
 
-        # Transition to planning
-        success, state, error = orch.state_machine.transition(
-            orch.session_id,
-            "ready"
-        )
-        assert success
-        orch.state = state
+            # Verify initial state
+            assert orch.state.phase == Phase.DISCOVERY
+            assert orch.state.status == Status.ACTIVE
 
-        # Run planning
-        orch._run_planning()
+            # Transition to planning
+            success, state, error = orch.state_machine.transition(
+                orch.session_id,
+                "ready"
+            )
+            assert success
+            orch.state = state
 
-        # Verify transitioned to execution
-        assert orch.state.phase == Phase.EXECUTION
-        assert orch.state.total_milestones == 3
-        assert orch.state.plan_path == "docs/test/DOC_test_plan.md"
+            # Run planning
+            orch._run_planning()
 
-        # Verify planner was called
-        assert mock_planner.send_message.called
+            # Verify transitioned to execution
+            assert orch.state.phase == Phase.EXECUTION
+            assert orch.state.total_milestones == 3
+            assert orch.state.plan_path == "docs/test/DOC_test_plan.md"
 
-        # Verify messages logged to database
-        messages = db.get_messages(orch.session_id, db_path=temp_db)
-        assert len(messages) > 0
+            # Verify planner was called
+            assert mock_planner.send_message.called
 
-        # Cleanup
-        orch._cleanup()
+            # Verify messages logged to database
+            messages = db.get_messages(orch.session_id, db_path=temp_db)
+            assert len(messages) > 0
+
+            # Cleanup
+            orch._cleanup()
+        finally:
+            # Cleanup the test plan file
+            if plan_file.exists():
+                plan_file.unlink()
+            if plan_dir.exists():
+                plan_dir.rmdir()
 
     @patch('orchestrator_auto.engine.create_executor_agent')
     @patch('orchestrator_auto.engine.create_planner_agent')
@@ -198,6 +212,7 @@ class TestBlockerHandling:
     @patch('orchestrator_auto.engine.create_planner_agent')
     def test_resume_from_blocker(self, mock_create_planner, mock_create_executor, temp_db):
         """Test resuming workflow after blocker resolution."""
+        from pathlib import Path as FilePath
 
         # Setup planner mock - returns strings directly
         mock_planner = Mock()
@@ -226,48 +241,62 @@ class TestBlockerHandling:
             """
         mock_create_executor.return_value = mock_executor
 
-        # Create orchestrator and trigger blocker
-        orch = Orchestrator(
-            feature_description="Test feature",
-            db_path=temp_db,
-            on_output=lambda x: None
-        )
+        # Create the plan file (will be needed after resume)
+        plan_dir = FilePath("docs/test")
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file = plan_dir / "plan.md"
+        plan_file.write_text("# Test Plan\n\n## Milestone 1")
 
-        # Go to planning
-        orch.state_machine.transition(orch.session_id, "ready")
-        orch.state = orch.state_machine.get_state(orch.session_id)
-        orch._run_planning()
+        try:
+            # Create orchestrator and trigger blocker
+            orch = Orchestrator(
+                feature_description="Test feature",
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
 
-        # Verify paused
-        assert orch.state.phase == Phase.PAUSED
-        session_id = orch.session_id
+            # Go to planning
+            orch.state_machine.transition(orch.session_id, "ready")
+            orch.state = orch.state_machine.get_state(orch.session_id)
+            orch._run_planning()
 
-        # Cleanup first orchestrator
-        orch._cleanup()
+            # Verify paused
+            assert orch.state.phase == Phase.PAUSED
+            session_id = orch.session_id
 
-        # Resume with answer
-        orch2 = Orchestrator(
-            session_id=session_id,
-            db_path=temp_db,
-            on_output=lambda x: None
-        )
+            # Cleanup first orchestrator
+            orch._cleanup()
 
-        orch2.resume(answer="Use PostgreSQL")
+            # Resume with answer
+            orch2 = Orchestrator(
+                session_id=session_id,
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
 
-        # Verify blocker resolved
-        blockers = db.get_unresolved_blockers(session_id, temp_db)
-        assert len(blockers) == 0
+            orch2.resume(answer="Use PostgreSQL")
 
-        # Verify workflow continued and completed
-        assert orch2.state.phase == Phase.COMPLETED
+            # Verify blocker resolved
+            blockers = db.get_unresolved_blockers(session_id, temp_db)
+            assert len(blockers) == 0
 
-        # Cleanup
-        orch2._cleanup()
+            # Verify workflow continued and completed
+            assert orch2.state.phase == Phase.COMPLETED
+
+            # Cleanup
+            orch2._cleanup()
+        finally:
+            # Cleanup the test plan file
+            if plan_file.exists():
+                plan_file.unlink()
+            if plan_dir.exists():
+                plan_dir.rmdir()
 
     @patch('orchestrator_auto.engine.create_executor_agent')
     @patch('orchestrator_auto.engine.create_planner_agent')
     def test_blocker_in_execution(self, mock_create_planner, mock_create_executor, temp_db):
         """Test blocker during execution phase."""
+        from pathlib import Path as FilePath
 
         # Setup planner mock - returns string directly
         mock_planner = Mock()
@@ -290,34 +319,47 @@ class TestBlockerHandling:
             """
         mock_create_executor.return_value = mock_executor
 
-        # Create orchestrator
-        orch = Orchestrator(
-            feature_description="Test feature",
-            db_path=temp_db,
-            on_output=lambda x: None
-        )
+        # Create the plan file
+        plan_dir = FilePath("docs/test")
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file = plan_dir / "plan.md"
+        plan_file.write_text("# Test Plan\n\n## Milestone 1")
 
-        # Go to execution
-        orch.state_machine.transition(orch.session_id, "ready")
-        orch.state = orch.state_machine.get_state(orch.session_id)
-        orch._run_planning()
+        try:
+            # Create orchestrator
+            orch = Orchestrator(
+                feature_description="Test feature",
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
 
-        assert orch.state.phase == Phase.EXECUTION
+            # Go to execution
+            orch.state_machine.transition(orch.session_id, "ready")
+            orch.state = orch.state_machine.get_state(orch.session_id)
+            orch._run_planning()
 
-        # Start execution (should pause on blocker)
-        orch._run_execution_loop()
+            assert orch.state.phase == Phase.EXECUTION
 
-        # Verify paused
-        assert orch.state.phase == Phase.PAUSED
-        assert orch.state.previous_phase == Phase.EXECUTION
+            # Start execution (should pause on blocker)
+            orch._run_execution_loop()
 
-        # Verify blocker created
-        blockers = db.get_unresolved_blockers(orch.session_id, temp_db)
-        assert len(blockers) == 1
-        assert "API" in blockers[0]['question']
+            # Verify paused
+            assert orch.state.phase == Phase.PAUSED
+            assert orch.state.previous_phase == Phase.EXECUTION
 
-        # Cleanup
-        orch._cleanup()
+            # Verify blocker created
+            blockers = db.get_unresolved_blockers(orch.session_id, temp_db)
+            assert len(blockers) == 1
+            assert "API" in blockers[0]['question']
+
+            # Cleanup
+            orch._cleanup()
+        finally:
+            # Cleanup the test plan file
+            if plan_file.exists():
+                plan_file.unlink()
+            if plan_dir.exists():
+                plan_dir.rmdir()
 
 
 class TestContextRecovery:
