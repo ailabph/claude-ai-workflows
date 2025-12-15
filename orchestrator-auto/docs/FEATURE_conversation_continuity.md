@@ -45,14 +45,19 @@ The implementation switched from `query()` to `ClaudeSDKClient` in `orchestrator
 1. **Added client state fields to `__init__`:**
    - `self._client: Optional[ClaudeSDKClient] = None`
    - `self._client_entered: bool = False`
+   - `self._loop: Optional[asyncio.AbstractEventLoop] = None`
 
-2. **Added `_get_client()` method** - Creates and enters client context on first call, reuses on subsequent calls
+2. **Added `_get_loop()` method** - Creates/returns a persistent event loop (required because ClaudeSDKClient needs to be entered/exited in the same event loop)
 
-3. **Updated `send_message_async()`** - Uses `client.process_query()` instead of `query()` to maintain conversation history
+3. **Added `_get_client()` method** - Creates and enters client context on first call, reuses on subsequent calls
 
-4. **Updated `close()` and added `close_async()`** - Properly exits client context manager
+4. **Updated `send_message_async()`** - Uses `await client.query(content)` + `async for message in client.receive_messages()` to maintain conversation history
 
-5. **Updated test mocks** - Changed from patching `query` to patching `ClaudeSDKClient`
+5. **Updated `send_message()`** - Uses `loop.run_until_complete()` with persistent loop instead of `asyncio.run()` which creates new loops
+
+6. **Updated `close()` and added `close_async()`** - Properly exits client context manager with error handling, closes event loop
+
+7. **Updated test mocks** - Changed from patching `query` to patching `ClaudeSDKClient`
 
 All 161 tests pass.
 

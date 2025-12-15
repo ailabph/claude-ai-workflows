@@ -64,6 +64,16 @@ class BaseAgent:
         self._client: Optional[ClaudeSDKClient] = None
         self._client_entered: bool = False
 
+        # Persistent event loop for async operations (required for client lifecycle)
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        """Get or create a persistent event loop for this agent."""
+        if self._loop is None or self._loop.is_closed():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+        return self._loop
+
     def _get_options(self) -> ClaudeAgentOptions:
         """Get or create agent options."""
         if self._options is None:
@@ -104,7 +114,9 @@ class BaseAgent:
         client = await self._get_client()
         response_text = ""
 
-        async for message in client.process_query(content):
+        # Send query and receive response
+        await client.query(content)
+        async for message in client.receive_messages():
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -129,7 +141,8 @@ class BaseAgent:
         Returns:
             String response from agent
         """
-        return asyncio.run(self.send_message_async(content, on_chunk=on_chunk))
+        loop = self._get_loop()
+        return loop.run_until_complete(self.send_message_async(content, on_chunk=on_chunk))
 
     def get_session_id(self) -> str:
         """Get the current session ID."""
@@ -138,14 +151,33 @@ class BaseAgent:
     async def close_async(self) -> None:
         """Close the client connection (async)."""
         if self._client and self._client_entered:
-            await self._client.__aexit__(None, None, None)
-            self._client = None
-            self._client_entered = False
+            try:
+                await self._client.__aexit__(None, None, None)
+            except Exception:
+                # Ignore cleanup errors (e.g., task scope issues)
+                pass
+            finally:
+                self._client = None
+                self._client_entered = False
 
     def close(self) -> None:
-        """Close the agent session."""
+        """Close the agent session and cleanup resources."""
         if self._client and self._client_entered:
-            asyncio.run(self.close_async())
+            try:
+                loop = self._get_loop()
+                loop.run_until_complete(self.close_async())
+            except Exception:
+                # Ignore cleanup errors - just clear state
+                self._client = None
+                self._client_entered = False
+
+        # Close the event loop
+        if self._loop and not self._loop.is_closed():
+            try:
+                self._loop.close()
+            except Exception:
+                pass
+            self._loop = None
 
 
 class PlannerAgent(BaseAgent):
