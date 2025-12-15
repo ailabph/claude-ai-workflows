@@ -28,6 +28,7 @@ from .prompts import (
 )
 from .recovery import register_recovery_hook
 from .output import StreamingIndicator
+from .input_handler import prompt_with_paste_support
 
 
 class Orchestrator:
@@ -312,11 +313,15 @@ class Orchestrator:
 
         planner = self._create_planner()
 
-        # Wait for user's first message before starting
-        user_input = input("\nYou: ").strip()
+        # Wait for user's first message before starting (with paste support)
+        display_text, user_input = prompt_with_paste_support("\nYou: ")
         if not user_input:
             # Use feature description as fallback if user just hits enter
             user_input = self.state.feature_description
+            display_text = user_input
+        # Show collapsed preview if paste was detected
+        if display_text != user_input:
+            self._output(f"  {display_text}\n")
         self._log_message("human", "user", user_input)
 
         # Check for /ready command before sending to planner
@@ -347,8 +352,11 @@ class Orchestrator:
                 self._handle_blocker("planner", data["question"])
                 return
 
-            # Get user input
-            user_input = input("\nYou: ").strip()
+            # Get user input (with paste support)
+            display_text, user_input = prompt_with_paste_support("\nYou: ")
+            # Show collapsed preview if paste was detected
+            if display_text != user_input:
+                self._output(f"  {display_text}\n")
             self._log_message("human", "user", user_input)
 
             # Check for /ready command (flexible - can be anywhere in input)
