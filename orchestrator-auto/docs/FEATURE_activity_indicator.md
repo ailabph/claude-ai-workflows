@@ -1,6 +1,6 @@
 # Feature: Activity Indicator with Streaming Snippets
 
-## Status: Draft / TODO
+## Status: IMPLEMENTED
 
 ## Overview
 

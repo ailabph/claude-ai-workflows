@@ -91,7 +91,7 @@ class TestOrchestratorPlanning:
         mock_planner = Mock()
 
         # Use a lambda to generate dynamic path based on session_id from prompt
-        def mock_send_message(prompt):
+        def mock_send_message(prompt, **kwargs):
             import re
             match = re.search(r'docs/([^/]+)/DOC_', prompt)
             session_id = match.group(1) if match else "test"

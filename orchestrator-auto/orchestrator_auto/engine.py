@@ -27,6 +27,7 @@ from .prompts import (
     CHANGES_REQUESTED_TEMPLATE,
 )
 from .recovery import register_recovery_hook
+from .output import StreamingIndicator
 
 
 class Orchestrator:
@@ -43,6 +44,7 @@ class Orchestrator:
         db_path: Optional[str] = None,
         plan_path: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
+        show_activity: bool = True,
     ):
         """
         Initialize orchestrator.
@@ -53,9 +55,11 @@ class Orchestrator:
             db_path: Optional database path
             plan_path: Optional path to existing plan file (skips discovery/planning)
             on_output: Optional callback for output messages
+            show_activity: Whether to show streaming activity indicator (default: True)
         """
         self.db_path = db_path
         self.on_output = on_output or print
+        self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
 
         # Initialize database
@@ -257,6 +261,44 @@ class Orchestrator:
         if self.on_output:
             self.on_output(message)
 
+    def _create_activity_indicator(self) -> Optional[StreamingIndicator]:
+        """Create an activity indicator if enabled."""
+        if not self.show_activity:
+            return None
+        return StreamingIndicator(interval=1.5, show_tokens=True)
+
+    def _send_with_activity(
+        self,
+        agent,
+        message: str,
+        activity_label: str = "Working"
+    ) -> str:
+        """
+        Send message to agent with optional activity indicator.
+
+        Args:
+            agent: Agent to send message to
+            message: Message content
+            activity_label: Label to show before indicator
+
+        Returns:
+            Agent's response
+        """
+        indicator = self._create_activity_indicator()
+
+        if indicator:
+            self._output(f"  {activity_label}... ")
+
+        response = agent.send_message(
+            message,
+            on_chunk=indicator.on_chunk if indicator else None
+        )
+
+        if indicator:
+            indicator.finish()
+
+        return response
+
     def _run_discovery_loop(self) -> None:
         """
         Run discovery phase conversation.
@@ -275,8 +317,8 @@ class Orchestrator:
         self._output(f"You: {user_input}\n")
 
         while True:
-            # Send to planner
-            response = planner.send_message(user_input)
+            # Send to planner with activity indicator
+            response = self._send_with_activity(planner, user_input, "Planner thinking")
 
             # Log response
             self._log_message("planner", "assistant", response)
@@ -353,7 +395,7 @@ IMPORTANT: Include the FULL plan content between [PLAN_CONTENT] and [/PLAN_CONTE
 The orchestrator will save the file for you.
 """
 
-        response = planner.send_message(plan_prompt)
+        response = self._send_with_activity(planner, plan_prompt, "Planner creating plan")
 
         # Log response
         self._log_message("planner", "assistant", response)
@@ -436,9 +478,11 @@ The orchestrator will save the file for you.
                 next_milestone_number=current_milestone + 1
             )
 
-            # Send to executor
+            # Send to executor with activity indicator
             self._output("→ Sending milestone to Executor...\n")
-            executor_response = executor.send_message(milestone_prompt)
+            executor_response = self._send_with_activity(
+                executor, milestone_prompt, "Executor implementing"
+            )
 
             # Log response
             self._log_message("executor", "assistant", executor_response)
@@ -475,8 +519,10 @@ The orchestrator will save the file for you.
 
             elif response_type == EXECUTOR_CLARIFICATION:
                 self._output(f"\n→ Executor needs clarification from Planner\n")
-                # Route question to planner
-                clarification_response = planner.send_message(data["question"])
+                # Route question to planner with activity indicator
+                clarification_response = self._send_with_activity(
+                    planner, data["question"], "Planner clarifying"
+                )
                 # Send response back to executor
                 self._route_to_executor(clarification_response)
 
@@ -523,7 +569,7 @@ The orchestrator will save the file for you.
         Respond with [MILESTONE_APPROVED], [CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED].
         """
 
-        response = planner.send_message(validation_prompt)
+        response = self._send_with_activity(planner, validation_prompt, "Planner reviewing")
 
         # Log response
         self._log_message("planner", "assistant", response)
@@ -568,7 +614,7 @@ The orchestrator will save the file for you.
         """
         executor = self._create_executor()
 
-        response = executor.send_message(feedback)
+        response = self._send_with_activity(executor, feedback, "Executor working")
 
         # Log
         self._log_message("executor", "assistant", response)

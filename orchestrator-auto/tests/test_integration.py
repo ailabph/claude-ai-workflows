@@ -46,7 +46,7 @@ class TestFullWorkflow:
         # Setup planner agent mock - returns string with PLAN_CONTENT
         mock_planner = Mock()
 
-        def mock_send_message(prompt):
+        def mock_send_message(prompt, **kwargs):
             match = re.search(r'docs/([^/]+)/DOC_', prompt)
             session_id = match.group(1) if match else "test"
             return f"""
@@ -236,7 +236,7 @@ class TestBlockerHandling:
         call_count = [0]
         session_id_holder = [None]
 
-        def mock_planner_send(prompt):
+        def mock_planner_send(prompt, **kwargs):
             call_count[0] += 1
             # Extract session_id from prompt
             match = re.search(r'docs/([^/]+)/DOC_', prompt)
@@ -340,7 +340,7 @@ Summary: Plan ready.
         import re
 
         # Setup planner mock - returns string with PLAN_CONTENT
-        def mock_planner_send(prompt):
+        def mock_planner_send(prompt, **kwargs):
             match = re.search(r'docs/([^/]+)/DOC_', prompt)
             session_id = match.group(1) if match else "test"
             return f"""

@@ -95,7 +95,8 @@ def cli():
 @click.option('--feature', '-f', required=True, help='Feature description')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--plan', '-p', type=click.Path(exists=True), help='Path to existing plan file (skips discovery/planning)')
-def start(feature: str, db_path: Optional[str], plan: Optional[str]):
+@click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
+def start(feature: str, db_path: Optional[str], plan: Optional[str], show_activity: bool):
     """Start a new workflow session."""
     global _current_orchestrator
 
@@ -117,7 +118,8 @@ def start(feature: str, db_path: Optional[str], plan: Optional[str]):
             feature_description=feature,
             db_path=db_path,
             plan_path=plan,
-            on_output=output_callback
+            on_output=output_callback,
+            show_activity=show_activity,
         )
         _current_orchestrator = orch
 
@@ -150,7 +152,8 @@ def start(feature: str, db_path: Optional[str], plan: Optional[str]):
 @click.argument('session_id')
 @click.option('--answer', '-a', help='Answer to blocker question')
 @click.option('--db-path', '-d', help='Custom database path')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str]):
+@click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -174,7 +177,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str]):
         orch = Orchestrator(
             session_id=session_id,
             db_path=db_path,
-            on_output=output_callback
+            on_output=output_callback,
+            show_activity=show_activity,
         )
         _current_orchestrator = orch
 

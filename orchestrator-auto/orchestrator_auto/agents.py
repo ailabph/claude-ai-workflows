@@ -6,7 +6,7 @@ with appropriate system prompts and tool permissions.
 """
 
 import asyncio
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Callable
 from pathlib import Path
 from claude_agent_sdk import query, ClaudeSDKClient
 from claude_agent_sdk.types import (
@@ -73,12 +73,17 @@ class BaseAgent:
             )
         return self._options
 
-    async def send_message_async(self, content: str) -> str:
+    async def send_message_async(
+        self,
+        content: str,
+        on_chunk: Optional[Callable[[str], None]] = None
+    ) -> str:
         """
         Send a message to the agent and get response (async).
 
         Args:
             content: Message content to send
+            on_chunk: Optional callback for each text chunk (for streaming indicators)
 
         Returns:
             String response from agent
@@ -92,22 +97,29 @@ class BaseAgent:
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         response_text += block.text
+                        if on_chunk:
+                            on_chunk(block.text)
             elif isinstance(message, ResultMessage):
                 result_message = message
 
         return response_text
 
-    def send_message(self, content: str) -> str:
+    def send_message(
+        self,
+        content: str,
+        on_chunk: Optional[Callable[[str], None]] = None
+    ) -> str:
         """
         Send a message to the agent and get response (sync wrapper).
 
         Args:
             content: Message content to send
+            on_chunk: Optional callback for each text chunk (for streaming indicators)
 
         Returns:
             String response from agent
         """
-        return asyncio.run(self.send_message_async(content))
+        return asyncio.run(self.send_message_async(content, on_chunk=on_chunk))
 
     def get_session_id(self) -> str:
         """Get the current session ID."""
