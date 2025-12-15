@@ -6,7 +6,6 @@ and execution phases with automatic milestone approval and blocker handling.
 """
 
 from typing import Optional, Dict, Any, Callable
-import os
 
 from . import db
 from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
@@ -226,12 +225,10 @@ class Orchestrator:
 
         while True:
             # Send to planner
-            result = planner.send_message(user_input)
-            response = result.content if hasattr(result, 'content') else str(result)
+            response = planner.send_message(user_input)
 
             # Log response
-            token_count = getattr(result, 'usage', {}).get('total_tokens') if hasattr(result, 'usage') else None
-            self._log_message("planner", "assistant", response, token_count)
+            self._log_message("planner", "assistant", response)
 
             # Output response
             self._output(f"Planner: {response}\n")
@@ -279,12 +276,10 @@ class Orchestrator:
         Respond with [PLAN_READY] when done.
         """
 
-        result = planner.send_message(plan_prompt)
-        response = result.content if hasattr(result, 'content') else str(result)
+        response = planner.send_message(plan_prompt)
 
         # Log response
-        token_count = getattr(result, 'usage', {}).get('total_tokens') if hasattr(result, 'usage') else None
-        self._log_message("planner", "assistant", response, token_count)
+        self._log_message("planner", "assistant", response)
 
         # Output response
         self._output(f"Planner: {response}\n")
@@ -346,12 +341,10 @@ class Orchestrator:
 
             # Send to executor
             self._output("→ Sending milestone to Executor...\n")
-            result = executor.send_message(milestone_prompt)
-            executor_response = result.content if hasattr(result, 'content') else str(result)
+            executor_response = executor.send_message(milestone_prompt)
 
             # Log response
-            token_count = getattr(result, 'usage', {}).get('total_tokens') if hasattr(result, 'usage') else None
-            self._log_message("executor", "assistant", executor_response, token_count)
+            self._log_message("executor", "assistant", executor_response)
 
             # Parse executor response
             response_type, data = parse_executor_response(executor_response)
@@ -388,7 +381,7 @@ class Orchestrator:
                 # Route question to planner
                 clarification_response = planner.send_message(data["question"])
                 # Send response back to executor
-                self._route_to_executor(clarification_response.content if hasattr(clarification_response, 'content') else str(clarification_response))
+                self._route_to_executor(clarification_response)
 
             elif response_type == EXECUTOR_BLOCKED:
                 self._handle_blocker("executor", data["reason"])
@@ -433,12 +426,10 @@ class Orchestrator:
         Respond with [MILESTONE_APPROVED], [CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED].
         """
 
-        result = planner.send_message(validation_prompt)
-        response = result.content if hasattr(result, 'content') else str(result)
+        response = planner.send_message(validation_prompt)
 
         # Log response
-        token_count = getattr(result, 'usage', {}).get('total_tokens') if hasattr(result, 'usage') else None
-        self._log_message("planner", "assistant", response, token_count)
+        self._log_message("planner", "assistant", response)
 
         # Parse response
         response_type, data = parse_planner_response(response)
@@ -480,12 +471,10 @@ class Orchestrator:
         """
         executor = self._create_executor()
 
-        result = executor.send_message(feedback)
-        response = result.content if hasattr(result, 'content') else str(result)
+        response = executor.send_message(feedback)
 
         # Log
-        token_count = getattr(result, 'usage', {}).get('total_tokens') if hasattr(result, 'usage') else None
-        self._log_message("executor", "assistant", response, token_count)
+        self._log_message("executor", "assistant", response)
 
         self._output(f"\n→ Executor response: {response[:200]}...\n")
 

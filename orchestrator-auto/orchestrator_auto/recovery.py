@@ -155,6 +155,9 @@ def register_recovery_hook(
     """
     Register a PreCompact recovery hook with an agent.
 
+    With the query()-based SDK approach, we store the hook on the agent
+    for potential manual injection if context recovery is needed.
+
     Args:
         agent: PlannerAgent or ExecutorAgent instance
         session_id: Workflow session ID
@@ -163,16 +166,13 @@ def register_recovery_hook(
     """
     hook = create_compact_hook(session_id, agent_role, db_path)
 
-    # Register the hook with the SDK client
-    # Note: The exact API depends on the SDK implementation
-    # This is a placeholder for the actual SDK hook registration
-    if hasattr(agent.client, "register_precompact_hook"):
-        agent.client.register_precompact_hook(hook)
-    elif hasattr(agent.client, "on_precompact"):
-        agent.client.on_precompact(hook)
-    else:
-        # Fallback: store the hook for manual injection
-        agent._recovery_hook = hook
+    # Store the hook on the agent for manual recovery if needed
+    # The query() SDK approach handles context automatically, but we keep
+    # this for potential manual recovery scenarios
+    agent._recovery_hook = hook
+    agent._session_id = session_id
+    agent._agent_role = agent_role
+    agent._db_path = db_path
 
 
 def get_recovery_state(

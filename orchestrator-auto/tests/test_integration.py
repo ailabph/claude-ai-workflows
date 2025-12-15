@@ -41,17 +41,14 @@ class TestFullWorkflow:
     def test_complete_workflow_planning(self, mock_create_planner, temp_db):
         """Test workflow through planning phase."""
 
-        # Setup planner agent mock
+        # Setup planner agent mock - returns string directly
         mock_planner = Mock()
-        mock_planner.send_message.return_value = Mock(
-            content="""
+        mock_planner.send_message.return_value = """
             [PLAN_READY] Implementation plan created at: docs/test/DOC_test_plan.md
             Milestones: 3 total
 
             The plan is ready for execution.
-            """,
-            usage={'total_tokens': 200}
-        )
+            """
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -96,18 +93,14 @@ class TestFullWorkflow:
     def test_workflow_milestone_execution(self, mock_create_planner, mock_create_executor, temp_db):
         """Test single milestone execution with planner review."""
 
-        # Setup planner agent mock
+        # Setup planner agent mock - returns string directly
         mock_planner = Mock()
-        mock_planner.send_message.return_value = Mock(
-            content="[MILESTONE_APPROVED] Milestone 1 approved.",
-            usage={'total_tokens': 30}
-        )
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED] Milestone 1 approved."
         mock_create_planner.return_value = mock_planner
 
-        # Setup executor agent mock
+        # Setup executor agent mock - returns string directly
         mock_executor = Mock()
-        mock_executor.send_message.return_value = Mock(
-            content="""
+        executor_report = """
             [PROGRESS_REPORT]
             ## Milestone 1: Setup - COMPLETED
 
@@ -119,9 +112,8 @@ class TestFullWorkflow:
 
             ### Ready for Review: YES
             [/PROGRESS_REPORT]
-            """,
-            usage={'total_tokens': 100}
-        )
+            """
+        mock_executor.send_message.return_value = executor_report
         mock_create_executor.return_value = mock_executor
 
         # Create orchestrator in execution phase
@@ -144,8 +136,8 @@ class TestFullWorkflow:
         )
         orch.state = orch.state_machine.get_state(orch.session_id)
 
-        # Execute routing methods directly
-        report = mock_executor.send_message("Execute milestone").content
+        # Execute routing methods directly - now returns string
+        report = mock_executor.send_message("Execute milestone")
         result = orch._route_to_planner(report)
 
         # Verify milestone approved
@@ -166,16 +158,13 @@ class TestBlockerHandling:
     def test_blocker_in_planning(self, mock_create_planner, temp_db):
         """Test blocker during planning phase."""
 
-        # Setup planner mock with blocker
+        # Setup planner mock with blocker - returns string directly
         mock_planner = Mock()
-        mock_planner.send_message.return_value = Mock(
-            content="""
+        mock_planner.send_message.return_value = """
             [HUMAN_INPUT_NEEDED] Which database should we use - PostgreSQL or MySQL?
 
             Please clarify before I create the plan.
-            """,
-            usage={'total_tokens': 50}
-        )
+            """
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -210,43 +199,31 @@ class TestBlockerHandling:
     def test_resume_from_blocker(self, mock_create_planner, mock_create_executor, temp_db):
         """Test resuming workflow after blocker resolution."""
 
-        # Setup planner mock
+        # Setup planner mock - returns strings directly
         mock_planner = Mock()
         planner_responses = [
             # Planning - blocker
-            Mock(
-                content="[HUMAN_INPUT_NEEDED] Need clarification on X",
-                usage={'total_tokens': 30}
-            ),
+            "[HUMAN_INPUT_NEEDED] Need clarification on X",
             # After resume - plan ready
-            Mock(
-                content="""
+            """
                 [PLAN_READY] Implementation plan created at: docs/test/plan.md
                 Milestones: 1 total
 
                 Using the clarification provided.
                 """,
-                usage={'total_tokens': 100}
-            ),
             # Milestone review
-            Mock(
-                content="[MILESTONE_APPROVED] Milestone 1 approved.",
-                usage={'total_tokens': 20}
-            ),
+            "[MILESTONE_APPROVED] Milestone 1 approved.",
         ]
         mock_planner.send_message.side_effect = planner_responses
         mock_create_planner.return_value = mock_planner
 
-        # Setup executor mock
+        # Setup executor mock - returns string directly
         mock_executor = Mock()
-        mock_executor.send_message.return_value = Mock(
-            content="""
+        mock_executor.send_message.return_value = """
             [PROGRESS_REPORT]
             ## Milestone 1: Done - COMPLETED
             [/PROGRESS_REPORT]
-            """,
-            usage={'total_tokens': 50}
-        )
+            """
         mock_create_executor.return_value = mock_executor
 
         # Create orchestrator and trigger blocker
@@ -292,31 +269,25 @@ class TestBlockerHandling:
     def test_blocker_in_execution(self, mock_create_planner, mock_create_executor, temp_db):
         """Test blocker during execution phase."""
 
-        # Setup planner mock
+        # Setup planner mock - returns string directly
         mock_planner = Mock()
         planner_responses = [
             # Planning
-            Mock(
-                content="""
+            """
                 [PLAN_READY] Implementation plan created at: docs/test/plan.md
                 Milestones: 1 total
                 """,
-                usage={'total_tokens': 100}
-            ),
         ]
         mock_planner.send_message.side_effect = planner_responses
         mock_create_planner.return_value = mock_planner
 
-        # Setup executor mock with blocker
+        # Setup executor mock with blocker - returns string directly
         mock_executor = Mock()
-        mock_executor.send_message.return_value = Mock(
-            content="""
+        mock_executor.send_message.return_value = """
             [BLOCKED] Cannot proceed: Missing API credentials
 
             I need the API key to continue.
-            """,
-            usage={'total_tokens': 50}
-        )
+            """
         mock_create_executor.return_value = mock_executor
 
         # Create orchestrator
@@ -409,9 +380,8 @@ class TestContextRecovery:
     def test_precompact_hook_registration(self, mock_create_planner, temp_db):
         """Test that PreCompact hooks are registered correctly."""
 
-        # Mock planner with recovery hook storage
+        # Mock planner - no client attribute in new architecture
         mock_planner = Mock()
-        mock_planner.client = Mock()
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -426,10 +396,9 @@ class TestContextRecovery:
         from orchestrator_auto.recovery import register_recovery_hook
         register_recovery_hook(mock_planner, orch.session_id, "planner", temp_db)
 
-        # Verify hook registered (fallback stores in _recovery_hook attribute)
-        assert hasattr(mock_planner, '_recovery_hook') or \
-               mock_planner.client.register_precompact_hook.called or \
-               mock_planner.client.on_precompact.called
+        # Verify hook registered (stored in _recovery_hook attribute in new architecture)
+        assert hasattr(mock_planner, '_recovery_hook')
+        assert hasattr(mock_planner, '_session_id')
 
         # Cleanup
         orch._cleanup()

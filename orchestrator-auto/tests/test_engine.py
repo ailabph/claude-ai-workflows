@@ -87,17 +87,14 @@ class TestOrchestratorPlanning:
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_planning_with_plan_ready(self, mock_create_planner, temp_db):
         """Test planning phase with successful plan creation."""
-        # Setup mocks
+        # Setup mocks - agents now return strings directly
         mock_planner = Mock()
-        mock_result = Mock()
-        mock_result.content = """
+        mock_planner.send_message.return_value = """
         [PLAN_READY] Implementation plan created at: docs/test/DOC_test_plan.md
         Milestones: 3 total
 
         Plan is ready for execution.
         """
-        mock_result.usage = {"total_tokens": 100}
-        mock_planner.send_message.return_value = mock_result
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator in planning phase
@@ -126,16 +123,13 @@ class TestOrchestratorPlanning:
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_planning_with_blocker(self, mock_create_planner, temp_db):
         """Test planning phase with blocker."""
-        # Setup mocks
+        # Setup mocks - agents now return strings directly
         mock_planner = Mock()
-        mock_result = Mock()
-        mock_result.content = """
+        mock_planner.send_message.return_value = """
         [HUMAN_INPUT_NEEDED] Which database should we use - PostgreSQL or MySQL?
 
         Please clarify before I create the plan.
         """
-        mock_result.usage = {"total_tokens": 50}
-        mock_planner.send_message.return_value = mock_result
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -167,10 +161,9 @@ class TestOrchestratorExecution:
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_execution_milestone_approved(self, mock_create_planner, mock_create_executor, temp_db):
         """Test execution with milestone approval."""
-        # Setup executor mock
+        # Setup executor mock - returns string directly
         mock_executor = Mock()
-        mock_executor_result = Mock()
-        mock_executor_result.content = """
+        mock_executor.send_message.return_value = """
         [PROGRESS_REPORT]
         ## Milestone 1: Setup - COMPLETED
 
@@ -183,16 +176,11 @@ class TestOrchestratorExecution:
         ### Ready for Review: YES
         [/PROGRESS_REPORT]
         """
-        mock_executor_result.usage = {"total_tokens": 150}
-        mock_executor.send_message.return_value = mock_executor_result
         mock_create_executor.return_value = mock_executor
 
-        # Setup planner mock
+        # Setup planner mock - returns string directly
         mock_planner = Mock()
-        mock_planner_result = Mock()
-        mock_planner_result.content = "[MILESTONE_APPROVED] Milestone 1 approved. Proceed to Milestone 2."
-        mock_planner_result.usage = {"total_tokens": 30}
-        mock_planner.send_message.return_value = mock_planner_result
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED] Milestone 1 approved. Proceed to Milestone 2."
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator in execution phase
@@ -226,24 +214,18 @@ class TestOrchestratorExecution:
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_execution_changes_requested(self, mock_create_planner, mock_create_executor, temp_db):
         """Test execution with changes requested."""
-        # Setup executor mock
+        # Setup executor mock - returns string directly
         mock_executor = Mock()
-        mock_executor_result = Mock()
-        mock_executor_result.content = "I'll fix those issues."
-        mock_executor_result.usage = {"total_tokens": 20}
-        mock_executor.send_message.return_value = mock_executor_result
+        mock_executor.send_message.return_value = "I'll fix those issues."
         mock_create_executor.return_value = mock_executor
 
-        # Setup planner mock
+        # Setup planner mock - returns string directly
         mock_planner = Mock()
-        mock_planner_result = Mock()
-        mock_planner_result.content = """
+        mock_planner.send_message.return_value = """
         [CHANGES_REQUESTED] Milestone 1 needs changes:
         - Fix test coverage
         - Add docstrings
         """
-        mock_planner_result.usage = {"total_tokens": 40}
-        mock_planner.send_message.return_value = mock_planner_result
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -347,12 +329,9 @@ class TestOrchestratorMessageRouting:
     @patch("orchestrator_auto.engine.create_planner_agent")
     def test_route_to_planner_approved(self, mock_create_planner, temp_db):
         """Test routing report to planner with approval."""
-        # Setup mock
+        # Setup mock - returns string directly
         mock_planner = Mock()
-        mock_result = Mock()
-        mock_result.content = "[MILESTONE_APPROVED] Milestone 1 approved."
-        mock_result.usage = {"total_tokens": 20}
-        mock_planner.send_message.return_value = mock_result
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED] Milestone 1 approved."
         mock_create_planner.return_value = mock_planner
 
         # Create orchestrator
@@ -374,12 +353,9 @@ class TestOrchestratorMessageRouting:
     @patch("orchestrator_auto.engine.create_executor_agent")
     def test_route_to_executor(self, mock_create_executor, temp_db):
         """Test routing feedback to executor."""
-        # Setup mock
+        # Setup mock - returns string directly
         mock_executor = Mock()
-        mock_result = Mock()
-        mock_result.content = "Understood, fixing now."
-        mock_result.usage = {"total_tokens": 10}
-        mock_executor.send_message.return_value = mock_result
+        mock_executor.send_message.return_value = "Understood, fixing now."
         mock_create_executor.return_value = mock_executor
 
         # Create orchestrator

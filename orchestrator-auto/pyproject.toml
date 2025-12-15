@@ -19,4 +19,4 @@ dev = [
 ]
 
 [project.scripts]
-orchestrator = "orchestrator_auto.cli:main"
+orchestrator = "orchestrator_auto.cli:cli"

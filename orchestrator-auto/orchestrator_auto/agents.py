@@ -5,12 +5,15 @@ Provides PlannerAgent and ExecutorAgent classes that wrap the Claude SDK Client
 with appropriate system prompts and tool permissions.
 """
 
+import asyncio
 from typing import Optional, Dict, Any, List
 from pathlib import Path
-from claude_agent_sdk import ClaudeSDKClient
+from claude_agent_sdk import query, ClaudeSDKClient
 from claude_agent_sdk.types import (
     ClaudeAgentOptions,
+    AssistantMessage,
     ResultMessage,
+    TextBlock,
 )
 
 from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT
@@ -55,58 +58,63 @@ class BaseAgent:
         self.model = model
         self.session_id = session_id
         self.hooks = hooks
-        self.cwd = cwd or Path.cwd()  # Default to current directory
-        self._client: Optional[ClaudeSDKClient] = None
+        self.cwd = cwd or Path.cwd()
+        self._options: Optional[ClaudeAgentOptions] = None
 
-    def initialize(self) -> None:
-        """Initialize the SDK client and start a session."""
-        if self._client is not None:
-            raise RuntimeError("Agent already initialized")
+    def _get_options(self) -> ClaudeAgentOptions:
+        """Get or create agent options."""
+        if self._options is None:
+            self._options = ClaudeAgentOptions(
+                system_prompt=self.system_prompt,
+                tools=self.allowed_tools,
+                model=self.model,
+                cwd=self.cwd,
+            )
+        return self._options
 
-        # Create agent options
-        options = ClaudeAgentOptions(
-            system_prompt=self.system_prompt,
-            allowed_tools=self.allowed_tools,
-            model=self.model,
-            hooks=self.hooks,
-            cwd=self.cwd,  # Ensures agent reads CLAUDE.md from project directory
-        )
-
-        # Create SDK client
-        self._client = ClaudeSDKClient(options=options)
-        self._client.connect()
-
-    @property
-    def client(self) -> ClaudeSDKClient:
-        """Get the SDK client, initializing if necessary."""
-        if self._client is None:
-            self.initialize()
-        return self._client
-
-    def send_message(self, content: str) -> ResultMessage:
+    async def send_message_async(self, content: str) -> str:
         """
-        Send a message to the agent and get response.
+        Send a message to the agent and get response (async).
 
         Args:
             content: Message content to send
 
         Returns:
-            ResultMessage with agent's response
+            String response from agent
         """
-        # Send query and receive response
-        self.client.query(content, session_id=self.session_id)
-        result = self.client.receive_response(session_id=self.session_id)
-        return result
+        options = self._get_options()
+        response_text = ""
+        result_message = None
+
+        async for message in query(prompt=content, options=options):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        response_text += block.text
+            elif isinstance(message, ResultMessage):
+                result_message = message
+
+        return response_text
+
+    def send_message(self, content: str) -> str:
+        """
+        Send a message to the agent and get response (sync wrapper).
+
+        Args:
+            content: Message content to send
+
+        Returns:
+            String response from agent
+        """
+        return asyncio.run(self.send_message_async(content))
 
     def get_session_id(self) -> str:
         """Get the current session ID."""
         return self.session_id
 
     def close(self) -> None:
-        """Close the agent session."""
-        if self._client is not None:
-            self._client.disconnect()
-            self._client = None
+        """Close the agent session (no-op for query-based approach)."""
+        pass
 
 
 class PlannerAgent(BaseAgent):
@@ -140,7 +148,7 @@ class PlannerAgent(BaseAgent):
             **kwargs
         )
 
-    def validate_milestone_report(self, report: str) -> ResultMessage:
+    def validate_milestone_report(self, report: str) -> str:
         """
         Send a milestone report for validation.
 
@@ -148,7 +156,7 @@ class PlannerAgent(BaseAgent):
             report: Executor's progress report
 
         Returns:
-            ResultMessage with planner's validation response
+            Planner's validation response
         """
         validation_prompt = f"""Review this milestone progress report from the Executor:
 
@@ -196,7 +204,7 @@ class ExecutorAgent(BaseAgent):
             **kwargs
         )
 
-    def execute_milestone(self, milestone_prompt: str) -> ResultMessage:
+    def execute_milestone(self, milestone_prompt: str) -> str:
         """
         Send a milestone prompt for execution.
 
@@ -204,11 +212,11 @@ class ExecutorAgent(BaseAgent):
             milestone_prompt: Formatted milestone task prompt
 
         Returns:
-            ResultMessage with executor's progress report
+            Executor's progress report
         """
         return self.send_message(milestone_prompt)
 
-    def continue_milestone(self, feedback: str) -> ResultMessage:
+    def continue_milestone(self, feedback: str) -> str:
         """
         Continue working on a milestone after receiving feedback.
 
@@ -216,7 +224,7 @@ class ExecutorAgent(BaseAgent):
             feedback: Planner's feedback or approval to continue
 
         Returns:
-            ResultMessage with executor's response
+            Executor's response
         """
         return self.send_message(feedback)
 
@@ -224,7 +232,8 @@ class ExecutorAgent(BaseAgent):
 def create_planner_agent(
     model: Optional[str] = None,
     session_id: str = "planner",
-    hooks: Optional[Dict[str, Any]] = None
+    hooks: Optional[Dict[str, Any]] = None,
+    cwd: Optional[Path] = None,
 ) -> PlannerAgent:
     """
     Factory function to create a Planner agent.
@@ -233,25 +242,27 @@ def create_planner_agent(
         model: Claude model to use (default: Opus)
         session_id: Session ID for the agent
         hooks: Optional hooks configuration
+        cwd: Working directory
 
     Returns:
-        Initialized PlannerAgent
+        PlannerAgent instance
     """
     kwargs = {"session_id": session_id}
     if model:
         kwargs["model"] = model
     if hooks:
         kwargs["hooks"] = hooks
+    if cwd:
+        kwargs["cwd"] = cwd
 
-    agent = PlannerAgent(**kwargs)
-    agent.initialize()
-    return agent
+    return PlannerAgent(**kwargs)
 
 
 def create_executor_agent(
     model: Optional[str] = None,
     session_id: str = "executor",
-    hooks: Optional[Dict[str, Any]] = None
+    hooks: Optional[Dict[str, Any]] = None,
+    cwd: Optional[Path] = None,
 ) -> ExecutorAgent:
     """
     Factory function to create an Executor agent.
@@ -260,16 +271,17 @@ def create_executor_agent(
         model: Claude model to use (default: Sonnet)
         session_id: Session ID for the agent
         hooks: Optional hooks configuration
+        cwd: Working directory
 
     Returns:
-        Initialized ExecutorAgent
+        ExecutorAgent instance
     """
     kwargs = {"session_id": session_id}
     if model:
         kwargs["model"] = model
     if hooks:
         kwargs["hooks"] = hooks
+    if cwd:
+        kwargs["cwd"] = cwd
 
-    agent = ExecutorAgent(**kwargs)
-    agent.initialize()
-    return agent
+    return ExecutorAgent(**kwargs)

@@ -3,20 +3,23 @@ Unit tests for agent management and SDK integration.
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import Mock, MagicMock, patch, AsyncMock
 from pathlib import Path
 import sys
 import tempfile
 import os
+import asyncio
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from orchestrator_auto.agents import (
+    BaseAgent,
     PlannerAgent,
     ExecutorAgent,
     create_planner_agent,
     create_executor_agent,
+    DEFAULT_TOOLS,
 )
 from orchestrator_auto.prompts import (
     PLANNER_SYSTEM_PROMPT,
@@ -49,58 +52,45 @@ def temp_db():
 class TestAgentInitialization:
     """Test agent initialization and configuration."""
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_planner_agent_initialization(self, mock_sdk_client):
+    def test_planner_agent_initialization(self):
         """Test that PlannerAgent initializes with correct configuration."""
         agent = PlannerAgent()
 
         assert agent.system_prompt == PLANNER_SYSTEM_PROMPT
         assert agent.model == "claude-opus-4-5-20251101"  # Opus for planning
-        assert agent._client is None  # Not initialized yet
+        assert agent.session_id == "planner"
+        assert agent.allowed_tools == DEFAULT_TOOLS
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_executor_agent_initialization(self, mock_sdk_client):
+    def test_executor_agent_initialization(self):
         """Test that ExecutorAgent initializes with correct configuration."""
         agent = ExecutorAgent()
 
         assert agent.system_prompt == EXECUTOR_SYSTEM_PROMPT
         assert agent.model == "claude-sonnet-4-5-20250929"  # Sonnet for execution
-        assert agent._client is None  # Not initialized yet
+        assert agent.session_id == "executor"
+        assert agent.allowed_tools == DEFAULT_TOOLS
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_agent_initialize_creates_client(self, mock_sdk_client):
-        """Test that initialize() creates the SDK client."""
-        mock_client_instance = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
+    def test_agent_options_created_on_demand(self):
+        """Test that agent options are created on demand."""
         agent = PlannerAgent()
-        agent.initialize()
 
-        assert agent._client is not None
-        mock_sdk_client.assert_called_once()
-        mock_client_instance.connect.assert_called_once()
+        assert agent._options is None
 
-        # Check that SDK client was called with ClaudeAgentOptions
-        call_kwargs = mock_sdk_client.call_args[1]
-        assert "options" in call_kwargs
-        options = call_kwargs["options"]
+        options = agent._get_options()
+
+        assert options is not None
         assert options.system_prompt == PLANNER_SYSTEM_PROMPT
         assert options.model == "claude-opus-4-5-20251101"
-        assert options.allowed_tools is not None
+        assert agent._options is not None  # Cached
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_agent_custom_model(self, mock_sdk_client):
+    def test_agent_custom_model(self):
         """Test that agents can use custom models."""
         agent = PlannerAgent(model="claude-opus-4-0")
 
         assert agent.model == "claude-opus-4-0"
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_agent_custom_session_id(self, mock_sdk_client):
+    def test_agent_custom_session_id(self):
         """Test that agents can use custom session IDs."""
-        mock_client_instance = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = ExecutorAgent(session_id="custom-session")
 
         assert agent.session_id == "custom-session"
@@ -109,102 +99,68 @@ class TestAgentInitialization:
 class TestAgentMessaging:
     """Test agent message sending and receiving."""
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_send_message(self, mock_sdk_client):
+    @patch("orchestrator_auto.agents.query")
+    def test_send_message(self, mock_query):
         """Test sending a message to an agent."""
-        # Setup mock
-        mock_client_instance = Mock()
-        mock_result = Mock()
-        mock_result.content = "Agent response"
-        mock_client_instance.query.return_value = None
-        mock_client_instance.receive_response.return_value = mock_result
-        mock_sdk_client.return_value = mock_client_instance
-
+        # Mock the async iterator by mocking send_message_async directly
         agent = ExecutorAgent()
-        agent.initialize()
 
-        result = agent.send_message("Test message")
+        # Patch the async method to return a string
+        with patch.object(agent, 'send_message_async', return_value="Agent response") as mock_async:
+            # Make the sync method use the patched async
+            with patch('asyncio.run', return_value="Agent response"):
+                result = agent.send_message("Test message")
 
-        assert mock_client_instance.query.called
-        assert mock_client_instance.receive_response.called
-        assert result == mock_result
+        assert result == "Agent response"
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_planner_validate_milestone_report(self, mock_sdk_client):
+    @patch("orchestrator_auto.agents.query")
+    def test_planner_validate_milestone_report(self, mock_query):
         """Test that PlannerAgent can validate milestone reports."""
-        # Setup mock
-        mock_client_instance = Mock()
-        mock_result = Mock()
-        mock_result.content = "[MILESTONE_APPROVED] Looks good!"
-        mock_client_instance.query.return_value = None
-        mock_client_instance.receive_response.return_value = mock_result
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = PlannerAgent()
-        agent.initialize()
 
-        report = "## Milestone 1 - COMPLETED\n\nAll tests pass."
-        result = agent.validate_milestone_report(report)
+        # Patch the async method to return a string
+        with patch.object(agent, 'send_message_async', return_value="[MILESTONE_APPROVED] Looks good!"):
+            with patch('asyncio.run', return_value="[MILESTONE_APPROVED] Looks good!"):
+                report = "## Milestone 1 - COMPLETED\n\nAll tests pass."
+                result = agent.validate_milestone_report(report)
 
-        assert mock_client_instance.query.called
-        assert mock_client_instance.receive_response.called
-        assert result == mock_result
+        assert "[MILESTONE_APPROVED]" in result
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_executor_execute_milestone(self, mock_sdk_client):
+    @patch("orchestrator_auto.agents.query")
+    def test_executor_execute_milestone(self, mock_query):
         """Test that ExecutorAgent can execute milestone prompts."""
-        # Setup mock
-        mock_client_instance = Mock()
-        mock_result = Mock()
-        mock_result.content = "[PROGRESS_REPORT]..."
-        mock_client_instance.query.return_value = None
-        mock_client_instance.receive_response.return_value = mock_result
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = ExecutorAgent()
-        agent.initialize()
 
-        milestone_prompt = "Execute Milestone 1: Setup"
-        result = agent.execute_milestone(milestone_prompt)
+        # Patch the async method to return a string
+        with patch.object(agent, 'send_message_async', return_value="[PROGRESS_REPORT]..."):
+            with patch('asyncio.run', return_value="[PROGRESS_REPORT]..."):
+                milestone_prompt = "Execute Milestone 1: Setup"
+                result = agent.execute_milestone(milestone_prompt)
 
-        assert mock_client_instance.query.called
-        assert mock_client_instance.receive_response.called
-        assert result == mock_result
+        assert "[PROGRESS_REPORT]" in result
 
 
 class TestAgentFactories:
     """Test agent factory functions."""
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_create_planner_agent(self, mock_sdk_client):
+    def test_create_planner_agent(self):
         """Test creating a planner agent with factory function."""
-        mock_client_instance = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = create_planner_agent()
 
         assert isinstance(agent, PlannerAgent)
-        assert agent._client is not None  # Should be initialized
-        mock_client_instance.connect.assert_called_once()
+        assert agent.session_id == "planner"
+        assert agent.model == "claude-opus-4-5-20251101"
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_create_executor_agent(self, mock_sdk_client):
+    def test_create_executor_agent(self):
         """Test creating an executor agent with factory function."""
-        mock_client_instance = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = create_executor_agent()
 
         assert isinstance(agent, ExecutorAgent)
-        assert agent._client is not None  # Should be initialized
-        mock_client_instance.connect.assert_called_once()
+        assert agent.session_id == "executor"
+        assert agent.model == "claude-sonnet-4-5-20250929"
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_factory_custom_model(self, mock_sdk_client):
+    def test_factory_custom_model(self):
         """Test factory functions with custom models."""
-        mock_client_instance = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = create_planner_agent(model="claude-opus-4-0")
 
         assert agent.model == "claude-opus-4-0"
@@ -238,15 +194,9 @@ class TestRecoveryPrompts:
         result = hook()
         assert isinstance(result, str)
 
-    @patch("orchestrator_auto.agents.ClaudeSDKClient")
-    def test_register_recovery_hook(self, mock_sdk_client):
+    def test_register_recovery_hook(self):
         """Test registering a recovery hook with an agent."""
-        mock_client_instance = Mock()
-        mock_client_instance.register_precompact_hook = Mock()
-        mock_sdk_client.return_value = mock_client_instance
-
         agent = PlannerAgent()
-        agent.initialize()
 
         register_recovery_hook(
             agent=agent,
@@ -254,9 +204,11 @@ class TestRecoveryPrompts:
             agent_role="PLANNER",
         )
 
-        # Should have attempted to register the hook
-        # (exact method depends on SDK implementation)
-        assert hasattr(agent, "_recovery_hook") or mock_client_instance.register_precompact_hook.called
+        # Hook should be stored on the agent
+        assert hasattr(agent, "_recovery_hook")
+        assert hasattr(agent, "_session_id")
+        assert agent._session_id == "test-session"
+        assert agent._agent_role == "PLANNER"
 
     def test_get_recovery_state_no_session(self, temp_db):
         """Test getting recovery state for non-existent session."""
