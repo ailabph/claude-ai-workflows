@@ -1,0 +1,12 @@
+name: orchestrator-auto
+channels:
+  - defaults
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - claude-agent-sdk>=0.1.16
+    - click>=8.0
+    - pytest>=7.0
+    - pytest-asyncio>=0.21

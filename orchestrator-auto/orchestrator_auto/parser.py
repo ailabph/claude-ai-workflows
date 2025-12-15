@@ -1,0 +1,221 @@
+"""
+Response parsers for extracting structured information from agent responses.
+
+Parses planner and executor responses to detect response format tags
+and extract relevant information.
+"""
+
+import re
+from typing import Tuple, Dict, Any, Optional, List
+
+
+# Response type constants
+PLANNER_APPROVED = "approved"
+PLANNER_CHANGES_REQUESTED = "changes_requested"
+PLANNER_BLOCKED = "blocked"
+PLANNER_PLAN_READY = "plan_ready"
+
+EXECUTOR_REPORT = "report"
+EXECUTOR_CLARIFICATION = "clarification"
+EXECUTOR_BLOCKED = "blocked"
+
+UNKNOWN = "unknown"
+
+
+def parse_planner_response(content: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Parse planner response for structured tags.
+
+    Detects and extracts:
+    - [MILESTONE_APPROVED] → ("approved", {"milestone": N})
+    - [CHANGES_REQUESTED] → ("changes_requested", {"issues": [...]})
+    - [HUMAN_INPUT_NEEDED] → ("blocked", {"question": "..."})
+    - [PLAN_READY] → ("plan_ready", {"path": "...", "milestones": N})
+
+    Args:
+        content: Planner's response text
+
+    Returns:
+        Tuple of (response_type, extracted_data)
+    """
+    # Check for MILESTONE_APPROVED
+    milestone_approved_pattern = r'\[MILESTONE_APPROVED\].*?Milestone\s+(\d+)\s+approved'
+    match = re.search(milestone_approved_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        milestone_num = int(match.group(1))
+        return PLANNER_APPROVED, {"milestone": milestone_num}
+
+    # Check for CHANGES_REQUESTED
+    changes_pattern = r'\[CHANGES_REQUESTED\]\s*(.*?)(?:\[|$)'
+    match = re.search(changes_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        changes_text = match.group(1).strip()
+        # Extract issues (lines starting with -, bullet points)
+        issues = re.findall(r'[-•*]\s*(.+)', changes_text)
+        if not issues:
+            # If no bullet points, take the whole text
+            issues = [changes_text]
+        return PLANNER_CHANGES_REQUESTED, {"issues": issues, "text": changes_text}
+
+    # Check for HUMAN_INPUT_NEEDED
+    human_input_pattern = r'\[HUMAN_INPUT_NEEDED\]\s*(.+?)(?:\[|$)'
+    match = re.search(human_input_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        question = match.group(1).strip()
+        return PLANNER_BLOCKED, {"question": question}
+
+    # Check for PLAN_READY
+    plan_ready_pattern = r'\[PLAN_READY\]\s*Implementation plan created at:\s*([^\s\n]+)'
+    match = re.search(plan_ready_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        plan_path = match.group(1).strip()
+
+        # Try to extract milestone count
+        milestone_count_pattern = r'Milestones?:\s*(\d+)'
+        milestone_match = re.search(milestone_count_pattern, content, re.IGNORECASE)
+        milestones = int(milestone_match.group(1)) if milestone_match else 0
+
+        return PLANNER_PLAN_READY, {"path": plan_path, "milestones": milestones}
+
+    return UNKNOWN, {}
+
+
+def parse_executor_response(content: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Parse executor response for structured tags.
+
+    Detects and extracts:
+    - [PROGRESS_REPORT]...[/PROGRESS_REPORT] → ("report", {"content": "..."})
+    - [CLARIFICATION_NEEDED] → ("clarification", {"question": "..."})
+    - [BLOCKED] → ("blocked", {"reason": "..."})
+
+    Args:
+        content: Executor's response text
+
+    Returns:
+        Tuple of (response_type, extracted_data)
+    """
+    # Check for PROGRESS_REPORT
+    report_pattern = r'\[PROGRESS_REPORT\](.*?)\[/PROGRESS_REPORT\]'
+    match = re.search(report_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        report_content = match.group(1).strip()
+
+        # Try to extract milestone number
+        milestone_pattern = r'##\s*Milestone\s+(\d+):\s*([^\n-]+)'
+        milestone_match = re.search(milestone_pattern, report_content)
+
+        milestone_num = None
+        milestone_name = None
+        if milestone_match:
+            milestone_num = int(milestone_match.group(1))
+            milestone_name = milestone_match.group(2).strip()
+
+        return EXECUTOR_REPORT, {
+            "content": report_content,
+            "milestone": milestone_num,
+            "name": milestone_name
+        }
+
+    # Check for CLARIFICATION_NEEDED
+    clarification_pattern = r'\[CLARIFICATION_NEEDED\]\s*(.+?)(?:\[|$)'
+    match = re.search(clarification_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        question = match.group(1).strip()
+        return EXECUTOR_CLARIFICATION, {"question": question}
+
+    # Check for BLOCKED
+    blocked_pattern = r'\[BLOCKED\]\s*Cannot proceed:\s*(.+?)(?:\[|$)'
+    match = re.search(blocked_pattern, content, re.IGNORECASE | re.DOTALL)
+    if match:
+        reason = match.group(1).strip()
+        return EXECUTOR_BLOCKED, {"reason": reason}
+
+    return UNKNOWN, {}
+
+
+def extract_milestone_number(text: str) -> Optional[int]:
+    """
+    Extract milestone number from text.
+
+    Args:
+        text: Text containing milestone reference
+
+    Returns:
+        Milestone number or None
+    """
+    pattern = r'[Mm]ilestone\s+(\d+)'
+    match = re.search(pattern, text)
+    if match:
+        return int(match.group(1))
+    return None
+
+
+def extract_file_paths(text: str) -> List[str]:
+    """
+    Extract file paths from progress report.
+
+    Looks for patterns like:
+    - path/to/file (created)
+    - path/to/file (modified)
+
+    Args:
+        text: Progress report text
+
+    Returns:
+        List of file paths
+    """
+    pattern = r'^\s*[-•*]\s+([^\s]+)\s+\((created|modified)\)'
+    matches = re.findall(pattern, text, re.MULTILINE)
+    return [match[0] for match in matches]
+
+
+def is_response_tag_present(content: str, tag: str) -> bool:
+    """
+    Check if a response tag is present in content.
+
+    Args:
+        content: Text to search
+        tag: Tag to look for (e.g., "MILESTONE_APPROVED")
+
+    Returns:
+        True if tag is found
+    """
+    pattern = rf'\[{re.escape(tag)}\]'
+    return bool(re.search(pattern, content, re.IGNORECASE))
+
+
+def extract_all_tags(content: str) -> List[str]:
+    """
+    Extract all response format tags from content.
+
+    Args:
+        content: Text to search
+
+    Returns:
+        List of tag names found
+    """
+    pattern = r'\[([A-Z_]+)\]'
+    matches = re.findall(pattern, content)
+    return matches
+
+
+def parse_response(content: str, agent_type: str) -> Tuple[str, Dict[str, Any]]:
+    """
+    Parse response based on agent type.
+
+    Convenience function that routes to the appropriate parser.
+
+    Args:
+        content: Response text
+        agent_type: "planner" or "executor"
+
+    Returns:
+        Tuple of (response_type, extracted_data)
+    """
+    if agent_type.lower() == "planner":
+        return parse_planner_response(content)
+    elif agent_type.lower() == "executor":
+        return parse_executor_response(content)
+    else:
+        return UNKNOWN, {}

@@ -820,6 +820,207 @@ Then report the commit hash in the next progress report.
 
 ---
 
+## Automated Workflow (orchestrator-auto)
+
+**orchestrator-auto** is a Python CLI tool that automates the two-agent orchestrator workflow. It manages the planner and executor agents, handles state transitions, and persists workflow state to a SQLite database.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    orchestrator-auto                          │
+│  ┌────────────────┐         ┌─────────────────┐             │
+│  │  Planner Agent │ ◄─────► │ Executor Agent  │             │
+│  │  (Opus 4.5)    │         │ (Sonnet 4.5)    │             │
+│  └────────────────┘         └─────────────────┘             │
+│         ▲                            ▲                        │
+│         │                            │                        │
+│  ┌──────┴────────────────────────────┴─────┐                │
+│  │       Orchestrator Engine                │                │
+│  │  • State machine                         │                │
+│  │  • Message routing                       │                │
+│  │  • Blocker handling                      │                │
+│  └──────────────────┬───────────────────────┘                │
+│                     │                                         │
+│              ┌──────▼──────┐                                 │
+│              │  SQLite DB   │                                 │
+│              │  (sessions,  │                                 │
+│              │   messages,  │                                 │
+│              │  milestones, │                                 │
+│              │   blockers)  │                                 │
+│              └──────────────┘                                 │
+└──────────────────────────────────────────────────────────────┘
+```
+
+### Workflow Phases
+
+1. **Discovery** - Interactive conversation with planner to refine requirements
+2. **Planning** - Planner creates implementation plan with milestones
+3. **Execution** - Executor implements milestones, planner reviews each one
+4. **Completed** - All milestones approved
+5. **Paused** - Workflow blocked, waiting for human input
+
+### CLI Commands
+
+#### Start a new workflow
+```bash
+orchestrator start -f "Add user authentication with JWT"
+```
+
+#### Resume an existing workflow
+```bash
+orchestrator resume <session-id>
+```
+
+#### Resume with answer to blocker
+```bash
+orchestrator resume <session-id> -a "Use PostgreSQL"
+```
+
+#### Respond to blocker
+```bash
+orchestrator respond <session-id> "Use PostgreSQL"
+```
+
+#### List all sessions
+```bash
+orchestrator list
+orchestrator list -s completed  # Filter by status
+```
+
+#### Show session status
+```bash
+orchestrator status <session-id>
+```
+
+#### Export session history
+```bash
+orchestrator export <session-id> -o session_report.md
+```
+
+### Installation
+
+```bash
+cd orchestrator-auto
+
+# Create conda environment
+conda env create -f environment.yml
+conda activate orchestrator-auto
+
+# Install in development mode
+pip install -e .
+
+# Verify installation
+orchestrator --help
+```
+
+### Example Usage
+
+```bash
+# Start a new feature implementation
+$ orchestrator start -f "Implement user profile page with avatar upload"
+
+Starting new workflow session...
+Feature: Implement user profile page with avatar upload
+
+✓ Session created: a1b2c3d4
+
+============================================================
+Session: a1b2c3d4
+Phase: DISCOVERY
+Status: ACTIVE
+============================================================
+
+[Planner begins interactive discovery...]
+
+# After workflow pauses on blocker
+$ orchestrator status a1b2c3d4
+
+============================================================
+SESSION STATUS
+============================================================
+
+Session ID: a1b2c3d4
+Feature: Implement user profile page with avatar upload
+Phase: PAUSED
+Status: PAUSED
+
+⚠️  UNRESOLVED BLOCKERS:
+
+  Agent: planner
+  Question: Should we store avatars in S3 or local filesystem?
+  Created: 2025-12-15 10:30:00
+
+# Respond to blocker
+$ orchestrator respond a1b2c3d4 "Use S3 with CloudFront CDN"
+
+Responding to session: a1b2c3d4
+Question: Should we store avatars in S3 or local filesystem?
+Answer: Use S3 with CloudFront CDN
+
+Resuming workflow...
+[Workflow continues...]
+
+# Export session when complete
+$ orchestrator export a1b2c3d4
+
+✓ Session exported to: session_a1b2c3d4_20251215_143022.md
+  Messages: 42
+  Milestones: 4
+  Blockers: 1
+```
+
+### Key Features
+
+| Feature | Description |
+|---------|-------------|
+| **State Persistence** | All workflow state saved to SQLite database |
+| **Pause/Resume** | Handle blockers gracefully, resume with human input |
+| **Message History** | Complete conversation history for both agents |
+| **Context Recovery** | PreCompact hooks restore agent context after compression |
+| **Progress Tracking** | Milestone-based progress with colored CLI output |
+| **Session Export** | Export full session history to markdown |
+
+### Response Format Tags
+
+The orchestrator uses structured tags for agent communication:
+
+**Planner Tags:**
+- `[PLAN_READY]` - Plan document created, ready for execution
+- `[MILESTONE_APPROVED]` - Milestone approved, proceed to next
+- `[CHANGES_REQUESTED]` - Milestone needs changes, executor should revise
+- `[HUMAN_INPUT_NEEDED]` - Blocker, need human clarification
+
+**Executor Tags:**
+- `[PROGRESS_REPORT]` - Milestone completion report
+- `[CLARIFICATION_NEEDED]` - Need planner clarification
+- `[BLOCKED]` - Blocked by external dependency
+
+### Benefits Over Manual Workflow
+
+| Manual | Automated (orchestrator-auto) |
+|--------|-------------------------------|
+| Copy/paste prompts between sessions | Automatic agent communication |
+| Track state manually | SQLite persistence |
+| Lose context on compression | PreCompact hooks restore context |
+| Manual milestone tracking | Automated milestone transitions |
+| No history export | Export full session to markdown |
+
+### When to Use
+
+**Use orchestrator-auto when:**
+- Implementing complex features with 3+ milestones
+- Need persistent state across multiple sessions
+- Want automatic context recovery
+- Need exportable workflow history
+
+**Use manual workflow when:**
+- Quick single-milestone tasks
+- Prototyping/experimenting
+- Custom agent configurations needed
+
+---
+
 ## Best Practices
 
 | DO | DON'T |
@@ -841,3 +1042,4 @@ Then report the commit hash in the next progress report.
 | 2.0 | 2025-12 | Optimized: consolidated templates, table formats, condensed example |
 | 2.1 | 2025-12 | Added two-agent workflow, plan templates (backend/frontend), handoff formats |
 | 2.2 | 2025-12 | Added context retention, recovery protocol, git checkpoints, updated kickstart prompts |
+| 2.3 | 2025-12 | Added orchestrator-auto: automated workflow CLI tool with SQLite persistence, context recovery, and session management |
