@@ -106,6 +106,46 @@ def extract_plan_content(content: str) -> Optional[str]:
     return None
 
 
+def parse_plan_file(plan_path: str) -> Dict[str, Any]:
+    """
+    Parse a plan file and extract metadata.
+
+    Args:
+        plan_path: Path to plan markdown file
+
+    Returns:
+        Dict with:
+        - valid: bool - whether plan is valid
+        - milestones: int - number of milestones
+        - milestone_names: List[str] - milestone names
+        - error: Optional[str] - error message if invalid
+    """
+    from pathlib import Path
+
+    path = Path(plan_path)
+    if not path.exists():
+        return {"valid": False, "error": f"Plan file not found: {plan_path}"}
+
+    content = path.read_text()
+
+    # Extract milestones using regex
+    # Pattern: ### Milestone N: Name
+    milestone_pattern = r'###\s*Milestone\s*(\d+):\s*(.+)'
+    matches = re.findall(milestone_pattern, content, re.IGNORECASE)
+
+    if not matches:
+        return {"valid": False, "error": "No milestones found in plan file"}
+
+    milestone_names = [name.strip() for _, name in matches]
+
+    return {
+        "valid": True,
+        "milestones": len(matches),
+        "milestone_names": milestone_names,
+        "error": None
+    }
+
+
 def parse_executor_response(content: str) -> Tuple[str, Dict[str, Any]]:
     """
     Parse executor response for structured tags.

@@ -469,3 +469,98 @@ class TestOrchestratorMessageLogging:
         assert messages[0]["agent"] == "planner"
         assert messages[0]["content"] == "Test message"
         assert messages[0]["token_count"] == 50
+
+
+class TestOrchestratorStartWithPlan:
+    """Test starting with existing plan file."""
+
+    def test_start_with_valid_plan(self, temp_db, tmp_path):
+        """Test starting session with valid plan file."""
+        # Create a valid plan file
+        plan_content = """# Implementation Plan: Test Feature
+
+## Overview
+Test feature implementation.
+
+## Milestones
+
+### Milestone 1: Setup
+**Deliverables:**
+- Setup complete
+
+### Milestone 2: Implementation
+**Deliverables:**
+- Feature implemented
+
+### Milestone 3: Testing
+**Deliverables:**
+- Tests passing
+"""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text(plan_content)
+
+        # Create orchestrator with plan
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        # Verify session was created in execution phase
+        assert orch.session_id is not None
+        assert orch.state.phase == "execution"
+        assert orch.state.current_milestone == 1
+        assert orch.state.total_milestones == 3
+        assert orch.state.plan_path == str(plan_file)
+
+    def test_start_with_invalid_plan_no_milestones(self, temp_db, tmp_path):
+        """Test starting with plan that has no milestones."""
+        # Create invalid plan file (no milestones)
+        plan_content = """# Implementation Plan
+
+## Overview
+No milestones here.
+"""
+        plan_file = tmp_path / "invalid_plan.md"
+        plan_file.write_text(plan_content)
+
+        # Should raise ValueError
+        with pytest.raises(ValueError, match="No milestones found"):
+            Orchestrator(
+                feature_description="Test feature",
+                db_path=temp_db,
+                plan_path=str(plan_file),
+                on_output=lambda x: None
+            )
+
+    def test_start_with_nonexistent_plan(self, temp_db):
+        """Test starting with non-existent plan file."""
+        with pytest.raises(ValueError, match="not found"):
+            Orchestrator(
+                feature_description="Test feature",
+                db_path=temp_db,
+                plan_path="/nonexistent/plan.md",
+                on_output=lambda x: None
+            )
+
+    def test_start_with_plan_single_milestone(self, temp_db, tmp_path):
+        """Test starting with plan that has single milestone."""
+        plan_content = """# Quick Fix Plan
+
+### Milestone 1: Fix Bug
+**Deliverables:**
+- Bug fix
+"""
+        plan_file = tmp_path / "quick_plan.md"
+        plan_file.write_text(plan_content)
+
+        orch = Orchestrator(
+            feature_description="Quick fix",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        assert orch.state.phase == "execution"
+        assert orch.state.total_milestones == 1

@@ -393,3 +393,94 @@ class TestEdgeCases:
         assert response_type == PLANNER_CHANGES_REQUESTED
         assert len(data["issues"]) == 1
         assert "timeout" in data["issues"][0]
+
+
+class TestParsePlanFile:
+    """Test parse_plan_file function."""
+
+    def test_parse_valid_plan_file(self, tmp_path):
+        """Test parsing a valid plan file."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Implementation Plan: User Authentication
+
+## Overview
+Add user authentication with JWT.
+
+## Milestones
+
+### Milestone 1: Setup Database
+**Deliverables:**
+- User model
+- Migration
+
+### Milestone 2: Auth Endpoints
+**Deliverables:**
+- Login endpoint
+- Logout endpoint
+
+### Milestone 3: Testing
+**Deliverables:**
+- Unit tests
+- Integration tests
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is True
+        assert result["milestones"] == 3
+        assert len(result["milestone_names"]) == 3
+        assert "Setup Database" in result["milestone_names"][0]
+        assert "Auth Endpoints" in result["milestone_names"][1]
+        assert "Testing" in result["milestone_names"][2]
+        assert result["error"] is None
+
+    def test_parse_plan_file_not_found(self):
+        """Test parsing non-existent file."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        result = parse_plan_file("/nonexistent/path/plan.md")
+
+        assert result["valid"] is False
+        assert "not found" in result["error"]
+
+    def test_parse_plan_file_no_milestones(self, tmp_path):
+        """Test parsing file without milestones."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Implementation Plan
+
+## Overview
+Some description without milestones.
+
+## Notes
+Just some notes here.
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is False
+        assert "No milestones found" in result["error"]
+
+    def test_parse_plan_file_single_milestone(self, tmp_path):
+        """Test parsing file with single milestone."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Quick Fix Plan
+
+### Milestone 1: Fix Bug
+**Deliverables:**
+- Bug fix
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is True
+        assert result["milestones"] == 1
+        assert "Fix Bug" in result["milestone_names"][0]

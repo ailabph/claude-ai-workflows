@@ -41,6 +41,7 @@ class Orchestrator:
         feature_description: Optional[str] = None,
         session_id: Optional[str] = None,
         db_path: Optional[str] = None,
+        plan_path: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
     ):
         """
@@ -50,6 +51,7 @@ class Orchestrator:
             feature_description: Description for new session
             session_id: ID of existing session to resume
             db_path: Optional database path
+            plan_path: Optional path to existing plan file (skips discovery/planning)
             on_output: Optional callback for output messages
         """
         self.db_path = db_path
@@ -68,12 +70,16 @@ class Orchestrator:
                 raise ValueError(f"Session {session_id} not found")
             self.state = state
         elif feature_description:
-            # Create new session
-            self.session_id = db.create_session(
-                feature_description=feature_description,
-                db_path=db_path
-            )
-            self.state = self.state_machine.get_state(self.session_id)
+            if plan_path:
+                # Start with existing plan (skip discovery/planning)
+                self._start_with_plan(feature_description, plan_path)
+            else:
+                # Create new session with discovery
+                self.session_id = db.create_session(
+                    feature_description=feature_description,
+                    db_path=db_path
+                )
+                self.state = self.state_machine.get_state(self.session_id)
         else:
             raise ValueError("Must provide either feature_description or session_id")
 
@@ -83,6 +89,51 @@ class Orchestrator:
 
         # Track current blocker
         self.current_blocker_id: Optional[int] = None
+
+    def _start_with_plan(self, feature_description: str, plan_path: str) -> None:
+        """
+        Start a new session with an existing plan file.
+
+        Skips discovery and planning phases, goes directly to execution.
+
+        Args:
+            feature_description: Feature being implemented
+            plan_path: Path to existing plan file
+        """
+        from .parser import parse_plan_file
+
+        # Validate plan file
+        plan_info = parse_plan_file(plan_path)
+        if not plan_info["valid"]:
+            raise ValueError(f"Invalid plan file: {plan_info['error']}")
+
+        self._output(f"\n→ Using existing plan: {plan_path}")
+        self._output(f"\n  Milestones: {plan_info['milestones']}")
+        self._output(f"\n  Names: {', '.join(plan_info['milestone_names'])}\n")
+
+        # Create session
+        self.session_id = db.create_session(
+            feature_description=feature_description,
+            db_path=self.db_path
+        )
+
+        # Update to execution phase with plan info
+        db.update_session(
+            self.session_id,
+            {
+                "phase": "execution",
+                "plan_path": plan_path,
+                "current_milestone": 1,
+                "total_milestones": plan_info["milestones"],
+            },
+            self.db_path
+        )
+
+        # Load state
+        self.state = self.state_machine.get_state(self.session_id)
+
+        self._output(f"\n✓ Session created: {self.session_id[:8]}")
+        self._output(f"\n  Phase: EXECUTION (skipped discovery/planning)\n")
 
     def _log_message(
         self,

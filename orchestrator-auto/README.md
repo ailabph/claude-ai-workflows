@@ -506,7 +506,8 @@ Contributions are welcome! Please:
 ## Future Features / TODO
 
 - [ ] **Model Selection CLI Options** - Add `--planner-model` and `--executor-model` flags to allow choosing different Claude models (e.g., use Haiku for executor to reduce costs)
-- [ ] **Activity Indicator** - Add CLI UI feedback (spinner, progress dots, or status messages) to show the user the agents are working and not lagging/stuck
+- [ ] **Activity Indicator** - Add CLI UI feedback (spinner, progress dots, or streaming snippets) to show the user the agents are working and not lagging/stuck. See `docs/FEATURE_activity_indicator.md` for implementation plan.
+- [ ] **Import Existing Plan** - Add `--plan` flag to start a session with a pre-existing milestone plan file, skipping discovery and planning phases. Useful for reusing proven plan templates or resuming failed workflows with a known-good plan.
 
 ---
 

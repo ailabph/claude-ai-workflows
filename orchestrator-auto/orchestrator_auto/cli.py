@@ -94,7 +94,8 @@ def cli():
 @cli.command()
 @click.option('--feature', '-f', required=True, help='Feature description')
 @click.option('--db-path', '-d', help='Custom database path')
-def start(feature: str, db_path: Optional[str]):
+@click.option('--plan', '-p', type=click.Path(exists=True), help='Path to existing plan file (skips discovery/planning)')
+def start(feature: str, db_path: Optional[str], plan: Optional[str]):
     """Start a new workflow session."""
     global _current_orchestrator
 
@@ -104,6 +105,8 @@ def start(feature: str, db_path: Optional[str]):
     try:
         click.secho("Starting new workflow session...", fg="cyan", bold=True)
         click.echo(f"Feature: {feature}")
+        if plan:
+            click.echo(f"Plan: {plan}")
         click.echo()
 
         # Initialize database
@@ -113,6 +116,7 @@ def start(feature: str, db_path: Optional[str]):
         orch = Orchestrator(
             feature_description=feature,
             db_path=db_path,
+            plan_path=plan,
             on_output=output_callback
         )
         _current_orchestrator = orch

@@ -137,6 +137,57 @@ class TestStartCommand:
         assert result.exit_code != 0
         assert 'Error' in result.output
 
+    @patch('orchestrator_auto.cli.Orchestrator')
+    def test_start_with_plan(self, mock_orch_class, runner, temp_db, tmp_path):
+        """Test starting with existing plan file."""
+        # Create a valid plan file
+        plan_content = """# Test Plan
+
+### Milestone 1: Setup
+**Deliverables:**
+- Setup complete
+
+### Milestone 2: Implementation
+**Deliverables:**
+- Feature done
+"""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text(plan_content)
+
+        # Setup mock
+        mock_orch = Mock()
+        mock_orch.session_id = "test123"
+        mock_orch.get_status.return_value = {
+            'session_id': 'test123',
+            'phase': Phase.EXECUTION,
+            'status': Status.ACTIVE,
+            'current_milestone': 1,
+            'total_milestones': 2,
+        }
+        mock_orch_class.return_value = mock_orch
+
+        # Run command with --plan
+        result = runner.invoke(cli, [
+            'start', '-f', 'Test feature', '-d', temp_db, '--plan', str(plan_file)
+        ])
+
+        # Verify
+        assert result.exit_code == 0
+        assert 'test123' in result.output
+        mock_orch_class.assert_called_once()
+        # Verify plan_path was passed
+        call_kwargs = mock_orch_class.call_args.kwargs
+        assert call_kwargs['plan_path'] == str(plan_file)
+
+    def test_start_with_nonexistent_plan(self, runner, temp_db):
+        """Test starting with non-existent plan file."""
+        result = runner.invoke(cli, [
+            'start', '-f', 'Test feature', '-d', temp_db, '--plan', '/nonexistent/plan.md'
+        ])
+
+        # Click should fail because file doesn't exist
+        assert result.exit_code != 0
+
 
 class TestResumeCommand:
     """Test the resume command."""
