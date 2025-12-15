@@ -69,6 +69,7 @@ class BaseAgent:
                 tools=self.allowed_tools,
                 model=self.model,
                 cwd=self.cwd,
+                permission_mode="acceptEdits",  # Auto-approve file operations
             )
         return self._options
 
