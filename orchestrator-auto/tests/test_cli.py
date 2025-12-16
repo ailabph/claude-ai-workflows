@@ -227,9 +227,9 @@ class TestResumeCommand:
     @patch('orchestrator_auto.cli.Orchestrator')
     def test_resume_paused_without_answer(self, mock_orch_class, runner, temp_db):
         """Test resuming paused session without answer."""
-        # Create a session and pause it
+        # Create a session and pause it (set both phase and status as state machine does)
         session_id = db.create_session("Test feature", db_path=temp_db)
-        db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
+        db.update_session(session_id, {'phase': Phase.PAUSED, 'status': Status.PAUSED}, temp_db)
 
         # Create a blocker
         db.create_blocker(session_id, "planner", "Test question?", temp_db)

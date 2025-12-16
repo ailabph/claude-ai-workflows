@@ -1,6 +1,6 @@
 # Telegram Integration Design
 
-**Status:** Draft
+**Status:** Phase 1 + 1.1 Complete (Outbound notifications with heartbeat hardening)
 **Priority:** High
 **Complexity:** Medium
 
@@ -345,21 +345,41 @@ This codebase pauses workflows by transitioning to `paused` and returning (see `
 
 ## Implementation Phases (Tightened)
 
-### Phase 1: Outbound Notifications (MVP)
+### Phase 1: Outbound Notifications (MVP) ✅ COMPLETED
 
 **Scope:**
-- [ ] Add `orchestrator_auto/telegram.py` (sync `httpx` client + `TelegramNotifier`)
-- [ ] Config support in `~/.claude_orchestrator/config.yaml` (`telegram.enabled`, `bot_token`, `chat_id`)
-- [ ] Env var overrides: `ORCHESTRATOR_TELEGRAM_BOT_TOKEN`, `ORCHESTRATOR_TELEGRAM_CHAT_ID`
-- [ ] CLI: `orchestrator start|resume --telegram/--no-telegram`
-- [ ] CLI: `orchestrator telegram test` (validate config + send test message)
-- [ ] Engine hooks for notifications:
+- [x] Add `orchestrator_auto/telegram.py` (sync `httpx` client + `TelegramNotifier`)
+- [x] Config support in `~/.claude_orchestrator/config.yaml` (`telegram.enabled`, `bot_token`, `chat_id`)
+- [x] Env var overrides: `ORCHESTRATOR_TELEGRAM_BOT_TOKEN`, `ORCHESTRATOR_TELEGRAM_CHAT_ID`
+- [x] CLI: `orchestrator start|resume --telegram/--no-telegram`
+- [x] CLI: `orchestrator telegram test` (validate config + send test message)
+- [x] Engine hooks for notifications:
       - workflow started (at `Orchestrator.start()`)
       - blocker created (inside `_handle_blocker()`)
       - milestone approved (after `TransitionEvent.MILESTONE_APPROVED`)
       - completed/failed
 
 **Effort:** 3-5 hours
+
+### Phase 1.1: Heartbeat Hardening ✅ COMPLETED
+
+**Scope:**
+- [x] Add `heartbeat_at` column to sessions schema (SQLite-friendly format)
+- [x] Add `db.touch_session()` to update heartbeat without state change
+- [x] Update engine to touch heartbeat during activity:
+      - Before/after each agent call
+      - During streaming (throttled to once per 60s)
+- [x] Fix stuck detection to use `heartbeat_at` (falls back to `updated_at`)
+- [x] Python datetime comparison (avoids SQLite parsing issues)
+- [x] Config: `telegram.stuck_sessions.enabled`, `inactive_minutes` (default: 20)
+- [x] Env override: `ORCHESTRATOR_TELEGRAM_STUCK_MINUTES`
+- [x] CLI `--force` semantics:
+      - Refuses on paused session with blocker (use `--answer` instead)
+      - Warns on discovery phase (likely waiting on human)
+- [x] CLI `reset` command: refreshes heartbeat, guides user
+- [x] Tests for heartbeat and stuck detection (8 new tests)
+
+**Effort:** 2-3 hours
 
 ### Phase 2: Interactive Blockers (Listener)
 

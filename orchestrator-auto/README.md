@@ -34,6 +34,12 @@ orchestrator status <session-id>
 # Resume a session
 orchestrator resume <session-id>
 
+# Force resume an orphaned/stuck session
+orchestrator resume <session-id> --force
+
+# Reset an orphaned session (refresh heartbeat)
+orchestrator reset <session-id>
+
 # Respond to a blocker
 orchestrator respond <session-id> "Your answer here"
 
@@ -88,8 +94,21 @@ orchestrator start -f "Feature description" [options]
 ### `resume` - Resume existing session
 
 ```bash
-orchestrator resume <session-id> [-a "answer"]
+orchestrator resume <session-id> [-a "answer"] [--force]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-a, --answer` | Answer to blocker question |
+| `--force` | Force resume orphaned sessions (bypasses pause check) |
+
+### `reset` - Reset orphaned session
+
+```bash
+orchestrator reset <session-id>
+```
+
+Refreshes heartbeat and prepares session for force resume. Use when a session is stuck in ACTIVE status but no process is running.
 
 ### `respond` - Answer a blocker
 
@@ -168,6 +187,9 @@ telegram:
   enabled: true
   bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
   chat_id: "YOUR_CHAT_ID"
+  stuck_sessions:
+    enabled: true
+    inactive_minutes: 20
 ```
 
 **Environment variables** (override config file):
@@ -176,7 +198,10 @@ telegram:
 export ORCHESTRATOR_TELEGRAM_BOT_TOKEN="your-bot-token"
 export ORCHESTRATOR_TELEGRAM_CHAT_ID="your-chat-id"
 export ORCHESTRATOR_TELEGRAM_ENABLED="true"
+export ORCHESTRATOR_TELEGRAM_STUCK_MINUTES="20"
 ```
+
+**Stuck Session Detection:** Automatically notifies when sessions in planning/execution phase have no heartbeat for the configured threshold. Uses `heartbeat_at` timestamp updated during agent activity (not just state transitions).
 
 **Priority:** CLI flags > env vars > config file
 

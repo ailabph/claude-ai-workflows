@@ -21,6 +21,7 @@ from .config import (
     get_model_display_name,
     get_telegram_config,
     is_telegram_configured,
+    get_stuck_sessions_config,
 )
 
 
@@ -122,6 +123,60 @@ def _create_telegram_notifier(cli_enabled: Optional[bool] = None):
         return None
 
 
+def _check_stuck_sessions(telegram_notifier, db_path: Optional[str] = None) -> None:
+    """
+    Check for stuck sessions and notify via Telegram.
+
+    Uses config for enabled/inactive_minutes settings.
+
+    Args:
+        telegram_notifier: TelegramNotifier instance (or None)
+        db_path: Optional database path
+    """
+    if not telegram_notifier:
+        return
+
+    # Get stuck sessions config
+    stuck_config = get_stuck_sessions_config()
+    if not stuck_config.get("enabled", True):
+        return
+
+    inactive_minutes = stuck_config.get("inactive_minutes", 20)
+
+    try:
+        stuck_sessions = db.get_stuck_sessions(db_path, inactive_minutes)
+
+        for session in stuck_sessions:
+            # Use heartbeat_at if available, fall back to updated_at
+            from datetime import datetime
+            last_activity_str = session.get('heartbeat_at') or session.get('updated_at')
+
+            if last_activity_str:
+                try:
+                    if 'T' in last_activity_str:
+                        last_activity = datetime.fromisoformat(last_activity_str)
+                    else:
+                        last_activity = datetime.strptime(last_activity_str, "%Y-%m-%d %H:%M:%S")
+                    last_updated_str = last_activity.strftime('%Y-%m-%d %H:%M')
+                except (ValueError, TypeError):
+                    last_updated_str = last_activity_str
+            else:
+                last_updated_str = "unknown"
+
+            telegram_notifier.notify_stuck_session(
+                session_id=session['id'][:8],
+                feature=session['feature_description'],
+                phase=session['phase'].upper(),
+                last_updated=last_updated_str,
+                inactive_minutes=inactive_minutes,
+            )
+            click.secho(f"⚠ Stuck session detected: {session['id'][:8]} ({session['feature_description']})", fg="yellow")
+
+    except Exception as e:
+        # Don't let stuck session check crash the workflow
+        click.secho(f"⚠ Stuck session check failed: {e}", fg="yellow")
+
+
 @click.group()
 def cli():
     """Orchestrator Auto - Automated two-agent workflow."""
@@ -174,6 +229,9 @@ def start(
 
         # Initialize database
         db.init_db(db_path)
+
+        # Check for stuck sessions and notify via Telegram
+        _check_stuck_sessions(telegram_notifier, db_path)
 
         # Create orchestrator
         orch = Orchestrator(
@@ -231,7 +289,8 @@ def start(
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool]):
+@click.option('--force', '-f', is_flag=True, help='Force resume orphaned sessions (bypass pause check)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -247,6 +306,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
         click.secho(f"Resuming session: {session_id}", fg="cyan", bold=True)
         if telegram_notifier:
             click.echo("Telegram: enabled")
+        if force:
+            click.secho("Force mode: bypassing pause check", fg="yellow")
         click.echo()
 
         # Initialize database
@@ -257,6 +318,31 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
         if not session:
             click.secho(f"✗ Session '{session_id}' not found", fg="red")
             sys.exit(1)
+
+        # Check if session is completed
+        if session['phase'] == Phase.COMPLETED:
+            click.secho(f"✗ Session is already completed", fg="red")
+            sys.exit(1)
+
+        # Handle --force semantics
+        if force:
+            # --force cannot bypass blockers in paused sessions
+            if session['phase'] == Phase.PAUSED:
+                blockers = db.get_unresolved_blockers(session_id, db_path)
+                if blockers:
+                    click.secho("✗ Cannot use --force on paused session with blocker", fg="red")
+                    click.echo()
+                    click.echo(f"Question: {blockers[0]['question']}")
+                    click.echo()
+                    click.echo("Use normal resume with --answer instead:")
+                    click.secho(f"  orchestrator resume {session_id} --answer \"your response\"", fg="cyan")
+                    sys.exit(1)
+
+            # Warn about discovery phase (waiting on human input)
+            if session['phase'] == Phase.DISCOVERY:
+                click.secho("⚠ Session is in discovery phase (likely waiting on human input)", fg="yellow")
+                click.echo("Discovery requires human interaction. Consider if this is truly stuck.")
+                click.echo()
 
         # Create orchestrator
         orch = Orchestrator(
@@ -270,8 +356,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 
         show_progress(orch)
 
-        # If paused, check for answer
-        if session['status'] == Status.PAUSED:
+        # If paused, check for answer (normal resume flow)
+        if session['phase'] == Phase.PAUSED and not force:
             blockers = db.get_unresolved_blockers(session_id, db_path)
             if blockers and not answer:
                 click.secho("⚠️  Session is paused with unresolved blocker:", fg="yellow")
@@ -284,7 +370,14 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
         # Resume workflow
         click.secho("Resuming workflow...", fg="cyan")
         click.echo()
-        orch.resume(answer=answer)
+
+        if force:
+            # Force resume: directly call start() to continue from current phase
+            # Touch heartbeat to mark session as active again
+            db.touch_session(session_id, db_path)
+            orch.start()
+        else:
+            orch.resume(answer=answer)
 
         # Show final status
         click.echo()
@@ -340,6 +433,68 @@ def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Opti
         # Resume with answer (will call resume command internally)
         ctx = click.get_current_context()
         ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram)
+
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red", bold=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument('session_id')
+@click.option('--db-path', '-d', help='Custom database path')
+def reset(session_id: str, db_path: Optional[str]):
+    """Reset an orphaned session to allow resumption.
+
+    Use this when a session is stuck in ACTIVE status but no process is running.
+    This refreshes the heartbeat and allows force resume.
+    """
+    try:
+        # Initialize database
+        db.init_db(db_path)
+
+        # Check if session exists
+        session = db.get_session(session_id, db_path)
+        if not session:
+            click.secho(f"✗ Session '{session_id}' not found", fg="red")
+            sys.exit(1)
+
+        # Show current state
+        click.echo(f"Session: {session_id}")
+        click.echo(f"Feature: {session['feature_description']}")
+        click.echo(f"Phase: {session['phase']}")
+        click.echo(f"Status: {session['status']}")
+
+        # Show last activity
+        last_activity = session.get('heartbeat_at') or session.get('updated_at')
+        if last_activity:
+            click.echo(f"Last activity: {last_activity}")
+        click.echo()
+
+        if session['phase'] == Phase.COMPLETED:
+            click.secho("✗ Session is already completed, nothing to reset", fg="yellow")
+            sys.exit(0)
+
+        if session['phase'] == Phase.PAUSED:
+            blockers = db.get_unresolved_blockers(session_id, db_path)
+            if blockers:
+                click.secho("Session is paused with unresolved blocker:", fg="yellow")
+                click.echo(f"  Question: {blockers[0]['question']}")
+                click.echo()
+                click.echo("Use normal resume with --answer:")
+                click.secho(f"  orchestrator resume {session_id} --answer \"your response\"", fg="cyan")
+            else:
+                click.secho("Session is paused, you can resume normally:", fg="yellow")
+                click.secho(f"  orchestrator resume {session_id}", fg="cyan")
+            sys.exit(0)
+
+        # Reset: touch heartbeat and ensure status is active
+        db.touch_session(session_id, db_path)
+        db.update_session(session_id, {'status': Status.ACTIVE}, db_path)
+
+        click.secho("✓ Session reset (heartbeat refreshed)", fg="green")
+        click.echo()
+        click.echo("Now run:")
+        click.secho(f"  orchestrator resume {session_id} --force", fg="cyan")
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)

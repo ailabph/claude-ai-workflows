@@ -237,6 +237,31 @@ _Use `orchestrator resume {session_id}` to retry_"""
 
         return self._send_message(text)
 
+    def notify_stuck_session(
+        self,
+        session_id: str,
+        feature: str,
+        phase: str,
+        last_updated: str,
+        inactive_minutes: int,
+    ) -> Optional[int]:
+        """
+        Send notification when a stuck session is detected.
+
+        Returns message ID if successful.
+        """
+        text = f"""⚠️ *Stuck Session Detected*
+
+Session: `{session_id}`
+Feature: {self._escape_markdown(feature)}
+Phase: {phase}
+Last Activity: {last_updated}
+Inactive: {inactive_minutes}\\+ minutes
+
+_Use `orchestrator resume {session_id} \\-\\-force` to restart_"""
+
+        return self._send_message(text)
+
     def send_test_message(self) -> tuple[bool, str]:
         """
         Send a test message to verify configuration.

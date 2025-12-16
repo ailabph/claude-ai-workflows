@@ -350,3 +350,150 @@ class TestBlockerManagement:
         all_blockers = db.get_all_blockers(session_id, temp_db)
 
         assert len(all_blockers) == 2
+
+
+class TestHeartbeatAndStuckSessions:
+    """Test heartbeat functionality and stuck session detection."""
+
+    def test_touch_session_updates_heartbeat(self, temp_db):
+        """Test that touch_session updates heartbeat_at."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        # Get initial heartbeat
+        session = db.get_session(session_id, temp_db)
+        initial_heartbeat = session.get('heartbeat_at')
+        assert initial_heartbeat is not None
+
+        # Touch session
+        import time
+        time.sleep(0.1)  # Small delay to ensure different timestamp
+        db.touch_session(session_id, temp_db)
+
+        # Verify heartbeat was updated
+        session = db.get_session(session_id, temp_db)
+        new_heartbeat = session.get('heartbeat_at')
+        assert new_heartbeat is not None
+        assert new_heartbeat >= initial_heartbeat
+
+    def test_create_session_sets_heartbeat(self, temp_db):
+        """Test that create_session sets initial heartbeat_at."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        session = db.get_session(session_id, temp_db)
+        assert session.get('heartbeat_at') is not None
+
+    def test_stuck_detection_returns_old_heartbeat_sessions(self, temp_db):
+        """Test stuck detection returns sessions with old heartbeat."""
+        from datetime import datetime, timedelta
+
+        # Create a session with old heartbeat
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        # Manually set old heartbeat (30 minutes ago)
+        old_time = (datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+        db.update_session(session_id, {
+            'phase': 'execution',
+            'status': 'active',
+            'heartbeat_at': old_time
+        }, temp_db)
+
+        # Check stuck sessions with 20 minute threshold
+        stuck = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+
+        assert len(stuck) == 1
+        assert stuck[0]['id'] == session_id
+
+    def test_stuck_detection_excludes_recent_heartbeat(self, temp_db):
+        """Test that sessions with recent heartbeat are not flagged as stuck."""
+        # Create a session
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        # Update to execution phase (keeps recent heartbeat)
+        db.update_session(session_id, {
+            'phase': 'execution',
+            'status': 'active'
+        }, temp_db)
+        db.touch_session(session_id, temp_db)
+
+        # Check stuck sessions - should not include this session
+        stuck = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+
+        assert len(stuck) == 0
+
+    def test_stuck_detection_excludes_discovery_phase(self, temp_db):
+        """Test that discovery phase sessions are not flagged as stuck."""
+        from datetime import datetime, timedelta
+
+        # Create a session in discovery phase with old heartbeat
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        old_time = (datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+        db.update_session(session_id, {
+            'phase': 'discovery',  # Discovery is excluded
+            'status': 'active',
+            'heartbeat_at': old_time
+        }, temp_db)
+
+        stuck = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+
+        assert len(stuck) == 0
+
+    def test_stuck_detection_excludes_paused_phase(self, temp_db):
+        """Test that paused sessions are not flagged as stuck."""
+        from datetime import datetime, timedelta
+
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        old_time = (datetime.now() - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
+        db.update_session(session_id, {
+            'phase': 'paused',
+            'status': 'paused',
+            'heartbeat_at': old_time
+        }, temp_db)
+
+        stuck = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+
+        assert len(stuck) == 0
+
+    def test_stuck_detection_falls_back_to_updated_at(self, temp_db):
+        """Test that stuck detection uses updated_at when heartbeat_at is NULL."""
+        from datetime import datetime, timedelta
+
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        # Set old updated_at and NULL heartbeat
+        old_time = (datetime.now() - timedelta(minutes=30)).isoformat()
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE sessions
+                SET phase = 'execution', status = 'active',
+                    heartbeat_at = NULL, updated_at = ?
+                WHERE id = ?
+            """, (old_time, session_id))
+
+        stuck = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+
+        assert len(stuck) == 1
+
+    def test_stuck_detection_configurable_threshold(self, temp_db):
+        """Test that stuck detection respects inactive_minutes parameter."""
+        from datetime import datetime, timedelta
+
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        # Set heartbeat to 15 minutes ago
+        old_time = (datetime.now() - timedelta(minutes=15)).strftime("%Y-%m-%d %H:%M:%S")
+        db.update_session(session_id, {
+            'phase': 'execution',
+            'status': 'active',
+            'heartbeat_at': old_time
+        }, temp_db)
+
+        # With 20 min threshold - not stuck
+        stuck_20 = db.get_stuck_sessions(temp_db, inactive_minutes=20)
+        assert len(stuck_20) == 0
+
+        # With 10 min threshold - stuck
+        stuck_10 = db.get_stuck_sessions(temp_db, inactive_minutes=10)
+        assert len(stuck_10) == 1

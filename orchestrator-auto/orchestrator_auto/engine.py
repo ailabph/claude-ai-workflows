@@ -333,6 +333,48 @@ class Orchestrator:
             return None
         return StreamingIndicator(interval=1.5, show_tokens=True)
 
+    def _touch_heartbeat(self) -> None:
+        """Update session heartbeat to signal activity."""
+        try:
+            db.touch_session(self.session_id, self.db_path)
+        except Exception:
+            # Don't let heartbeat failures crash the workflow
+            pass
+
+    def _create_heartbeat_callback(
+        self,
+        original_callback: Optional[callable],
+        interval_seconds: int = 60
+    ) -> callable:
+        """
+        Create a callback that updates heartbeat during streaming.
+
+        Wraps the original on_chunk callback and throttles heartbeat updates
+        to at most once per interval_seconds.
+
+        Args:
+            original_callback: Original on_chunk callback (may be None)
+            interval_seconds: Minimum seconds between heartbeat updates
+
+        Returns:
+            Wrapped callback function
+        """
+        import time
+        last_heartbeat = [0]  # Use list for mutable closure
+
+        def wrapped_callback(chunk):
+            # Call original callback if provided
+            if original_callback:
+                original_callback(chunk)
+
+            # Throttle heartbeat updates
+            now = time.time()
+            if now - last_heartbeat[0] >= interval_seconds:
+                self._touch_heartbeat()
+                last_heartbeat[0] = now
+
+        return wrapped_callback
+
     def _send_with_activity(
         self,
         agent,
@@ -355,10 +397,22 @@ class Orchestrator:
         if indicator:
             self._output(f"  {activity_label}... ")
 
+        # Touch heartbeat before sending
+        self._touch_heartbeat()
+
+        # Wrap callback to update heartbeat during streaming
+        on_chunk = self._create_heartbeat_callback(
+            indicator.on_chunk if indicator else None,
+            interval_seconds=60
+        )
+
         response = agent.send_message(
             message,
-            on_chunk=indicator.on_chunk if indicator else None
+            on_chunk=on_chunk
         )
+
+        # Touch heartbeat after response
+        self._touch_heartbeat()
 
         if indicator:
             indicator.finish()

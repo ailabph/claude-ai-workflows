@@ -94,6 +94,14 @@ def init_db(db_path: Optional[str] = None) -> None:
         except sqlite3.OperationalError:
             pass
 
+        # Add heartbeat_at column if it doesn't exist (for stuck session detection)
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN heartbeat_at TIMESTAMP
+            """)
+        except sqlite3.OperationalError:
+            pass
+
         # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -157,6 +165,11 @@ def init_db(db_path: Optional[str] = None) -> None:
 # Session CRUD
 # ============================================================================
 
+def _sqlite_timestamp() -> str:
+    """Get current timestamp in SQLite-friendly format (YYYY-MM-DD HH:MM:SS)."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
 def create_session(
     feature_description: str,
     planner_model: Optional[str] = None,
@@ -166,13 +179,14 @@ def create_session(
     """Create a new workflow session. Returns session ID."""
 
     session_id = str(uuid.uuid4())[:8]  # Short ID for CLI convenience
+    now = _sqlite_timestamp()
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO sessions (id, feature_description, planner_model, executor_model)
-            VALUES (?, ?, ?, ?)
-        """, (session_id, feature_description, planner_model, executor_model))
+            INSERT INTO sessions (id, feature_description, planner_model, executor_model, heartbeat_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (session_id, feature_description, planner_model, executor_model, now))
 
     return session_id
 
@@ -221,6 +235,27 @@ def update_session(
         """, values)
 
 
+def touch_session(
+    session_id: str,
+    db_path: Optional[str] = None
+) -> None:
+    """
+    Update heartbeat_at to record activity without state change.
+
+    Use this to signal "process is alive" during long-running operations
+    like streaming agent responses.
+    """
+    now = _sqlite_timestamp()
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE sessions
+            SET heartbeat_at = ?
+            WHERE id = ?
+        """, (now, session_id))
+
+
 def list_sessions(
     db_path: Optional[str] = None,
     status: Optional[str] = None
@@ -243,6 +278,74 @@ def list_sessions(
             """)
 
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_stuck_sessions(
+    db_path: Optional[str] = None,
+    inactive_minutes: int = 20
+) -> List[Dict[str, Any]]:
+    """
+    Get sessions that appear to be stuck (ACTIVE but no heartbeat for a while).
+
+    Uses heartbeat_at (falls back to updated_at if NULL) and does datetime
+    comparison in Python to avoid SQLite parsing issues.
+
+    Only checks planning/execution phases (not discovery which waits on human,
+    or paused/completed which are terminal states).
+
+    Args:
+        db_path: Optional database path
+        inactive_minutes: Minutes of inactivity to consider stuck (default: 20)
+
+    Returns:
+        List of sessions that appear stuck
+    """
+    from datetime import timedelta
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        # Get candidate sessions: ACTIVE in planning or execution phase
+        cursor.execute("""
+            SELECT * FROM sessions
+            WHERE status = 'active'
+            AND phase IN ('planning', 'execution')
+            ORDER BY heartbeat_at DESC, updated_at DESC
+        """)
+
+        candidates = [dict(row) for row in cursor.fetchall()]
+
+    # Filter by heartbeat in Python (avoids SQLite datetime parsing issues)
+    now = datetime.now()
+    threshold = now - timedelta(minutes=inactive_minutes)
+    stuck = []
+
+    for session in candidates:
+        # Use heartbeat_at if available, fall back to updated_at
+        last_activity_str = session.get('heartbeat_at') or session.get('updated_at')
+
+        if not last_activity_str:
+            # No timestamp at all - consider stuck
+            stuck.append(session)
+            continue
+
+        try:
+            # Parse timestamp (handle both formats)
+            if 'T' in last_activity_str:
+                # ISO format: 2025-12-16T04:25:25.123456
+                last_activity = datetime.fromisoformat(last_activity_str)
+            else:
+                # SQLite format: 2025-12-16 04:25:25
+                last_activity = datetime.strptime(last_activity_str, "%Y-%m-%d %H:%M:%S")
+
+            if last_activity < threshold:
+                stuck.append(session)
+
+        except (ValueError, TypeError):
+            # If we can't parse, assume stuck
+            stuck.append(session)
+
+    return stuck
 
 
 # ============================================================================

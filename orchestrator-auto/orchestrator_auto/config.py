@@ -189,3 +189,61 @@ def is_telegram_configured() -> bool:
     """
     config = get_telegram_config()
     return bool(config.get("bot_token") and config.get("chat_id"))
+
+
+# ============================================================================
+# Stuck Sessions Configuration
+# ============================================================================
+
+DEFAULT_STUCK_INACTIVE_MINUTES = 20
+
+
+def get_stuck_sessions_config() -> Dict[str, Any]:
+    """
+    Get stuck session detection configuration.
+
+    Config file shape:
+        telegram:
+          stuck_sessions:
+            enabled: true
+            inactive_minutes: 20
+
+    Environment variables:
+        ORCHESTRATOR_TELEGRAM_STUCK_ENABLED (true/false)
+        ORCHESTRATOR_TELEGRAM_STUCK_MINUTES (integer)
+
+    Returns:
+        Dict with 'enabled' (bool) and 'inactive_minutes' (int)
+    """
+    config = load_config()
+    telegram_config = config.get("telegram", {})
+    stuck_config = telegram_config.get("stuck_sessions", {})
+
+    # Defaults
+    result = {
+        "enabled": True,  # Enabled by default if telegram is configured
+        "inactive_minutes": DEFAULT_STUCK_INACTIVE_MINUTES,
+    }
+
+    # Override from config file
+    if "enabled" in stuck_config:
+        result["enabled"] = bool(stuck_config["enabled"])
+    if "inactive_minutes" in stuck_config:
+        try:
+            result["inactive_minutes"] = int(stuck_config["inactive_minutes"])
+        except (ValueError, TypeError):
+            pass
+
+    # Override from environment variables
+    env_enabled = os.environ.get("ORCHESTRATOR_TELEGRAM_STUCK_ENABLED")
+    env_minutes = os.environ.get("ORCHESTRATOR_TELEGRAM_STUCK_MINUTES")
+
+    if env_enabled is not None:
+        result["enabled"] = env_enabled.lower() in ("true", "1", "yes")
+    if env_minutes:
+        try:
+            result["inactive_minutes"] = int(env_minutes)
+        except ValueError:
+            pass
+
+    return result
