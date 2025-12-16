@@ -19,6 +19,12 @@ orchestrator start -f "My feature" --plan docs/plan.md
 # Start with auto-commit on completion
 orchestrator start -f "My feature" --auto-commit
 
+# Start with Telegram notifications
+orchestrator start -f "My feature" --telegram
+
+# Test Telegram configuration
+orchestrator telegram test
+
 # List all sessions
 orchestrator list
 
@@ -74,6 +80,8 @@ orchestrator start -f "Feature description" [options]
 | `-pm, --planner-model` | Planner model: `opus`, `sonnet`, `haiku` |
 | `-em, --executor-model` | Executor model: `opus`, `sonnet`, `haiku` |
 | `--auto-commit` | Auto-commit on completion |
+| `--telegram` | Enable Telegram notifications |
+| `--no-telegram` | Disable Telegram notifications |
 | `--no-activity` | Disable activity indicator |
 | `-d, --db-path` | Custom database path |
 
@@ -107,6 +115,12 @@ orchestrator status <session-id>
 orchestrator export <session-id> [-o output.md]
 ```
 
+### `telegram test` - Test Telegram configuration
+
+```bash
+orchestrator telegram test
+```
+
 ---
 
 ## Configuration
@@ -136,6 +150,35 @@ models:
 ### Database
 
 Default: `~/.claude_orchestrator/db.sqlite`
+
+### Telegram Notifications
+
+Receive workflow notifications via Telegram (workflow start, milestone completion, blockers, completion/errors).
+
+**Setup:**
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) and get your bot token
+2. Start a chat with your bot and get your chat ID (send a message, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
+3. Install the optional dependency: `pip install httpx`
+
+**Config file** (`~/.claude_orchestrator/config.yaml`):
+
+```yaml
+telegram:
+  enabled: true
+  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
+  chat_id: "YOUR_CHAT_ID"
+```
+
+**Environment variables** (override config file):
+
+```bash
+export ORCHESTRATOR_TELEGRAM_BOT_TOKEN="your-bot-token"
+export ORCHESTRATOR_TELEGRAM_CHAT_ID="your-chat-id"
+export ORCHESTRATOR_TELEGRAM_ENABLED="true"
+```
+
+**Priority:** CLI flags > env vars > config file
 
 ---
 
@@ -204,6 +247,7 @@ orchestrator-auto/
 │   ├── agents.py            # Agent wrappers
 │   ├── config.py            # Model config
 │   ├── git.py               # Auto-commit
+│   ├── telegram.py          # Telegram notifications
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
 │   └── db.py                # Database ops
@@ -232,8 +276,9 @@ pytest tests/ --cov=orchestrator_auto
 
 ## TODO
 
-- [ ] **Telegram Integration** - Notifications and blocker responses via Telegram
+- [ ] **Telegram Phase 2** - Inbound blocker responses via Telegram polling
 - [ ] **Post Feedback** - User feedback at milestones/completion
+- [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)
 - [x] **Auto-Commit** - `--auto-commit` flag for git commit on completion
 - [x] **Model Selection** - `-pm`/`-em` flags with aliases
 - [x] **Activity Indicator** - Streaming feedback with token count

@@ -80,30 +80,33 @@ Enable Telegram bot integration for orchestrator-auto to:
 # orchestrator_auto/telegram.py
 
 class TelegramNotifier:
-    """Handles Telegram bot communication."""
+    """Outbound notifications via Telegram Bot API."""
 
-    def __init__(
-        self,
-        bot_token: str,
-        chat_id: str,
-        enabled: bool = True
-    ):
+    def __init__(self, bot_token: str, chat_id: str, enabled: bool = True):
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.enabled = enabled
-        self.pending_blockers: Dict[int, int] = {}  # message_id -> blocker_id
 
-    # Notifications (outbound)
     def notify_workflow_started(self, session_id: str, feature: str) -> None
     def notify_milestone_completed(self, session_id: str, milestone: int, total: int, name: str) -> None
-    def notify_blocker(self, session_id: str, blocker_id: int, question: str) -> int  # returns message_id
+    def notify_blocker(self, session_id: str, blocker_id: int, question: str) -> int  # returns telegram message_id
     def notify_workflow_completed(self, session_id: str, feature: str, duration: str) -> None
     def notify_error(self, session_id: str, error: str) -> None
 
-    # Polling (inbound)
-    def poll_for_replies(self) -> List[BlockerReply]
-    def get_blocker_reply(self, message_id: int, timeout: int = 0) -> Optional[str]
+
+class TelegramListener:
+    """Inbound DM replies via long-polling `getUpdates`."""
+
+    def __init__(self, bot_token: str, chat_id: str, allowed_user_id: str | None = None):
+        self.bot_token = bot_token
+        self.chat_id = chat_id
+        self.allowed_user_id = allowed_user_id
+
+    def poll_once(self) -> list[dict]:
+        """Fetch new updates and return parsed messages."""
 ```
+
+Note: interactive replies are handled by the **separate** CLI command `orchestrator telegram listen` so the main workflow process does not need to stay running.
 
 ### 2. Configuration
 
@@ -112,14 +115,16 @@ class TelegramNotifier:
 
 telegram:
   enabled: true
-  bot_token: "123456:ABC-DEF..."  # From @BotFather
-  chat_id: "YOUR_CHAT_ID"            # Your chat ID
+  # DM-only recommended: configure your own bot + your personal chat/user IDs
+  bot_token: "123456:ABC-DEF..."      # From @BotFather
+  chat_id: "YOUR_CHAT_ID"                # Your DM chat ID
+  allowed_user_id: "YOUR_CHAT_ID"         # Optional but recommended (Telegram user id)
 
   notifications:
     workflow_start: true
     workflow_complete: true
     milestone_complete: true
-    blocker: true                 # Always recommended
+    blocker: true                       # Always recommended
     error: true
 
   # Optional: quiet hours (no notifications except blockers)
@@ -135,14 +140,14 @@ telegram:
 # Enable via CLI flag
 orchestrator start -f "My feature" --telegram
 
-# Or use config file (always enabled if configured)
+# Or use config file (enabled if configured)
 orchestrator start -f "My feature"
 
 # Test connection
 orchestrator telegram test
 
-# Set up interactively
-orchestrator telegram setup
+# Listen for DM replies (Phase 2)
+orchestrator telegram listen
 ```
 
 ### 4. Environment Variables (Alternative)
@@ -150,6 +155,7 @@ orchestrator telegram setup
 ```bash
 export ORCHESTRATOR_TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 export ORCHESTRATOR_TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
+export ORCHESTRATOR_TELEGRAM_ALLOWED_USER_ID="YOUR_CHAT_ID"  # optional, recommended
 ```
 
 Priority: CLI flag > env vars > config file
@@ -260,107 +266,147 @@ _Use `orchestrator resume a1b2c3d4` to retry_
 ### Reply Detection
 
 ```python
-def poll_for_replies(self) -> List[BlockerReply]:
-    """Poll Telegram for replies to blocker messages."""
-    updates = self._get_updates()
+# Inside `orchestrator telegram listen`
 
-    replies = []
-    for update in updates:
-        # Check if it's a reply to one of our blocker messages
-        if update.reply_to_message_id in self.pending_blockers:
-            blocker_id = self.pending_blockers[update.reply_to_message_id]
-            replies.append(BlockerReply(
-                blocker_id=blocker_id,
-                answer=update.text,
-                message_id=update.reply_to_message_id
-            ))
+def handle_update(update: dict) -> None:
+    """Process one Telegram update (DM-only)."""
+    message = update.get("message")
+    if not message:
+        return
 
-    return replies
+    chat = message.get("chat", {})
+    from_user = message.get("from", {})
+    if chat.get("type") != "private":
+        return
+    if str(chat.get("id")) != str(config.chat_id):
+        return
+    if config.allowed_user_id and str(from_user.get("id")) != str(config.allowed_user_id):
+        return
+
+    reply_to = message.get("reply_to_message")
+    if not reply_to:
+        return
+
+    telegram_message_id = reply_to.get("message_id")
+    answer = (message.get("text") or "").strip()
+    if not telegram_message_id or not answer:
+        return
+
+    blocker = db.get_blocker_by_telegram_message_id(telegram_message_id, db_path)
+    if not blocker or blocker.get("resolved_at") is not None:
+        return
+
+    db.resolve_blocker(blocker["id"], answer, db_path)
+    Orchestrator(session_id=blocker["session_id"], db_path=db_path).resume(answer=answer)
 ```
+
+Persist `last_update_id` after processing each update to avoid replay on restart.
 
 ---
 
-## Commands (Phase 2)
+## Bot Commands (Optional / Phase 3)
+
+Keep commands DM-only and minimal at first.
 
 | Command | Description |
 |---------|-------------|
-| `/status` | Show active workflow status |
-| `/status <id>` | Show specific session status |
+| `/status` | Show most recent active/paused session status |
+| `/status <id>` | Show status for a specific session |
 | `/list` | List recent sessions |
-| `/pause` | Pause current workflow |
-| `/resume` | Resume paused workflow |
-| `/cancel` | Cancel current workflow |
 | `/help` | Show available commands |
+
+Defer `/pause`, `/resume`, `/cancel` until session selection semantics are clear and access control is implemented.
 
 ### Command Implementation
 
 ```python
 def handle_command(self, text: str) -> str:
-    """Handle incoming Telegram commands."""
+    """Handle incoming Telegram commands (DM-only)."""
     if text.startswith('/status'):
         return self._handle_status(text)
-    elif text.startswith('/list'):
+    if text.startswith('/list'):
         return self._handle_list()
-    elif text.startswith('/pause'):
-        return self._handle_pause()
-    # ...
+    if text.startswith('/help'):
+        return self._handle_help()
+    return "Unknown command. Try /help"
 ```
 
 ---
 
-## Implementation Phases
+## Runtime Model
 
-### Phase 1: Basic Notifications (MVP)
+This codebase pauses workflows by transitioning to `paused` and returning (see `orchestrator_auto.engine.Orchestrator._handle_blocker`). Because the original CLI process may exit, **interactive Telegram replies require a separate long-running listener**.
 
-**Scope:**
-- [ ] Create `telegram.py` module
-- [ ] Implement `TelegramNotifier` class
-- [ ] Add notifications for: blocker, milestone, complete, error
-- [ ] Add `--telegram` CLI flag
-- [ ] Add config file support
-- [ ] Integrate with engine hooks
+**Recommendation (DM-only):**
+- `orchestrator start ...` sends outbound notifications.
+- `orchestrator telegram listen` long-polls Telegram `getUpdates`, resolves blockers, and calls the existing resume flow.
 
-**Effort:** 3-4 hours
+---
 
-### Phase 2: Interactive Blockers
+## Implementation Phases (Tightened)
+
+### Phase 1: Outbound Notifications (MVP)
 
 **Scope:**
-- [ ] Implement reply polling
-- [ ] Track message_id ↔ blocker_id mapping
-- [ ] Auto-resume workflow on reply
-- [ ] Add reply timeout handling
-- [ ] Persist pending blockers across restarts
+- [ ] Add `orchestrator_auto/telegram.py` (sync `httpx` client + `TelegramNotifier`)
+- [ ] Config support in `~/.claude_orchestrator/config.yaml` (`telegram.enabled`, `bot_token`, `chat_id`)
+- [ ] Env var overrides: `ORCHESTRATOR_TELEGRAM_BOT_TOKEN`, `ORCHESTRATOR_TELEGRAM_CHAT_ID`
+- [ ] CLI: `orchestrator start|resume --telegram/--no-telegram`
+- [ ] CLI: `orchestrator telegram test` (validate config + send test message)
+- [ ] Engine hooks for notifications:
+      - workflow started (at `Orchestrator.start()`)
+      - blocker created (inside `_handle_blocker()`)
+      - milestone approved (after `TransitionEvent.MILESTONE_APPROVED`)
+      - completed/failed
 
-**Effort:** 2-3 hours
+**Effort:** 3-5 hours
 
-### Phase 3: Commands
+### Phase 2: Interactive Blockers (Listener)
 
 **Scope:**
-- [ ] Implement `/status` command
-- [ ] Implement `/list` command
-- [ ] Implement `/pause` and `/resume`
-- [ ] Add `/help` command
+- [ ] Persist `telegram_message_id` on blocker notifications
+- [ ] Persist Telegram polling cursor (`last_update_id`) to DB
+- [ ] Add `orchestrator telegram listen`:
+      - long-polls `getUpdates` using `offset=last_update_id+1`
+      - DM-only validation (`chat.type == private`, `chat.id == configured chat_id`)
+      - match replies via `reply_to_message.message_id -> blocker.telegram_message_id`
+      - call existing unblock flow: `Orchestrator(session_id).resume(answer=...)`
+      - options: `--poll-interval`, `--once`, `--db-path`
 
-**Effort:** 2-3 hours
+**Effort:** 3-5 hours
+
+### Phase 3: Bot Commands (Optional)
+
+**Scope:**
+- [ ] Implement `/status` and `/list` (reply in DM)
+- [ ] (Optional) `/pause` and `/resume` (requires clear session selection semantics)
+
+**Effort:** 2-4 hours
 
 ### Phase 4: Start from Telegram (Optional)
 
 **Scope:**
-- [ ] Implement `/start <feature>` command
-- [ ] Support plan templates
-- [ ] Background workflow execution
+- [ ] `/start <feature>` creates a new workflow
+- [ ] Background execution + safety controls
 
-**Effort:** 3-4 hours
+**Effort:** 3-6 hours
 
 ---
 
 ## Database Schema Changes
 
 ```sql
--- Add telegram tracking to blockers table
+-- Map Telegram blocker notification -> blocker row
 ALTER TABLE blockers ADD COLUMN telegram_message_id INTEGER;
 
--- Track notification history (optional)
+-- Persist polling cursor to avoid reprocessing updates after restart
+CREATE TABLE IF NOT EXISTS telegram_state (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    last_update_id INTEGER
+);
+INSERT OR IGNORE INTO telegram_state (id, last_update_id) VALUES (1, 0);
+
+-- (Optional) Track notification history for debugging/auditing
 CREATE TABLE IF NOT EXISTS telegram_notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL,
@@ -385,12 +431,18 @@ def __init__(self, bot_token: str, ...):
     logger.info(f"Telegram bot initialized: ...{bot_token[-4:]}")
 ```
 
-### Chat ID Validation
+### DM-Only Validation (Recommended)
 
 ```python
-def _validate_chat(self, chat_id: str) -> bool:
-    """Only accept messages from configured chat."""
-    return str(chat_id) == self.chat_id
+def _validate_update(self, chat_type: str, chat_id: str, from_user_id: str | None = None) -> bool:
+    """Accept messages only from the configured DM."""
+    if chat_type != "private":
+        return False
+    if str(chat_id) != str(self.chat_id):
+        return False
+    if self.allowed_user_id is not None and str(from_user_id) != str(self.allowed_user_id):
+        return False
+    return True
 ```
 
 ### Rate Limiting
@@ -407,22 +459,19 @@ RATE_LIMIT_DELAY = 0.05  # 50ms between messages
 
 ## Dependencies
 
+Prefer a lightweight HTTP client over a full bot framework.
+
 ```toml
 # pyproject.toml
 dependencies = [
     # ... existing
-    "python-telegram-bot>=20.0",  # or httpx for raw API
+    "httpx>=0.27",
 ]
 ```
 
-**Options:**
-1. `python-telegram-bot` - Full featured, async support
-2. `httpx` - Lightweight, just HTTP calls (simpler)
+Also add `httpx` to `environment.yml` (pip section) so conda installs stay consistent.
 
-**Recommendation:** Use `httpx` for simplicity - we only need:
-- Send messages
-- Poll for updates
-- No need for full bot framework
+**Why `httpx` (sync):** we only need `sendMessage` + `getUpdates`, and the current codebase is synchronous/CLI-driven.
 
 ---
 
@@ -484,13 +533,15 @@ Each bot is independent. Organize with Telegram folders:
 class TestTelegramNotifier:
     def test_format_blocker_message(self)
     def test_format_milestone_message(self)
-    def test_parse_reply(self)
-    def test_validate_chat_id(self)
+    def test_validate_dm_only_update(self)
 
-class TestTelegramIntegration:
-    @pytest.mark.integration
-    def test_send_notification(self)
-    def test_poll_replies(self)
+class TestTelegramListener:
+    def test_reply_resolves_blocker_and_resumes(self)
+    def test_dedup_uses_last_update_id(self)
+
+# Optional (only if env vars are set): real Telegram smoke tests
+# @pytest.mark.integration
+# def test_send_notification_live(self)
 ```
 
 ### Manual Testing
@@ -499,10 +550,11 @@ class TestTelegramIntegration:
 # Test notification
 orchestrator telegram test
 
-# Output:
-# ✓ Connected to Telegram bot @MyOrch_Bot
-# ✓ Sent test message to chat YOUR_CHAT_ID
-# ✓ Message delivered successfully
+# Listener (Phase 2)
+orchestrator telegram listen --poll-interval 2.0
+
+# One-shot poll (useful for debugging)
+orchestrator telegram listen --once
 ```
 
 ---
@@ -529,9 +581,9 @@ orchestrator telegram test
 
 | Phase | Effort | Cumulative |
 |-------|--------|------------|
-| Phase 1: Basic notifications | 3-4 hours | 3-4 hours |
-| Phase 2: Interactive blockers | 2-3 hours | 5-7 hours |
-| Phase 3: Commands | 2-3 hours | 7-10 hours |
-| Phase 4: Start from Telegram | 3-4 hours | 10-14 hours |
+| Phase 1: Outbound notifications | 3-5 hours | 3-5 hours |
+| Phase 2: Interactive blockers (listener) | 3-5 hours | 6-10 hours |
+| Phase 3: Bot commands (optional) | 2-4 hours | 8-14 hours |
+| Phase 4: Start from Telegram (optional) | 3-6 hours | 11-20 hours |
 
-**Recommended MVP:** Phase 1 + Phase 2 (5-7 hours)
+**Recommended MVP:** Phase 1 only (notifications) or Phase 1+2 if you want full phone-based unblock (6-10 hours).

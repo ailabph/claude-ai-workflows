@@ -15,7 +15,13 @@ from . import db
 from . import git
 from .engine import Orchestrator
 from .state import Phase, Status
-from .config import get_planner_model, get_executor_model, get_model_display_name
+from .config import (
+    get_planner_model,
+    get_executor_model,
+    get_model_display_name,
+    get_telegram_config,
+    is_telegram_configured,
+)
 
 
 # Global reference to orchestrator for signal handling
@@ -93,6 +99,29 @@ def output_callback(message: str) -> None:
     click.echo(message)
 
 
+def _create_telegram_notifier(cli_enabled: Optional[bool] = None):
+    """
+    Create Telegram notifier from config if available.
+
+    Args:
+        cli_enabled: Explicit enable/disable from CLI flag
+
+    Returns:
+        TelegramNotifier instance or None
+    """
+    try:
+        from .telegram import create_notifier_from_config
+        telegram_config = get_telegram_config()
+        return create_notifier_from_config(telegram_config, cli_enabled)
+    except ImportError:
+        if cli_enabled:
+            click.secho("⚠ Telegram requires httpx. Install with: pip install httpx", fg="yellow")
+        return None
+    except Exception as e:
+        click.secho(f"⚠ Telegram setup error: {e}", fg="yellow")
+        return None
+
+
 @click.group()
 def cli():
     """Orchestrator Auto - Automated two-agent workflow."""
@@ -107,6 +136,7 @@ def cli():
 @click.option('--planner-model', '-pm', help='Model for planner agent. Aliases: opus, sonnet, haiku')
 @click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
+@click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 def start(
     feature: str,
     db_path: Optional[str],
@@ -115,6 +145,7 @@ def start(
     planner_model: Optional[str],
     executor_model: Optional[str],
     auto_commit: bool,
+    telegram: Optional[bool],
 ):
     """Start a new workflow session."""
     global _current_orchestrator
@@ -126,10 +157,17 @@ def start(
     resolved_planner = get_planner_model(planner_model)
     resolved_executor = get_executor_model(executor_model)
 
+    # Setup Telegram notifier if configured
+    telegram_notifier = None
+    if telegram is not False:  # Not explicitly disabled
+        telegram_notifier = _create_telegram_notifier(telegram)
+
     try:
         click.secho("Starting new workflow session...", fg="cyan", bold=True)
         click.echo(f"Feature: {feature}")
         click.echo(f"Models: Planner={get_model_display_name(resolved_planner)} | Executor={get_model_display_name(resolved_executor)}")
+        if telegram_notifier:
+            click.echo("Telegram: enabled")
         if plan:
             click.echo(f"Plan: {plan}")
         click.echo()
@@ -146,6 +184,7 @@ def start(
             show_activity=show_activity,
             planner_model=resolved_planner,
             executor_model=resolved_executor,
+            telegram_notifier=telegram_notifier,
         )
         _current_orchestrator = orch
 
@@ -191,15 +230,23 @@ def start(
 @click.option('--answer', '-a', help='Answer to blocker question')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool):
+@click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool]):
     """Resume an existing session."""
     global _current_orchestrator
 
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_interrupt)
 
+    # Setup Telegram notifier if configured
+    telegram_notifier = None
+    if telegram is not False:  # Not explicitly disabled
+        telegram_notifier = _create_telegram_notifier(telegram)
+
     try:
         click.secho(f"Resuming session: {session_id}", fg="cyan", bold=True)
+        if telegram_notifier:
+            click.echo("Telegram: enabled")
         click.echo()
 
         # Initialize database
@@ -217,6 +264,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
             db_path=db_path,
             on_output=output_callback,
             show_activity=show_activity,
+            telegram_notifier=telegram_notifier,
         )
         _current_orchestrator = orch
 
@@ -259,7 +307,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 @click.argument('session_id')
 @click.argument('answer')
 @click.option('--db-path', '-d', help='Custom database path')
-def respond(session_id: str, answer: str, db_path: Optional[str]):
+@click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
+def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool]):
     """Respond to a blocker and continue workflow."""
     try:
         click.secho(f"Responding to session: {session_id}", fg="cyan", bold=True)
@@ -290,7 +339,7 @@ def respond(session_id: str, answer: str, db_path: Optional[str]):
 
         # Resume with answer (will call resume command internally)
         ctx = click.get_current_context()
-        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path)
+        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram)
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
@@ -527,6 +576,71 @@ def export(session_id: str, output: Optional[str], db_path: Optional[str]):
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
+        sys.exit(1)
+
+
+# ============================================================================
+# Telegram Commands
+# ============================================================================
+
+@cli.group()
+def telegram():
+    """Telegram integration commands."""
+    pass
+
+
+@telegram.command("test")
+def telegram_test():
+    """Test Telegram configuration by sending a test message."""
+    try:
+        from .telegram import TelegramNotifier, HTTPX_AVAILABLE
+
+        if not HTTPX_AVAILABLE:
+            click.secho("✗ httpx is required. Install with: pip install httpx", fg="red")
+            sys.exit(1)
+
+        telegram_config = get_telegram_config()
+
+        if not telegram_config.get("bot_token") or not telegram_config.get("chat_id"):
+            click.secho("✗ Telegram not configured", fg="red")
+            click.echo()
+            click.echo("Configure via ~/.claude_orchestrator/config.yaml:")
+            click.echo()
+            click.echo("  telegram:")
+            click.echo("    enabled: true")
+            click.echo("    bot_token: \"YOUR_BOT_TOKEN\"")
+            click.echo("    chat_id: \"YOUR_CHAT_ID\"")
+            click.echo()
+            click.echo("Or via environment variables:")
+            click.echo("  ORCHESTRATOR_TELEGRAM_BOT_TOKEN")
+            click.echo("  ORCHESTRATOR_TELEGRAM_CHAT_ID")
+            sys.exit(1)
+
+        click.echo("Testing Telegram connection...")
+        click.echo(f"  Bot token: ...{telegram_config['bot_token'][-4:]}")
+        click.echo(f"  Chat ID: {telegram_config['chat_id']}")
+        click.echo()
+
+        notifier = TelegramNotifier(
+            bot_token=telegram_config["bot_token"],
+            chat_id=telegram_config["chat_id"],
+        )
+
+        success, message = notifier.send_test_message()
+        notifier.close()
+
+        if success:
+            click.secho(f"✓ {message}", fg="green")
+        else:
+            click.secho(f"✗ {message}", fg="red")
+            sys.exit(1)
+
+    except ImportError as e:
+        click.secho(f"✗ Import error: {e}", fg="red")
+        click.echo("Install telegram dependencies: pip install httpx")
+        sys.exit(1)
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red")
         sys.exit(1)
 
 

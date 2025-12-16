@@ -141,3 +141,51 @@ def list_available_models() -> Dict[str, str]:
         Dictionary of alias -> full model ID
     """
     return MODEL_ALIASES.copy()
+
+
+# ============================================================================
+# Telegram Configuration
+# ============================================================================
+
+import os
+
+
+def get_telegram_config() -> Dict[str, Any]:
+    """
+    Get Telegram configuration with priority: env vars > config file.
+
+    Environment variables:
+        ORCHESTRATOR_TELEGRAM_BOT_TOKEN
+        ORCHESTRATOR_TELEGRAM_CHAT_ID
+        ORCHESTRATOR_TELEGRAM_ENABLED (true/false)
+
+    Returns:
+        Telegram config dict with bot_token, chat_id, enabled, etc.
+    """
+    config = load_config()
+    telegram_config = config.get("telegram", {})
+
+    # Override with environment variables
+    env_token = os.environ.get("ORCHESTRATOR_TELEGRAM_BOT_TOKEN")
+    env_chat_id = os.environ.get("ORCHESTRATOR_TELEGRAM_CHAT_ID")
+    env_enabled = os.environ.get("ORCHESTRATOR_TELEGRAM_ENABLED")
+
+    if env_token:
+        telegram_config["bot_token"] = env_token
+    if env_chat_id:
+        telegram_config["chat_id"] = env_chat_id
+    if env_enabled is not None:
+        telegram_config["enabled"] = env_enabled.lower() in ("true", "1", "yes")
+
+    return telegram_config
+
+
+def is_telegram_configured() -> bool:
+    """
+    Check if Telegram is configured (has bot_token and chat_id).
+
+    Returns:
+        True if Telegram can be used
+    """
+    config = get_telegram_config()
+    return bool(config.get("bot_token") and config.get("chat_id"))

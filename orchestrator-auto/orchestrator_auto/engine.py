@@ -5,7 +5,10 @@ Coordinates Planner and Executor agents through discovery, planning,
 and execution phases with automatic milestone approval and blocker handling.
 """
 
-from typing import Optional, Dict, Any, Callable
+from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .telegram import TelegramNotifier
 
 from . import db
 from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
@@ -48,6 +51,7 @@ class Orchestrator:
         show_activity: bool = True,
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
+        telegram_notifier: Optional["TelegramNotifier"] = None,
     ):
         """
         Initialize orchestrator.
@@ -61,6 +65,7 @@ class Orchestrator:
             show_activity: Whether to show streaming activity indicator (default: True)
             planner_model: Model for planner agent (optional, uses default if not specified)
             executor_model: Model for executor agent (optional, uses default if not specified)
+            telegram_notifier: Optional TelegramNotifier for sending notifications
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -70,6 +75,9 @@ class Orchestrator:
         # Model configuration
         self.planner_model = planner_model
         self.executor_model = executor_model
+
+        # Telegram notifications
+        self.telegram_notifier = telegram_notifier
 
         # Initialize database
         db.init_db(db_path)
@@ -222,6 +230,15 @@ class Orchestrator:
         self._output(f"\n=== Orchestrator Auto: {self.state.feature_description} ===\n")
         self._output(f"Session ID: {self.session_id}\n")
 
+        # Send workflow started notification
+        self._notify_telegram(
+            "notify_workflow_started",
+            session_id=self.session_id[:8],
+            feature=self.state.feature_description,
+            planner_model=self.planner_model,
+            executor_model=self.executor_model,
+        )
+
         try:
             # Run appropriate phase based on current state
             if self.state.phase == "discovery":
@@ -288,6 +305,27 @@ class Orchestrator:
         """Output a message via callback."""
         if self.on_output:
             self.on_output(message)
+
+    def _notify_telegram(self, method_name: str, **kwargs) -> None:
+        """
+        Safely call a telegram notifier method.
+
+        Catches exceptions so telegram errors don't crash the workflow.
+
+        Args:
+            method_name: Name of the TelegramNotifier method to call
+            **kwargs: Arguments to pass to the method
+        """
+        if not self.telegram_notifier:
+            return
+
+        try:
+            method = getattr(self.telegram_notifier, method_name, None)
+            if method:
+                method(**kwargs)
+        except Exception as e:
+            # Log but don't crash workflow
+            self._output(f"  (Telegram notification failed: {e})\n")
 
     def _create_activity_indicator(self) -> Optional[StreamingIndicator]:
         """Create an activity indicator if enabled."""
@@ -549,14 +587,24 @@ The orchestrator will save the file for you.
 
                 if validation == "approved":
                     # Auto-continue to next milestone
+                    completed_milestone = current_milestone
                     current_milestone += 1
                     success, self.state, error = self.state_machine.transition(
                         self.session_id,
                         TransitionEvent.MILESTONE_APPROVED.value,
-                        current_milestone=current_milestone - 1
+                        current_milestone=completed_milestone
                     )
                     if not success:
                         raise RuntimeError(f"Failed to approve milestone: {error}")
+
+                    # Send milestone completion notification
+                    self._notify_telegram(
+                        "notify_milestone_completed",
+                        session_id=self.session_id[:8],
+                        milestone_num=completed_milestone,
+                        total_milestones=total_milestones,
+                        milestone_name=f"Milestone {completed_milestone}",
+                    )
 
                 elif validation == "changes_requested":
                     # Executor needs to fix issues
@@ -593,6 +641,14 @@ The orchestrator will save the file for you.
         )
         if not success:
             raise RuntimeError(f"Failed to complete workflow: {error}")
+
+        # Send workflow completion notification
+        self._notify_telegram(
+            "notify_workflow_completed",
+            session_id=self.session_id[:8],
+            feature=self.state.feature_description,
+            total_milestones=total_milestones,
+        )
 
     def _route_to_planner(self, report: str) -> str:
         """
@@ -692,6 +748,15 @@ The orchestrator will save the file for you.
         )
         self.current_blocker_id = blocker_id
 
+        # Send blocker notification
+        self._notify_telegram(
+            "notify_blocker",
+            session_id=self.session_id[:8],
+            blocker_id=blocker_id,
+            question=question,
+            agent=agent.capitalize(),
+        )
+
         # Transition to paused
         success, self.state, error = self.state_machine.transition(
             self.session_id,
@@ -706,6 +771,8 @@ The orchestrator will save the file for you.
             self.planner.close()
         if self.executor:
             self.executor.close()
+        if self.telegram_notifier:
+            self.telegram_notifier.close()
 
     def get_status(self) -> Dict[str, Any]:
         """

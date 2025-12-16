@@ -23,3 +23,8 @@ build/
 
 # Environment
 .env
+
+AGENT*
+.opencode*
+.claude*
+.cursor*
