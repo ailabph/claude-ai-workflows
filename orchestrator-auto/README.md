@@ -146,6 +146,7 @@ orchestrator start -f "Feature description" [options]
 - `-p, --plan` (optional): Path to existing plan file (skips discovery/planning)
 - `-pm, --planner-model` (optional): Model for planner agent (aliases: opus, sonnet, haiku)
 - `-em, --executor-model` (optional): Model for executor agent (aliases: opus, sonnet, haiku)
+- `--auto-commit` (optional): Auto-commit changes on workflow completion
 - `--no-activity` (optional): Disable streaming activity indicator
 - `-d, --db-path` (optional): Custom database path
 
@@ -159,6 +160,9 @@ orchestrator start -f "My feature" --planner-model sonnet --executor-model haiku
 
 # With existing plan
 orchestrator start -f "My feature" --plan docs/existing_plan.md
+
+# With auto-commit on completion
+orchestrator start -f "My feature" --auto-commit
 ```
 
 ---
@@ -469,6 +473,7 @@ orchestrator-auto/
 │   ├── parser.py            # Response parsing
 │   ├── agents.py            # Agent wrappers
 │   ├── config.py            # Model config & aliases
+│   ├── git.py               # Git auto-commit operations
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
 │   └── db.py                # Database operations
@@ -476,6 +481,7 @@ orchestrator-auto/
 │   ├── test_db.py           # Database tests
 │   ├── test_agents.py       # Agent tests
 │   ├── test_config.py       # Config tests
+│   ├── test_git.py          # Git operations tests
 │   ├── test_state.py        # State machine tests
 │   ├── test_parser.py       # Parser tests
 │   ├── test_engine.py       # Engine tests
@@ -558,7 +564,8 @@ Contributions are welcome! Please:
 
 ## Future Features / TODO
 
-- [ ] **Auto-Commit on Completion** - Have the planner automatically create a git commit (without pushing) after all milestones are approved. Commit message should summarize the feature implemented.
+- [ ] **Post Feedback** - Allow users to provide feedback after workflow completion or at milestone checkpoints. Feedback could be used to improve future plans and agent behavior.
+- [x] **Auto-Commit on Completion** - Use `--auto-commit` flag to create a git commit (without pushing) after all milestones are approved. Commit message summarizes the feature and completed milestones. Does NOT include author information.
 - [x] **Model Selection CLI Options** - Add `--planner-model` and `--executor-model` flags to allow choosing different Claude models. Supports short aliases (opus, sonnet, haiku) and config file. See [Configuration > Agent Models](#agent-models).
 - [x] **Activity Indicator** - Add CLI UI feedback showing streaming snippets with token count. Use `--no-activity` to disable. See `docs/FEATURE_activity_indicator.md`.
 - [x] **Import Existing Plan** - Add `--plan` flag to start a session with a pre-existing milestone plan file, skipping discovery and planning phases. Useful for reusing proven plan templates or resuming failed workflows with a known-good plan.

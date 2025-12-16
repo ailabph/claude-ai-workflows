@@ -12,6 +12,7 @@ from typing import Optional
 from datetime import datetime
 
 from . import db
+from . import git
 from .engine import Orchestrator
 from .state import Phase, Status
 from .config import get_planner_model, get_executor_model, get_model_display_name
@@ -105,6 +106,7 @@ def cli():
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
 @click.option('--planner-model', '-pm', help='Model for planner agent. Aliases: opus, sonnet, haiku')
 @click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
+@click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 def start(
     feature: str,
     db_path: Optional[str],
@@ -112,6 +114,7 @@ def start(
     show_activity: bool,
     planner_model: Optional[str],
     executor_model: Optional[str],
+    auto_commit: bool,
 ):
     """Start a new workflow session."""
     global _current_orchestrator
@@ -158,6 +161,18 @@ def start(
         click.echo()
         show_progress(orch)
         click.secho("✓ Workflow completed!", fg="green", bold=True)
+
+        # Auto-commit if enabled and workflow completed successfully
+        if auto_commit and orch.state.phase == Phase.COMPLETED:
+            click.echo()
+            click.secho("Creating auto-commit...", fg="cyan")
+            milestones = db.get_milestones(orch.session_id, db_path)
+            success, msg = git.auto_commit(feature, milestones)
+            if success:
+                click.secho("✓ Changes committed", fg="green")
+                click.echo(f"  {msg.split(chr(10))[0]}")  # First line of output
+            else:
+                click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
 
     except KeyboardInterrupt:
         # Handled by signal handler
