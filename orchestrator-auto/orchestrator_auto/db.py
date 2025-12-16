@@ -79,6 +79,21 @@ def init_db(db_path: Optional[str] = None) -> None:
             # Column already exists
             pass
 
+        # Add model columns if they don't exist (for backwards compatibility)
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN planner_model TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN executor_model TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass
+
         # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -144,6 +159,8 @@ def init_db(db_path: Optional[str] = None) -> None:
 
 def create_session(
     feature_description: str,
+    planner_model: Optional[str] = None,
+    executor_model: Optional[str] = None,
     db_path: Optional[str] = None
 ) -> str:
     """Create a new workflow session. Returns session ID."""
@@ -153,9 +170,9 @@ def create_session(
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO sessions (id, feature_description)
-            VALUES (?, ?)
-        """, (session_id, feature_description))
+            INSERT INTO sessions (id, feature_description, planner_model, executor_model)
+            VALUES (?, ?, ?, ?)
+        """, (session_id, feature_description, planner_model, executor_model))
 
     return session_id
 

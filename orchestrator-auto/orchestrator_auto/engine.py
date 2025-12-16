@@ -46,6 +46,8 @@ class Orchestrator:
         plan_path: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
         show_activity: bool = True,
+        planner_model: Optional[str] = None,
+        executor_model: Optional[str] = None,
     ):
         """
         Initialize orchestrator.
@@ -57,11 +59,17 @@ class Orchestrator:
             plan_path: Optional path to existing plan file (skips discovery/planning)
             on_output: Optional callback for output messages
             show_activity: Whether to show streaming activity indicator (default: True)
+            planner_model: Model for planner agent (optional, uses default if not specified)
+            executor_model: Model for executor agent (optional, uses default if not specified)
         """
         self.db_path = db_path
         self.on_output = on_output or print
         self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
+
+        # Model configuration
+        self.planner_model = planner_model
+        self.executor_model = executor_model
 
         # Initialize database
         db.init_db(db_path)
@@ -74,6 +82,15 @@ class Orchestrator:
             if not state:
                 raise ValueError(f"Session {session_id} not found")
             self.state = state
+
+            # Load models from session if not provided
+            session_data = db.get_session(session_id, db_path)
+            if session_data:
+                if not self.planner_model and session_data.get("planner_model"):
+                    self.planner_model = session_data["planner_model"]
+                if not self.executor_model and session_data.get("executor_model"):
+                    self.executor_model = session_data["executor_model"]
+
         elif feature_description:
             if plan_path:
                 # Start with existing plan (skip discovery/planning)
@@ -82,6 +99,8 @@ class Orchestrator:
                 # Create new session with discovery
                 self.session_id = db.create_session(
                     feature_description=feature_description,
+                    planner_model=planner_model,
+                    executor_model=executor_model,
                     db_path=db_path
                 )
                 self.state = self.state_machine.get_state(self.session_id)
@@ -116,9 +135,11 @@ class Orchestrator:
         self._output(f"\n  Milestones: {plan_info['milestones']}")
         self._output(f"\n  Names: {', '.join(plan_info['milestone_names'])}\n")
 
-        # Create session
+        # Create session with model configuration
         self.session_id = db.create_session(
             feature_description=feature_description,
+            planner_model=self.planner_model,
+            executor_model=self.executor_model,
             db_path=self.db_path
         )
 
@@ -162,7 +183,10 @@ class Orchestrator:
         """Create or return existing planner agent."""
         if self.planner is None:
             planner_session_id = f"{self.session_id}-planner"
-            self.planner = create_planner_agent(session_id=planner_session_id)
+            kwargs = {"session_id": planner_session_id}
+            if self.planner_model:
+                kwargs["model"] = self.planner_model
+            self.planner = create_planner_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(
                 self.planner,
@@ -176,7 +200,10 @@ class Orchestrator:
         """Create or return existing executor agent."""
         if self.executor is None:
             executor_session_id = f"{self.session_id}-executor"
-            self.executor = create_executor_agent(session_id=executor_session_id)
+            kwargs = {"session_id": executor_session_id}
+            if self.executor_model:
+                kwargs["model"] = self.executor_model
+            self.executor = create_executor_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(
                 self.executor,
@@ -694,4 +721,6 @@ The orchestrator will save the file for you.
             "current_milestone": self.state.current_milestone,
             "total_milestones": self.state.total_milestones,
             "plan_path": self.state.plan_path,
+            "planner_model": self.planner_model,
+            "executor_model": self.executor_model,
         }

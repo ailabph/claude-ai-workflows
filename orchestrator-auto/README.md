@@ -138,16 +138,27 @@ orchestrator respond <session-id> "Your answer here"
 Start a new workflow session.
 
 ```bash
-orchestrator start -f "Feature description" [-d /path/to/db.sqlite]
+orchestrator start -f "Feature description" [options]
 ```
 
 **Options:**
 - `-f, --feature` (required): Feature description
+- `-p, --plan` (optional): Path to existing plan file (skips discovery/planning)
+- `-pm, --planner-model` (optional): Model for planner agent (aliases: opus, sonnet, haiku)
+- `-em, --executor-model` (optional): Model for executor agent (aliases: opus, sonnet, haiku)
+- `--no-activity` (optional): Disable streaming activity indicator
 - `-d, --db-path` (optional): Custom database path
 
-**Example:**
+**Examples:**
 ```bash
+# Basic usage
 orchestrator start -f "Implement user profile page with avatar upload"
+
+# With custom models
+orchestrator start -f "My feature" --planner-model sonnet --executor-model haiku
+
+# With existing plan
+orchestrator start -f "My feature" --plan docs/existing_plan.md
 ```
 
 ---
@@ -297,14 +308,54 @@ orchestrator start -f "My feature" -d /custom/path/db.sqlite
 
 ### Agent Models
 
-Default models (configured in `orchestrator_auto/agents.py`):
-- **Planner**: `claude-opus-4-5-20251101`
-- **Executor**: `claude-sonnet-4-5-20250929`
+Default models:
+- **Planner**: `claude-opus-4-5-20251101` (Opus 4.5)
+- **Executor**: `claude-sonnet-4-5-20250929` (Sonnet 4.5)
 
-To customize models, modify the agent factory functions in `agents.py`:
-```python
-def create_planner_agent(session_id, db_path=None, model="custom-model"):
-    # ...
+#### CLI Model Selection
+
+Override models at runtime using CLI flags:
+
+```bash
+# Use Haiku for executor (cost savings)
+orchestrator start -f "My feature" --executor-model haiku
+
+# Use Sonnet for both agents
+orchestrator start -f "My feature" --planner-model sonnet --executor-model sonnet
+
+# Short aliases work too
+orchestrator start -f "My feature" -pm sonnet -em haiku
+```
+
+**Available aliases:**
+- `opus` → `claude-opus-4-5-20251101`
+- `sonnet` → `claude-sonnet-4-5-20250929`
+- `haiku` → `claude-haiku-3-5-20241022`
+
+You can also use full model IDs if needed.
+
+#### Config File
+
+Set default models in `~/.claude_orchestrator/config.yaml`:
+
+```yaml
+models:
+  planner: opus      # or full model ID
+  executor: sonnet   # or full model ID
+```
+
+**Priority order:** CLI flags > config file > built-in defaults
+
+#### Model Display
+
+Session status shows which models are being used:
+
+```
+Session: a1b2c3d4
+Phase: EXECUTION
+Status: ACTIVE
+Models: P=opus-4.5 | E=sonnet-4.5
+Milestone: [2/5]
 ```
 
 ---
@@ -417,12 +468,14 @@ orchestrator-auto/
 │   ├── state.py             # State machine
 │   ├── parser.py            # Response parsing
 │   ├── agents.py            # Agent wrappers
+│   ├── config.py            # Model config & aliases
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
 │   └── db.py                # Database operations
 ├── tests/
 │   ├── test_db.py           # Database tests
 │   ├── test_agents.py       # Agent tests
+│   ├── test_config.py       # Config tests
 │   ├── test_state.py        # State machine tests
 │   ├── test_parser.py       # Parser tests
 │   ├── test_engine.py       # Engine tests
@@ -505,8 +558,8 @@ Contributions are welcome! Please:
 
 ## Future Features / TODO
 
-- [ ] **Model Selection CLI Options** - Add `--planner-model` and `--executor-model` flags to allow choosing different Claude models (e.g., use Haiku for executor to reduce costs)
 - [ ] **Auto-Commit on Completion** - Have the planner automatically create a git commit (without pushing) after all milestones are approved. Commit message should summarize the feature implemented.
+- [x] **Model Selection CLI Options** - Add `--planner-model` and `--executor-model` flags to allow choosing different Claude models. Supports short aliases (opus, sonnet, haiku) and config file. See [Configuration > Agent Models](#agent-models).
 - [x] **Activity Indicator** - Add CLI UI feedback showing streaming snippets with token count. Use `--no-activity` to disable. See `docs/FEATURE_activity_indicator.md`.
 - [x] **Import Existing Plan** - Add `--plan` flag to start a session with a pre-existing milestone plan file, skipping discovery and planning phases. Useful for reusing proven plan templates or resuming failed workflows with a known-good plan.
 

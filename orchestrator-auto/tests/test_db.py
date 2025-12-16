@@ -128,8 +128,8 @@ class TestSessionCRUD:
     def test_list_sessions(self, temp_db):
         """Test listing all sessions."""
         # Create multiple sessions
-        id1 = db.create_session("Feature 1", temp_db)
-        id2 = db.create_session("Feature 2", temp_db)
+        id1 = db.create_session("Feature 1", db_path=temp_db)
+        id2 = db.create_session("Feature 2", db_path=temp_db)
 
         sessions = db.list_sessions(temp_db)
 
@@ -139,8 +139,8 @@ class TestSessionCRUD:
 
     def test_list_sessions_by_status(self, temp_db):
         """Test listing sessions filtered by status."""
-        id1 = db.create_session("Feature 1", temp_db)
-        id2 = db.create_session("Feature 2", temp_db)
+        id1 = db.create_session("Feature 1", db_path=temp_db)
+        id2 = db.create_session("Feature 2", db_path=temp_db)
 
         # Update one session to completed
         db.update_session(id1, {"status": "completed"}, temp_db)
@@ -153,13 +153,42 @@ class TestSessionCRUD:
         assert active_sessions[0]["id"] == id2
         assert completed_sessions[0]["id"] == id1
 
+    def test_create_session_with_models(self, temp_db):
+        """Test creating a session with model parameters."""
+        session_id = db.create_session(
+            feature_description="Test feature",
+            planner_model="claude-opus-4-5-20251101",
+            executor_model="claude-sonnet-4-5-20250929",
+            db_path=temp_db
+        )
+
+        session = db.get_session(session_id, temp_db)
+
+        assert session is not None
+        assert session["planner_model"] == "claude-opus-4-5-20251101"
+        assert session["executor_model"] == "claude-sonnet-4-5-20250929"
+
+    def test_create_session_without_models(self, temp_db):
+        """Test creating a session without model parameters."""
+        session_id = db.create_session(
+            feature_description="Test feature",
+            db_path=temp_db
+        )
+
+        session = db.get_session(session_id, temp_db)
+
+        assert session is not None
+        # Models should be None when not specified
+        assert session["planner_model"] is None
+        assert session["executor_model"] is None
+
 
 class TestMessageLogging:
     """Test message logging operations."""
 
     def test_log_message(self, temp_db):
         """Test logging a message."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         message_id = db.log_message(
             session_id=session_id,
@@ -175,7 +204,7 @@ class TestMessageLogging:
 
     def test_get_messages(self, temp_db):
         """Test retrieving messages."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         db.log_message(session_id, "discovery", "planner", "user", "Message 1", db_path=temp_db)
         db.log_message(session_id, "planning", "planner", "assistant", "Message 2", db_path=temp_db)
@@ -188,7 +217,7 @@ class TestMessageLogging:
 
     def test_get_messages_by_phase(self, temp_db):
         """Test retrieving messages filtered by phase."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         db.log_message(session_id, "discovery", "planner", "user", "Message 1", db_path=temp_db)
         db.log_message(session_id, "planning", "planner", "assistant", "Message 2", db_path=temp_db)
@@ -204,7 +233,7 @@ class TestMilestoneTracking:
 
     def test_create_milestone(self, temp_db):
         """Test creating a milestone."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         milestone_id = db.create_milestone(
             session_id=session_id,
@@ -217,7 +246,7 @@ class TestMilestoneTracking:
 
     def test_get_milestone(self, temp_db):
         """Test retrieving a milestone."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         db.create_milestone(session_id, 1, "Setup", temp_db)
 
@@ -230,7 +259,7 @@ class TestMilestoneTracking:
 
     def test_update_milestone(self, temp_db):
         """Test updating a milestone."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         milestone_id = db.create_milestone(session_id, 1, "Setup", temp_db)
 
@@ -252,7 +281,7 @@ class TestMilestoneTracking:
 
     def test_get_milestones(self, temp_db):
         """Test retrieving all milestones for a session."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         db.create_milestone(session_id, 1, "Setup", temp_db)
         db.create_milestone(session_id, 2, "Implementation", temp_db)
@@ -269,7 +298,7 @@ class TestBlockerManagement:
 
     def test_create_blocker(self, temp_db):
         """Test creating a blocker."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         blocker_id = db.create_blocker(
             session_id=session_id,
@@ -282,7 +311,7 @@ class TestBlockerManagement:
 
     def test_resolve_blocker(self, temp_db):
         """Test resolving a blocker."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         blocker_id = db.create_blocker(session_id, "planner", "Question?", temp_db)
 
@@ -296,7 +325,7 @@ class TestBlockerManagement:
 
     def test_get_unresolved_blockers(self, temp_db):
         """Test retrieving unresolved blockers."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         blocker1_id = db.create_blocker(session_id, "planner", "Question 1?", temp_db)
         blocker2_id = db.create_blocker(session_id, "executor", "Question 2?", temp_db)
@@ -311,7 +340,7 @@ class TestBlockerManagement:
 
     def test_get_all_blockers(self, temp_db):
         """Test retrieving all blockers."""
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         blocker1_id = db.create_blocker(session_id, "planner", "Question 1?", temp_db)
         blocker2_id = db.create_blocker(session_id, "executor", "Question 2?", temp_db)

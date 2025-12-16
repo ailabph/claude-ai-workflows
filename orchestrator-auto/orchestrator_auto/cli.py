@@ -14,6 +14,7 @@ from datetime import datetime
 from . import db
 from .engine import Orchestrator
 from .state import Phase, Status
+from .config import get_planner_model, get_executor_model, get_model_display_name
 
 
 # Global reference to orchestrator for signal handling
@@ -72,6 +73,12 @@ def show_progress(orchestrator: Orchestrator) -> None:
     click.echo(f"Phase: {format_phase(status['phase'])}")
     click.echo(f"Status: {format_status(status['status'])}")
 
+    # Show models if set
+    if status.get('planner_model') or status.get('executor_model'):
+        planner_display = get_model_display_name(status['planner_model']) if status.get('planner_model') else "default"
+        executor_display = get_model_display_name(status['executor_model']) if status.get('executor_model') else "default"
+        click.echo(f"Models: P={click.style(planner_display, fg='blue')} | E={click.style(executor_display, fg='magenta')}")
+
     if status['phase'] == Phase.EXECUTION or status['current_milestone'] > 0:
         milestone_text = f"[{status['current_milestone']}/{status['total_milestones']}]"
         click.echo(f"Milestone: {click.style(milestone_text, fg='magenta', bold=True)}")
@@ -96,16 +103,30 @@ def cli():
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--plan', '-p', type=click.Path(exists=True), help='Path to existing plan file (skips discovery/planning)')
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
-def start(feature: str, db_path: Optional[str], plan: Optional[str], show_activity: bool):
+@click.option('--planner-model', '-pm', help='Model for planner agent. Aliases: opus, sonnet, haiku')
+@click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
+def start(
+    feature: str,
+    db_path: Optional[str],
+    plan: Optional[str],
+    show_activity: bool,
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+):
     """Start a new workflow session."""
     global _current_orchestrator
 
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_interrupt)
 
+    # Resolve model names (CLI > config > defaults)
+    resolved_planner = get_planner_model(planner_model)
+    resolved_executor = get_executor_model(executor_model)
+
     try:
         click.secho("Starting new workflow session...", fg="cyan", bold=True)
         click.echo(f"Feature: {feature}")
+        click.echo(f"Models: Planner={get_model_display_name(resolved_planner)} | Executor={get_model_display_name(resolved_executor)}")
         if plan:
             click.echo(f"Plan: {plan}")
         click.echo()
@@ -120,6 +141,8 @@ def start(feature: str, db_path: Optional[str], plan: Optional[str], show_activi
             plan_path=plan,
             on_output=output_callback,
             show_activity=show_activity,
+            planner_model=resolved_planner,
+            executor_model=resolved_executor,
         )
         _current_orchestrator = orch
 
@@ -289,6 +312,12 @@ def list_sessions(status: Optional[str], db_path: Optional[str]):
             click.echo(f"    Feature: {session['feature_description']}")
             click.echo(f"    Phase: {phase}  Status: {status_str}")
 
+            # Show models if set
+            if session.get('planner_model') or session.get('executor_model'):
+                planner_display = get_model_display_name(session['planner_model']) if session.get('planner_model') else "default"
+                executor_display = get_model_display_name(session['executor_model']) if session.get('executor_model') else "default"
+                click.echo(f"    Models: P={planner_display} | E={executor_display}")
+
             if session['phase'] == Phase.EXECUTION or session['current_milestone'] > 0:
                 milestone = f"[{session['current_milestone']}/{session['total_milestones']}]"
                 click.echo(f"    Milestone: {click.style(milestone, fg='magenta')}")
@@ -330,6 +359,12 @@ def status(session_id: str, db_path: Optional[str]):
         click.echo(f"Feature: {session['feature_description']}")
         click.echo(f"Phase: {format_phase(session['phase'])}")
         click.echo(f"Status: {format_status(session['status'])}")
+
+        # Model info
+        if session.get('planner_model') or session.get('executor_model'):
+            planner_display = get_model_display_name(session['planner_model']) if session.get('planner_model') else "default"
+            executor_display = get_model_display_name(session['executor_model']) if session.get('executor_model') else "default"
+            click.echo(f"Models: Planner={click.style(planner_display, fg='blue')} | Executor={click.style(executor_display, fg='magenta')}")
         click.echo()
 
         # Milestone progress
@@ -418,6 +453,10 @@ def export(session_id: str, output: Optional[str], db_path: Optional[str]):
         content.append(f"**Feature:** {session['feature_description']}\n")
         content.append(f"**Phase:** {session['phase']}\n")
         content.append(f"**Status:** {session['status']}\n")
+        if session.get('planner_model') or session.get('executor_model'):
+            planner_display = get_model_display_name(session['planner_model']) if session.get('planner_model') else "default"
+            executor_display = get_model_display_name(session['executor_model']) if session.get('executor_model') else "default"
+            content.append(f"**Models:** Planner={planner_display} | Executor={executor_display}\n")
         content.append(f"**Created:** {session['created_at']}\n")
         content.append(f"**Updated:** {session['updated_at']}\n")
         content.append("\n---\n\n")

@@ -196,7 +196,7 @@ class TestResumeCommand:
     def test_resume_active_session(self, mock_orch_class, runner, temp_db):
         """Test resuming an active session."""
         # Create a session
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         # Setup mock
         mock_orch = Mock()
@@ -228,7 +228,7 @@ class TestResumeCommand:
     def test_resume_paused_without_answer(self, mock_orch_class, runner, temp_db):
         """Test resuming paused session without answer."""
         # Create a session and pause it
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
 
         # Create a blocker
@@ -257,7 +257,7 @@ class TestResumeCommand:
     def test_resume_paused_with_answer(self, mock_orch_class, runner, temp_db):
         """Test resuming paused session with answer."""
         # Create a session and pause it
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
 
         # Create a blocker
@@ -290,7 +290,7 @@ class TestRespondCommand:
     def test_respond_to_blocker(self, mock_orch_class, runner, temp_db):
         """Test responding to a blocker."""
         # Create a paused session with blocker
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
         db.create_blocker(session_id, "planner", "Test question?", temp_db)
 
@@ -322,7 +322,7 @@ class TestRespondCommand:
     def test_respond_to_active_session(self, runner, temp_db):
         """Test respond to session that's not paused."""
         # Create an active session
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         # Run command
         result = runner.invoke(cli, ['respond', session_id, 'answer', '-d', temp_db])
@@ -334,7 +334,7 @@ class TestRespondCommand:
     def test_respond_without_blocker(self, runner, temp_db):
         """Test respond to paused session without blocker."""
         # Create a paused session without blocker
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
 
         # Run command
@@ -358,8 +358,8 @@ class TestListCommand:
     def test_list_with_sessions(self, runner, temp_db):
         """Test listing sessions."""
         # Create multiple sessions
-        session1 = db.create_session("Feature 1", temp_db)
-        session2 = db.create_session("Feature 2", temp_db)
+        session1 = db.create_session("Feature 1", db_path=temp_db)
+        session2 = db.create_session("Feature 2", db_path=temp_db)
         db.update_session(session2, {'status': Status.COMPLETED}, temp_db)
 
         # Run command
@@ -375,8 +375,8 @@ class TestListCommand:
     def test_list_filter_by_status(self, runner, temp_db):
         """Test filtering sessions by status."""
         # Create sessions with different statuses
-        session1 = db.create_session("Active feature", temp_db)
-        session2 = db.create_session("Completed feature", temp_db)
+        session1 = db.create_session("Active feature", db_path=temp_db)
+        session2 = db.create_session("Completed feature", db_path=temp_db)
         db.update_session(session2, {'status': Status.COMPLETED}, temp_db)
 
         # Run command with filter (pass string value, not enum)
@@ -394,7 +394,7 @@ class TestStatusCommand:
     def test_status_basic(self, runner, temp_db):
         """Test showing status for a session."""
         # Create a session
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         # Run command
         result = runner.invoke(cli, ['status', session_id, '-d', temp_db])
@@ -415,7 +415,7 @@ class TestStatusCommand:
     def test_status_with_milestones(self, runner, temp_db):
         """Test status with milestone information."""
         # Create a session in execution
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(
             session_id,
             {
@@ -442,7 +442,7 @@ class TestStatusCommand:
     def test_status_with_blocker(self, runner, temp_db):
         """Test status with unresolved blocker."""
         # Create a paused session with blocker
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.update_session(session_id, {'status': Status.PAUSED}, temp_db)
         db.create_blocker(session_id, "planner", "Test question?", temp_db)
 
@@ -461,7 +461,7 @@ class TestExportCommand:
     def test_export_basic(self, runner, temp_db):
         """Test exporting a session."""
         # Create a session with some data
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
         db.log_message(session_id, Phase.DISCOVERY, "planner", "assistant", "Test message", 50, temp_db)
 
         with runner.isolated_filesystem():
@@ -491,7 +491,7 @@ class TestExportCommand:
     def test_export_with_default_filename(self, runner, temp_db):
         """Test export with auto-generated filename."""
         # Create a session
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         with runner.isolated_filesystem():
             # Run command without output option
@@ -508,7 +508,7 @@ class TestExportCommand:
     def test_export_with_all_data(self, runner, temp_db):
         """Test export includes all session data."""
         # Create a session with comprehensive data
-        session_id = db.create_session("Test feature", temp_db)
+        session_id = db.create_session("Test feature", db_path=temp_db)
 
         # Add messages
         db.log_message(session_id, Phase.DISCOVERY, "planner", "assistant", "Discovery message", 50, temp_db)
