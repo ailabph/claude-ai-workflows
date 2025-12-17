@@ -115,3 +115,164 @@ class TestListModels:
         assert "sonnet" in models
         assert "haiku" in models
         assert len(models) == 3
+
+
+# ============================================================================
+# Phase 2: Repo-Local Config Tests
+# ============================================================================
+
+
+class TestRepoConfigDiscovery:
+    """Test repo-local config discovery."""
+
+    def test_find_repo_root_in_git_repo(self, tmp_path):
+        """Test finding repo root in a git repository."""
+        # Create a fake git repo
+        git_dir = tmp_path / ".git"
+        git_dir.mkdir()
+        subdir = tmp_path / "src" / "components"
+        subdir.mkdir(parents=True)
+
+        # Find repo root from subdir
+        result = config.find_repo_root(subdir)
+        assert result == tmp_path
+
+    def test_find_repo_root_no_git(self, tmp_path):
+        """Test finding repo root when not in git repo."""
+        subdir = tmp_path / "some" / "deep" / "path"
+        subdir.mkdir(parents=True)
+
+        result = config.find_repo_root(subdir)
+        assert result is None
+
+    def test_find_repo_config_exists(self, tmp_path):
+        """Test finding repo config when it exists."""
+        # Create fake git repo and config
+        (tmp_path / ".git").mkdir()
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("telegram:\n  enabled: true\n")
+
+        # Find config from repo root
+        result = config.find_repo_config(tmp_path)
+        assert result == config_file
+
+    def test_find_repo_config_in_subdir(self, tmp_path):
+        """Test finding repo config from a subdirectory."""
+        # Create fake git repo and config
+        (tmp_path / ".git").mkdir()
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("telegram:\n  enabled: true\n")
+
+        # Create subdirectory
+        subdir = tmp_path / "src" / "components"
+        subdir.mkdir(parents=True)
+
+        # Find config from subdir
+        result = config.find_repo_config(subdir)
+        assert result == config_file
+
+    def test_find_repo_config_stops_at_git_boundary(self, tmp_path):
+        """Test that config search stops at git root."""
+        # Create parent config (should NOT be found)
+        parent_config = tmp_path / ".claude_orchestrator"
+        parent_config.mkdir()
+        (parent_config / "config.yaml").write_text("parent: true\n")
+
+        # Create nested git repo (no config inside)
+        nested_repo = tmp_path / "nested_project"
+        nested_repo.mkdir()
+        (nested_repo / ".git").mkdir()
+
+        # Search from nested repo should NOT find parent config
+        result = config.find_repo_config(nested_repo)
+        assert result is None
+
+    def test_find_repo_config_none_exists(self, tmp_path):
+        """Test finding repo config when it doesn't exist."""
+        (tmp_path / ".git").mkdir()
+
+        result = config.find_repo_config(tmp_path)
+        assert result is None
+
+
+class TestConfigMerge:
+    """Test config merge semantics."""
+
+    def test_deep_merge_simple(self):
+        """Test simple deep merge."""
+        base = {"a": 1, "b": 2}
+        override = {"b": 3, "c": 4}
+
+        result = config._deep_merge(base, override)
+
+        assert result == {"a": 1, "b": 3, "c": 4}
+
+    def test_deep_merge_nested(self):
+        """Test deep merge with nested dicts."""
+        base = {
+            "telegram": {"enabled": True, "bot_token": "old"},
+            "models": {"planner": "opus"}
+        }
+        override = {
+            "telegram": {"bot_token": "new", "chat_id": "123"}
+        }
+
+        result = config._deep_merge(base, override)
+
+        assert result["telegram"]["enabled"] is True  # from base
+        assert result["telegram"]["bot_token"] == "new"  # from override
+        assert result["telegram"]["chat_id"] == "123"  # from override
+        assert result["models"]["planner"] == "opus"  # from base
+
+    def test_load_repo_config(self, tmp_path):
+        """Test loading repo config file."""
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("telegram:\n  bot_token: test123\n")
+
+        result = config.load_repo_config(config_file)
+
+        assert result["telegram"]["bot_token"] == "test123"
+
+    def test_load_repo_config_invalid_yaml(self, tmp_path):
+        """Test loading invalid yaml returns empty dict."""
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("invalid: yaml: content:")
+
+        result = config.load_repo_config(config_file)
+
+        assert result == {}
+
+
+class TestProjectIdentity:
+    """Test project identity functions."""
+
+    def test_project_identity_in_git_repo(self, tmp_path):
+        """Test project identity in a git repo."""
+        (tmp_path / ".git").mkdir()
+        subdir = tmp_path / "src"
+        subdir.mkdir()
+
+        project_id, project_remote = config.get_project_identity(subdir)
+
+        assert project_id == str(tmp_path)
+        # No git origin configured, so remote should be None
+        assert project_remote is None
+
+    def test_project_identity_no_git(self, tmp_path):
+        """Test project identity when not in git repo."""
+        subdir = tmp_path / "some" / "path"
+        subdir.mkdir(parents=True)
+
+        project_id, project_remote = config.get_project_identity(subdir)
+
+        # Should use cwd as project_id when no git
+        assert project_id == str(subdir.resolve())
+        assert project_remote is None

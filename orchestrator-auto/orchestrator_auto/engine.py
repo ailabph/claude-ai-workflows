@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .telegram import TelegramNotifier
 
 from . import db
+from .config import get_project_identity
 from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
 from .state import StateMachine, WorkflowState, TransitionEvent
 from .parser import (
@@ -104,11 +105,16 @@ class Orchestrator:
                 # Start with existing plan (skip discovery/planning)
                 self._start_with_plan(feature_description, plan_path)
             else:
+                # Get project identity for session scoping
+                project_id, project_remote = get_project_identity()
+
                 # Create new session with discovery
                 self.session_id = db.create_session(
                     feature_description=feature_description,
                     planner_model=planner_model,
                     executor_model=executor_model,
+                    project_id=project_id,
+                    project_remote=project_remote,
                     db_path=db_path
                 )
                 self.state = self.state_machine.get_state(self.session_id)
@@ -143,11 +149,16 @@ class Orchestrator:
         self._output(f"\n  Milestones: {plan_info['milestones']}")
         self._output(f"\n  Names: {', '.join(plan_info['milestone_names'])}\n")
 
+        # Get project identity for session scoping
+        project_id, project_remote = get_project_identity()
+
         # Create session with model configuration
         self.session_id = db.create_session(
             feature_description=feature_description,
             planner_model=self.planner_model,
             executor_model=self.executor_model,
+            project_id=project_id,
+            project_remote=project_remote,
             db_path=self.db_path
         )
 
@@ -306,7 +317,7 @@ class Orchestrator:
         if self.on_output:
             self.on_output(message)
 
-    def _notify_telegram(self, method_name: str, **kwargs) -> None:
+    def _notify_telegram(self, method_name: str, **kwargs) -> Optional[int]:
         """
         Safely call a telegram notifier method.
 
@@ -315,17 +326,21 @@ class Orchestrator:
         Args:
             method_name: Name of the TelegramNotifier method to call
             **kwargs: Arguments to pass to the method
+
+        Returns:
+            Message ID if successful, None otherwise
         """
         if not self.telegram_notifier:
-            return
+            return None
 
         try:
             method = getattr(self.telegram_notifier, method_name, None)
             if method:
-                method(**kwargs)
+                return method(**kwargs)
         except Exception as e:
             # Log but don't crash workflow
             self._output(f"  (Telegram notification failed: {e})\n")
+        return None
 
     def _create_activity_indicator(self) -> Optional[StreamingIndicator]:
         """Create an activity indicator if enabled."""
@@ -802,14 +817,25 @@ The orchestrator will save the file for you.
         )
         self.current_blocker_id = blocker_id
 
-        # Send blocker notification
-        self._notify_telegram(
+        # Send blocker notification and store message_id for reply tracking
+        telegram_message_id = self._notify_telegram(
             "notify_blocker",
             session_id=self.session_id[:8],
             blocker_id=blocker_id,
             question=question,
             agent=agent.capitalize(),
         )
+
+        # Store telegram message_id for reply-to-blocker routing (Phase 2)
+        if telegram_message_id:
+            try:
+                db.set_blocker_telegram_message_id(
+                    blocker_id=blocker_id,
+                    telegram_message_id=telegram_message_id,
+                    db_path=self.db_path
+                )
+            except Exception:
+                pass  # Don't crash workflow on DB error
 
         # Transition to paused
         success, self.state, error = self.state_machine.transition(

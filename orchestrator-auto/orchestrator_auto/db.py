@@ -102,6 +102,22 @@ def init_db(db_path: Optional[str] = None) -> None:
         except sqlite3.OperationalError:
             pass
 
+        # Add project_id column if it doesn't exist (for project scoping)
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN project_id TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass
+
+        # Add project_remote column if it doesn't exist (for project display)
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN project_remote TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass
+
         # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -147,6 +163,27 @@ def init_db(db_path: Optional[str] = None) -> None:
             )
         """)
 
+        # Add telegram_message_id column to blockers if it doesn't exist
+        try:
+            cursor.execute("""
+                ALTER TABLE blockers ADD COLUMN telegram_message_id INTEGER
+            """)
+        except sqlite3.OperationalError:
+            pass
+
+        # Telegram state table (for polling cursor)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS telegram_state (
+                id INTEGER PRIMARY KEY CHECK(id = 1),
+                last_update_id INTEGER DEFAULT 0
+            )
+        """)
+
+        # Initialize telegram_state with a single row if empty
+        cursor.execute("""
+            INSERT OR IGNORE INTO telegram_state (id, last_update_id) VALUES (1, 0)
+        """)
+
         # Create indexes
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -174,9 +211,21 @@ def create_session(
     feature_description: str,
     planner_model: Optional[str] = None,
     executor_model: Optional[str] = None,
+    project_id: Optional[str] = None,
+    project_remote: Optional[str] = None,
     db_path: Optional[str] = None
 ) -> str:
-    """Create a new workflow session. Returns session ID."""
+    """
+    Create a new workflow session. Returns session ID.
+
+    Args:
+        feature_description: Description of the feature being implemented
+        planner_model: Model for planner agent
+        executor_model: Model for executor agent
+        project_id: Project identifier (repo root path)
+        project_remote: Git remote URL (optional)
+        db_path: Custom database path
+    """
 
     session_id = str(uuid.uuid4())[:8]  # Short ID for CLI convenience
     now = _sqlite_timestamp()
@@ -184,9 +233,13 @@ def create_session(
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO sessions (id, feature_description, planner_model, executor_model, heartbeat_at)
-            VALUES (?, ?, ?, ?, ?)
-        """, (session_id, feature_description, planner_model, executor_model, now))
+            INSERT INTO sessions (
+                id, feature_description, planner_model, executor_model,
+                heartbeat_at, project_id, project_remote
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, feature_description, planner_model, executor_model,
+              now, project_id, project_remote))
 
     return session_id
 
@@ -258,24 +311,44 @@ def touch_session(
 
 def list_sessions(
     db_path: Optional[str] = None,
-    status: Optional[str] = None
+    status: Optional[str] = None,
+    project_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """List all sessions, optionally filtered by status."""
+    """
+    List sessions, optionally filtered by status and/or project.
+
+    Args:
+        db_path: Custom database path
+        status: Filter by status (active, paused, completed, failed)
+        project_id: Filter by project ID (repo root path)
+
+    Returns:
+        List of session dictionaries
+    """
 
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
 
+        conditions = []
+        params = []
+
         if status:
-            cursor.execute("""
-                SELECT * FROM sessions
-                WHERE status = ?
-                ORDER BY created_at DESC
-            """, (status,))
-        else:
-            cursor.execute("""
-                SELECT * FROM sessions
-                ORDER BY created_at DESC
-            """)
+            conditions.append("status = ?")
+            params.append(status)
+
+        if project_id:
+            conditions.append("project_id = ?")
+            params.append(project_id)
+
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        cursor.execute(f"""
+            SELECT * FROM sessions
+            {where_clause}
+            ORDER BY created_at DESC
+        """, params)
 
         return [dict(row) for row in cursor.fetchall()]
 
@@ -556,3 +629,100 @@ def get_all_blockers(
         """, (session_id,))
 
         return [dict(row) for row in cursor.fetchall()]
+
+
+# ============================================================================
+# Telegram State Management
+# ============================================================================
+
+def set_blocker_telegram_message_id(
+    blocker_id: int,
+    telegram_message_id: int,
+    db_path: Optional[str] = None
+) -> None:
+    """
+    Store Telegram message ID for a blocker (for reply tracking).
+
+    Args:
+        blocker_id: Database blocker ID
+        telegram_message_id: Telegram message ID returned from sendMessage
+        db_path: Custom database path
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE blockers
+            SET telegram_message_id = ?
+            WHERE id = ?
+        """, (telegram_message_id, blocker_id))
+
+
+def get_blocker_by_telegram_message_id(
+    telegram_message_id: int,
+    db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Find blocker by Telegram message ID.
+
+    Args:
+        telegram_message_id: Telegram message ID to lookup
+        db_path: Custom database path
+
+    Returns:
+        Blocker dict if found, None otherwise
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT b.*, s.project_id
+            FROM blockers b
+            JOIN sessions s ON b.session_id = s.id
+            WHERE b.telegram_message_id = ?
+        """, (telegram_message_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def get_telegram_last_update_id(db_path: Optional[str] = None) -> int:
+    """
+    Get the last processed Telegram update ID.
+
+    Args:
+        db_path: Custom database path
+
+    Returns:
+        Last update ID (0 if not set)
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT last_update_id FROM telegram_state WHERE id = 1
+        """)
+
+        row = cursor.fetchone()
+        if row:
+            return row['last_update_id'] or 0
+        return 0
+
+
+def set_telegram_last_update_id(
+    last_update_id: int,
+    db_path: Optional[str] = None
+) -> None:
+    """
+    Save the last processed Telegram update ID.
+
+    Args:
+        last_update_id: The update ID to store
+        db_path: Custom database path
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE telegram_state
+            SET last_update_id = ?
+            WHERE id = 1
+        """, (last_update_id,))

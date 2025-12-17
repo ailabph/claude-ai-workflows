@@ -356,14 +356,14 @@ class TestListCommand:
         assert 'No sessions found' in result.output
 
     def test_list_with_sessions(self, runner, temp_db):
-        """Test listing sessions."""
-        # Create multiple sessions
+        """Test listing sessions with --all-projects flag."""
+        # Create multiple sessions (no project_id, so need --all-projects)
         session1 = db.create_session("Feature 1", db_path=temp_db)
         session2 = db.create_session("Feature 2", db_path=temp_db)
         db.update_session(session2, {'status': Status.COMPLETED}, temp_db)
 
-        # Run command
-        result = runner.invoke(cli, ['list', '-d', temp_db])
+        # Run command with --all-projects since sessions have no project_id
+        result = runner.invoke(cli, ['list', '-d', temp_db, '--all-projects'])
 
         # Verify
         assert result.exit_code == 0
@@ -373,14 +373,14 @@ class TestListCommand:
         assert 'Feature 2' in result.output
 
     def test_list_filter_by_status(self, runner, temp_db):
-        """Test filtering sessions by status."""
-        # Create sessions with different statuses
+        """Test filtering sessions by status with --all-projects flag."""
+        # Create sessions with different statuses (no project_id, so need --all-projects)
         session1 = db.create_session("Active feature", db_path=temp_db)
         session2 = db.create_session("Completed feature", db_path=temp_db)
         db.update_session(session2, {'status': Status.COMPLETED}, temp_db)
 
         # Run command with filter (pass string value, not enum)
-        result = runner.invoke(cli, ['list', '-s', 'completed', '-d', temp_db])
+        result = runner.invoke(cli, ['list', '-s', 'completed', '-d', temp_db, '--all-projects'])
 
         # Verify only completed session shown
         assert result.exit_code == 0

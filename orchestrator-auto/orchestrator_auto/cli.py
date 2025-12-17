@@ -13,6 +13,7 @@ from datetime import datetime
 
 from . import db
 from . import git
+from . import __version__
 from .engine import Orchestrator
 from .state import Phase, Status
 from .config import (
@@ -178,6 +179,7 @@ def _check_stuck_sessions(telegram_notifier, db_path: Optional[str] = None) -> N
 
 
 @click.group()
+@click.version_option(version=__version__, prog_name="orchestrator")
 def cli():
     """Orchestrator Auto - Automated two-agent workflow."""
     pass
@@ -504,21 +506,34 @@ def reset(session_id: str, db_path: Optional[str]):
 @cli.command("list")
 @click.option('--status', '-s', help='Filter by status (active, paused, completed, failed)')
 @click.option('--db-path', '-d', help='Custom database path')
-def list_sessions(status: Optional[str], db_path: Optional[str]):
-    """List all sessions."""
+@click.option('--all-projects', '-a', is_flag=True, help='Show sessions from all projects (default: current project only)')
+def list_sessions(status: Optional[str], db_path: Optional[str], all_projects: bool):
+    """List sessions for the current project."""
+    from .config import get_project_identity
+
     try:
         # Initialize database
         db.init_db(db_path)
 
+        # Get project scoping
+        project_id = None
+        if not all_projects:
+            project_id, _ = get_project_identity()
+
         # Get sessions
-        sessions = db.list_sessions(db_path, status=status)
+        sessions = db.list_sessions(db_path, status=status, project_id=project_id)
 
         if not sessions:
-            click.echo("No sessions found.")
+            if all_projects:
+                click.echo("No sessions found.")
+            else:
+                click.echo("No sessions found for this project.")
+                click.echo("Use --all-projects to see sessions from other projects.")
             return
 
         click.echo()
-        click.secho(f"Found {len(sessions)} session(s):", fg="cyan", bold=True)
+        scope_text = "all projects" if all_projects else "this project"
+        click.secho(f"Found {len(sessions)} session(s) ({scope_text}):", fg="cyan", bold=True)
         click.echo()
 
         for session in sessions:
@@ -797,6 +812,145 @@ def telegram_test():
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red")
         sys.exit(1)
+
+
+@telegram.command("listen")
+@click.option('--db-path', '-d', help='Custom database path')
+@click.option('--poll-interval', default=3, help='Poll interval in seconds (default: 3)')
+@click.option('--once', is_flag=True, help='Process one batch and exit')
+@click.option('--verbose', '-v', is_flag=True, help='Show verbose debug output')
+def telegram_listen(db_path: Optional[str], poll_interval: int, once: bool, verbose: bool):
+    """Listen for Telegram replies to blocker notifications.
+
+    Polls Telegram for reply messages and automatically resumes paused
+    workflows when a blocker is answered.
+
+    The listener only processes:
+    - Direct messages (DM) from the configured chat_id
+    - Replies to blocker notification messages
+    - Messages from the current project (by default)
+
+    Use --verbose to see ignored messages and mapping decisions.
+    """
+    from .telegram import TelegramListener, HTTPX_AVAILABLE
+    from .config import get_project_identity
+
+    if not HTTPX_AVAILABLE:
+        click.secho("✗ httpx is required. Install with: pip install httpx", fg="red")
+        sys.exit(1)
+
+    telegram_config = get_telegram_config()
+
+    if not telegram_config.get("bot_token") or not telegram_config.get("chat_id"):
+        click.secho("✗ Telegram not configured", fg="red")
+        click.echo()
+        click.echo("See: orchestrator telegram test")
+        sys.exit(1)
+
+    # Initialize database
+    db.init_db(db_path)
+
+    # Get current project identity for scoping
+    current_project_id, _ = get_project_identity()
+
+    click.echo()
+    click.secho("🎧 Telegram Listener (Phase 2)", fg="cyan", bold=True)
+    click.echo()
+    click.echo(f"  Bot token: ...{telegram_config['bot_token'][-4:]}")
+    click.echo(f"  Chat ID: {telegram_config['chat_id']}")
+    click.echo(f"  Project: {current_project_id}")
+    click.echo(f"  Poll interval: {poll_interval}s")
+    if verbose:
+        click.echo("  Verbose: enabled")
+    click.echo()
+    click.secho("Press Ctrl+C to stop", fg="yellow")
+    click.echo()
+
+    # Create listener
+    listener = TelegramListener(
+        bot_token=telegram_config["bot_token"],
+        chat_id=telegram_config["chat_id"],
+        allowed_user_id=telegram_config.get("allowed_user_id"),
+        poll_interval=poll_interval,
+        verbose=verbose,
+    )
+
+    def handle_blocker_reply(telegram_message_id: int, answer: str, chat_id: str) -> Optional[str]:
+        """
+        Handle a reply to a blocker notification.
+
+        Returns error message or None on success.
+        """
+        # Find blocker by telegram message ID
+        blocker = db.get_blocker_by_telegram_message_id(telegram_message_id, db_path)
+
+        if not blocker:
+            if verbose:
+                click.echo(f"  [verbose] No blocker found for message_id={telegram_message_id}")
+            return "No blocker found for this message"
+
+        # Check if blocker is already resolved
+        if blocker.get("resolved_at"):
+            return "This blocker has already been resolved"
+
+        # Check project scoping
+        blocker_project_id = blocker.get("project_id")
+        if blocker_project_id and blocker_project_id != current_project_id:
+            return f"Blocker belongs to different project: {blocker_project_id}"
+
+        session_id = blocker["session_id"]
+        blocker_id = blocker["id"]
+
+        click.echo(f"  → Processing reply for session {session_id[:8]}")
+        click.echo(f"    Question: {blocker['question'][:50]}...")
+        click.echo(f"    Answer: {answer[:50]}...")
+
+        # Resolve the blocker (but don't change session state - leave it paused
+        # so `orchestrator resume` works correctly)
+        try:
+            db.resolve_blocker(blocker_id, answer, db_path)
+            click.secho(f"  ✓ Blocker resolved", fg="green")
+            return None  # Success
+
+        except Exception as e:
+            return f"Failed to resolve blocker: {e}"
+
+    def get_last_update_id() -> int:
+        return db.get_telegram_last_update_id(db_path)
+
+    def set_last_update_id(update_id: int) -> None:
+        db.set_telegram_last_update_id(update_id, db_path)
+
+    def on_shutdown():
+        click.echo()
+        click.secho("✓ Listener stopped gracefully", fg="green")
+
+    try:
+        if once:
+            # Single batch mode
+            last_update_id = get_last_update_id()
+            click.echo(f"Processing single batch (offset: {last_update_id})...")
+            new_last_update_id = listener.poll_once(last_update_id, handle_blocker_reply)
+            if new_last_update_id != last_update_id:
+                set_last_update_id(new_last_update_id)
+            click.secho("✓ Done", fg="green")
+        else:
+            # Continuous polling mode
+            listener.run(
+                on_blocker_reply=handle_blocker_reply,
+                get_last_update_id=get_last_update_id,
+                set_last_update_id=set_last_update_id,
+                on_shutdown=on_shutdown,
+            )
+
+    except KeyboardInterrupt:
+        click.echo()
+        click.secho("✓ Interrupted", fg="yellow")
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red")
+        sys.exit(1)
+    finally:
+        listener.close()
 
 
 if __name__ == '__main__':

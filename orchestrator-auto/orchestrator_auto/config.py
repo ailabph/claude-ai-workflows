@@ -2,10 +2,13 @@
 Configuration management for orchestrator-auto.
 
 Handles model aliases, config file loading, and model resolution.
+Supports repo-local config with merge semantics.
 """
 
+import os
+import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 
 # Model aliases mapping to full model IDs (latest versions)
@@ -19,33 +22,217 @@ MODEL_ALIASES = {
 DEFAULT_PLANNER_MODEL = "claude-opus-4-5-20251101"
 DEFAULT_EXECUTOR_MODEL = "claude-sonnet-4-5-20250929"
 
-# Config file location
-CONFIG_DIR = Path.home() / ".claude_orchestrator"
-CONFIG_FILE = CONFIG_DIR / "config.yaml"
+# Config file locations
+GLOBAL_CONFIG_DIR = Path.home() / ".claude_orchestrator"
+GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.yaml"
+REPO_CONFIG_DIR_NAME = ".claude_orchestrator"
+REPO_CONFIG_FILE_NAME = "config.yaml"
 
 
-def get_config_path() -> Path:
-    """Get path to config file."""
-    return CONFIG_FILE
+# ============================================================================
+# Repo-Local Config Discovery
+# ============================================================================
 
-
-def load_config() -> Dict[str, Any]:
+def find_repo_root(start_path: Optional[Path] = None) -> Optional[Path]:
     """
-    Load config from ~/.claude_orchestrator/config.yaml.
+    Find the git repository root by walking up from start_path.
+
+    Args:
+        start_path: Starting directory (defaults to cwd)
 
     Returns:
-        Config dictionary, empty if file doesn't exist
+        Path to repo root if found, None otherwise
     """
-    config_path = get_config_path()
-    if config_path.exists():
+    current = Path(start_path) if start_path else Path.cwd()
+    current = current.resolve()
+
+    while current != current.parent:
+        if (current / ".git").exists():
+            return current
+        current = current.parent
+
+    # Check root directory
+    if (current / ".git").exists():
+        return current
+
+    return None
+
+
+def find_repo_config(start_path: Optional[Path] = None) -> Optional[Path]:
+    """
+    Find repo-local config file by walking up from start_path.
+
+    Discovery rules:
+    1. Walk upward from start_path to filesystem root
+    2. At each directory, check for .claude_orchestrator/config.yaml
+    3. Stop walking after reaching a .git directory (git root boundary)
+    4. Return the nearest config found (closest to start_path)
+
+    Args:
+        start_path: Starting directory (defaults to cwd)
+
+    Returns:
+        Path to repo config file if found, None otherwise
+    """
+    current = Path(start_path) if start_path else Path.cwd()
+    current = current.resolve()
+    candidates = []
+
+    while current != current.parent:
+        config_path = current / REPO_CONFIG_DIR_NAME / REPO_CONFIG_FILE_NAME
+        if config_path.exists():
+            candidates.append(config_path)
+
+        # Stop at git root boundary (but include this directory's check)
+        if (current / ".git").exists():
+            break
+
+        current = current.parent
+
+    # Return nearest (first found, closest to cwd)
+    return candidates[0] if candidates else None
+
+
+def _deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deep merge two dictionaries. Override values take precedence.
+
+    Args:
+        base: Base dictionary
+        override: Dictionary with override values
+
+    Returns:
+        Merged dictionary
+    """
+    result = base.copy()
+    for key, value in override.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = value
+    return result
+
+
+def load_global_config() -> Dict[str, Any]:
+    """
+    Load global config from ~/.claude_orchestrator/config.yaml.
+
+    Returns:
+        Config dictionary, empty if file doesn't exist or is invalid
+    """
+    if GLOBAL_CONFIG_FILE.exists():
+        try:
+            import yaml
+            content = GLOBAL_CONFIG_FILE.read_text()
+            return yaml.safe_load(content) or {}
+        except Exception:
+            return {}
+    return {}
+
+
+def load_repo_config(config_path: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Load repo-local config file.
+
+    Args:
+        config_path: Path to config file (or None to auto-discover)
+
+    Returns:
+        Config dictionary, empty if not found or invalid
+    """
+    if config_path is None:
+        config_path = find_repo_config()
+
+    if config_path and config_path.exists():
         try:
             import yaml
             content = config_path.read_text()
             return yaml.safe_load(content) or {}
         except Exception:
-            # If config file is invalid, return empty config
             return {}
     return {}
+
+
+def load_config() -> Dict[str, Any]:
+    """
+    Load merged config (global + repo-local).
+
+    Merge semantics:
+    - Load global config first as base
+    - Load repo-local config and deep-merge over global
+    - Nested dicts (like telegram) are merged recursively
+
+    Priority: repo config > global config
+
+    Returns:
+        Merged config dictionary
+    """
+    global_config = load_global_config()
+    repo_config = load_repo_config()
+
+    if repo_config:
+        return _deep_merge(global_config, repo_config)
+    return global_config
+
+
+# ============================================================================
+# Project Identity
+# ============================================================================
+
+def get_project_identity(cwd: Optional[Path] = None) -> Tuple[str, Optional[str]]:
+    """
+    Get project identity for session scoping.
+
+    Args:
+        cwd: Working directory (defaults to cwd)
+
+    Returns:
+        Tuple of (project_id, project_remote):
+        - project_id: Absolute path to repo root (or cwd if no git repo)
+        - project_remote: Git origin URL if available, None otherwise
+    """
+    start_path = Path(cwd) if cwd else Path.cwd()
+    start_path = start_path.resolve()
+
+    # Find repo root
+    repo_root = find_repo_root(start_path)
+    if repo_root:
+        project_id = str(repo_root)
+    else:
+        # No git repo, use cwd as project root
+        project_id = str(start_path)
+
+    # Try to get git remote URL
+    project_remote = None
+    if repo_root:
+        try:
+            result = subprocess.run(
+                ["git", "remote", "get-url", "origin"],
+                cwd=str(repo_root),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                project_remote = result.stdout.strip()
+        except Exception:
+            pass
+
+    return project_id, project_remote
+
+
+# ============================================================================
+# Legacy Compatibility
+# ============================================================================
+
+# Keep these for backward compatibility
+CONFIG_DIR = GLOBAL_CONFIG_DIR
+CONFIG_FILE = GLOBAL_CONFIG_FILE
+
+
+def get_config_path() -> Path:
+    """Get path to global config file."""
+    return GLOBAL_CONFIG_FILE
 
 
 def resolve_model(model: Optional[str]) -> Optional[str]:
@@ -146,8 +333,6 @@ def list_available_models() -> Dict[str, str]:
 # ============================================================================
 # Telegram Configuration
 # ============================================================================
-
-import os
 
 
 def get_telegram_config() -> Dict[str, Any]:

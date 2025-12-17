@@ -497,3 +497,149 @@ class TestHeartbeatAndStuckSessions:
         # With 10 min threshold - stuck
         stuck_10 = db.get_stuck_sessions(temp_db, inactive_minutes=10)
         assert len(stuck_10) == 1
+
+
+# ============================================================================
+# Phase 2: Telegram State and Project Scoping Tests
+# ============================================================================
+
+
+class TestTelegramState:
+    """Test telegram state management for polling cursor."""
+
+    def test_get_telegram_last_update_id_initial(self, temp_db):
+        """Test that initial last_update_id is 0."""
+        result = db.get_telegram_last_update_id(temp_db)
+        assert result == 0
+
+    def test_set_and_get_telegram_last_update_id(self, temp_db):
+        """Test setting and getting telegram update ID."""
+        db.set_telegram_last_update_id(12345, temp_db)
+
+        result = db.get_telegram_last_update_id(temp_db)
+        assert result == 12345
+
+    def test_set_telegram_last_update_id_overwrite(self, temp_db):
+        """Test that setting update ID overwrites previous value."""
+        db.set_telegram_last_update_id(100, temp_db)
+        db.set_telegram_last_update_id(200, temp_db)
+
+        result = db.get_telegram_last_update_id(temp_db)
+        assert result == 200
+
+
+class TestBlockerTelegramMessageId:
+    """Test telegram message ID tracking for blockers."""
+
+    def test_set_blocker_telegram_message_id(self, temp_db):
+        """Test storing telegram message ID for a blocker."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        blocker_id = db.create_blocker(session_id, "planner", "Question?", temp_db)
+
+        db.set_blocker_telegram_message_id(blocker_id, 98765, temp_db)
+
+        # Verify by looking up
+        blocker = db.get_blocker_by_telegram_message_id(98765, temp_db)
+        assert blocker is not None
+        assert blocker["id"] == blocker_id
+
+    def test_get_blocker_by_telegram_message_id_not_found(self, temp_db):
+        """Test lookup returns None for unknown message ID."""
+        result = db.get_blocker_by_telegram_message_id(99999, temp_db)
+        assert result is None
+
+    def test_get_blocker_by_telegram_message_id_includes_project_id(self, temp_db):
+        """Test that blocker lookup includes session's project_id."""
+        session_id = db.create_session(
+            "Test feature",
+            project_id="/path/to/project",
+            db_path=temp_db
+        )
+        blocker_id = db.create_blocker(session_id, "planner", "Question?", temp_db)
+        db.set_blocker_telegram_message_id(blocker_id, 11111, temp_db)
+
+        blocker = db.get_blocker_by_telegram_message_id(11111, temp_db)
+
+        assert blocker is not None
+        assert blocker["project_id"] == "/path/to/project"
+
+
+class TestProjectScoping:
+    """Test project-based session scoping."""
+
+    def test_create_session_with_project_id(self, temp_db):
+        """Test creating session with project identity."""
+        session_id = db.create_session(
+            "Test feature",
+            project_id="/path/to/repo",
+            project_remote="git@github.com:user/repo.git",
+            db_path=temp_db
+        )
+
+        session = db.get_session(session_id, temp_db)
+        assert session["project_id"] == "/path/to/repo"
+        assert session["project_remote"] == "git@github.com:user/repo.git"
+
+    def test_list_sessions_filters_by_project_id(self, temp_db):
+        """Test that list_sessions can filter by project_id."""
+        # Create sessions for different projects
+        session1 = db.create_session(
+            "Feature for project A",
+            project_id="/project/a",
+            db_path=temp_db
+        )
+        session2 = db.create_session(
+            "Feature for project B",
+            project_id="/project/b",
+            db_path=temp_db
+        )
+        session3 = db.create_session(
+            "Another feature for project A",
+            project_id="/project/a",
+            db_path=temp_db
+        )
+
+        # List only project A sessions
+        project_a_sessions = db.list_sessions(temp_db, project_id="/project/a")
+        assert len(project_a_sessions) == 2
+
+        # List only project B sessions
+        project_b_sessions = db.list_sessions(temp_db, project_id="/project/b")
+        assert len(project_b_sessions) == 1
+
+        # List all sessions (no filter)
+        all_sessions = db.list_sessions(temp_db)
+        assert len(all_sessions) == 3
+
+    def test_list_sessions_combined_filters(self, temp_db):
+        """Test list_sessions with both status and project_id filters."""
+        from orchestrator_auto.state import Status
+
+        # Create sessions
+        session1 = db.create_session(
+            "Active in A",
+            project_id="/project/a",
+            db_path=temp_db
+        )
+        session2 = db.create_session(
+            "Completed in A",
+            project_id="/project/a",
+            db_path=temp_db
+        )
+        db.update_session(session2, {"status": Status.COMPLETED}, temp_db)
+
+        session3 = db.create_session(
+            "Active in B",
+            project_id="/project/b",
+            db_path=temp_db
+        )
+
+        # Filter: project A + active status
+        active_a = db.list_sessions(temp_db, status="active", project_id="/project/a")
+        assert len(active_a) == 1
+        assert active_a[0]["id"] == session1
+
+        # Filter: project A + completed status
+        completed_a = db.list_sessions(temp_db, status="completed", project_id="/project/a")
+        assert len(completed_a) == 1
+        assert completed_a[0]["id"] == session2

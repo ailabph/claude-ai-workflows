@@ -25,8 +25,14 @@ orchestrator start -f "My feature" --telegram
 # Test Telegram configuration
 orchestrator telegram test
 
-# List all sessions
+# Listen for Telegram blocker replies (Phase 2)
+orchestrator telegram listen
+
+# List sessions (current project only)
 orchestrator list
+
+# List all sessions across projects
+orchestrator list --all-projects
 
 # Check session status
 orchestrator status <session-id>
@@ -119,8 +125,13 @@ orchestrator respond <session-id> "Your answer"
 ### `list` - List sessions
 
 ```bash
-orchestrator list [-s active|paused|completed|failed]
+orchestrator list [-s active|paused|completed|failed] [--all-projects]
 ```
+
+| Option | Description |
+|--------|-------------|
+| `-s, --status` | Filter by status |
+| `-a, --all-projects` | Show sessions from all projects (default: current project only) |
 
 ### `status` - Session details
 
@@ -140,6 +151,20 @@ orchestrator export <session-id> [-o output.md]
 orchestrator telegram test
 ```
 
+### `telegram listen` - Listen for blocker replies
+
+```bash
+orchestrator telegram listen [--poll-interval N] [--once] [--verbose]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--poll-interval` | Seconds between polls (default: 3) |
+| `--once` | Process one batch and exit |
+| `-v, --verbose` | Show debug output for ignored messages |
+
+Listens for Telegram replies to blocker notifications. When you reply to a blocker message in Telegram, the listener resolves the blocker and prepares the session for resume.
+
 ---
 
 ## Configuration
@@ -154,9 +179,11 @@ orchestrator telegram test
 
 **Defaults:** Planner = Opus, Executor = Sonnet
 
-### Config File
+### Config Files
 
-`~/.claude_orchestrator/config.yaml`:
+**Global config:** `~/.claude_orchestrator/config.yaml`
+
+**Repo-local config:** `<repo>/.claude_orchestrator/config.yaml` (gitignored)
 
 ```yaml
 models:
@@ -164,11 +191,17 @@ models:
   executor: sonnet
 ```
 
-**Priority:** CLI flags > config file > defaults
+Repo-local config is discovered by walking up from the current directory to the git root. If found, it's deep-merged with global config.
+
+**Priority:** CLI flags > env vars > repo config > global config > defaults
 
 ### Database
 
 Default: `~/.claude_orchestrator/db.sqlite`
+
+### Project Scoping
+
+Sessions are tagged with project identity (`project_id` = repo root path). The `list` command filters by current project by default; use `--all-projects` to see all sessions. Other commands (`status`, `resume`, `reset`) accept any session ID.
 
 ### Telegram Notifications
 
@@ -180,7 +213,7 @@ Receive workflow notifications via Telegram (workflow start, milestone completio
 2. Start a chat with your bot and get your chat ID (send a message, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
 3. Install the optional dependency: `pip install httpx`
 
-**Config file** (`~/.claude_orchestrator/config.yaml`):
+**Config file** (`~/.claude_orchestrator/config.yaml` or `<repo>/.claude_orchestrator/config.yaml`):
 
 ```yaml
 telegram:
@@ -203,7 +236,9 @@ export ORCHESTRATOR_TELEGRAM_STUCK_MINUTES="20"
 
 **Stuck Session Detection:** Automatically notifies when sessions in planning/execution phase have no heartbeat for the configured threshold. Uses `heartbeat_at` timestamp updated during agent activity (not just state transitions).
 
-**Priority:** CLI flags > env vars > config file
+**Two-Way Messaging (Phase 2):** Run `orchestrator telegram listen` to receive blocker answers via Telegram. When you reply to a blocker notification, the listener resolves the blocker. Recommended: use one Telegram bot per project (via repo-local config) to avoid cross-project routing issues.
+
+**Priority:** CLI flags > env vars > repo config > global config
 
 ---
 
@@ -301,13 +336,90 @@ pytest tests/ --cov=orchestrator_auto
 
 ## TODO
 
-- [ ] **Telegram Phase 2** - Inbound blocker responses via Telegram polling
+- [ ] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
+  - *Design questions:* Queue persistence (DB vs temp file vs none), feature description extraction (from plan header?), blocker behavior (pause queue vs skip to next)
 - [ ] **Post Feedback** - User feedback at milestones/completion
+- [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
 - [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)
 - [x] **Auto-Commit** - `--auto-commit` flag for git commit on completion
 - [x] **Model Selection** - `-pm`/`-em` flags with aliases
 - [x] **Activity Indicator** - Streaming feedback with token count
 - [x] **Import Plan** - `--plan` flag to skip discovery/planning
+
+---
+
+## Next Priorities (Personal/Droplet Use)
+
+1. **Retries (transport-level only):** automatic retry/backoff for transient API/network failures; keep semantic retries gated by planner/human.
+2. **Observability shortcuts:** add lightweight CLI helpers like `orchestrator status <id> --tail N` / `--since 10m` to quickly see what changed without exporting.
+3. **Safety controls for unattended runs:** quiet hours for non-blocker notifications, and caps per milestone (runtime/token/tool-call limits).
+4. **Plan templates:** `orchestrator start --template <name>` to standardize repeatable workflows and reduce setup overhead.
+
+---
+
+## Droplet/Vacation Ops (1 Project = 1 Droplet)
+
+- Recommended deployment model: install `orchestrator` globally on the droplet, `cd` into the project repo, and run sessions from that repo (matches local workflow).
+- Persistence: rely on `~/.claude_orchestrator/db.sqlite` for session continuity; use `tmux` or `systemd` for process continuity.
+- Auto-start on reboot (safe mode): run a dedicated command (e.g. `orchestrator daemon --auto-resume`) that:
+    - acquires a single-instance lock
+    - checks for `status=active` sessions in `planning`/`execution`
+    - does nothing if heartbeat is recent (runner still alive)
+    - force-resumes only if heartbeat is stale (default 20 min)
+    - never auto-resumes `paused` (needs blocker answer) or `discovery` (human-driven)
+- Multiple active sessions: resume only the most recently active session; alert/log if more exist.
+
+---
+
+## Changelog
+
+### v0.6.0 - Telegram Two-Way & Project Scoping
+
+- **Telegram Phase 2** - Inbound blocker responses via `orchestrator telegram listen`
+- **Project scoping** - Sessions tagged with `project_id`; CLI commands filter by current project
+- **Repo-local config** - Support for `<repo>/.claude_orchestrator/config.yaml` with deep merge
+- **CLI: `--all-projects`** - Show sessions from all projects in `list` command
+- **CLI: `telegram listen`** - Poll for Telegram replies to blocker notifications
+- **DB: `telegram_state` table** - Persist polling cursor across restarts
+- **DB: `telegram_message_id`** - Track blocker notification messages for reply routing
+
+### v0.5.0 - Telegram Integration
+
+- **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete) (`9211393`)
+- **Heartbeat hardening** - Stuck session detection with `heartbeat_at` timestamp (`3bc0537`)
+- **CLI: `--telegram/--no-telegram`** - Enable/disable notifications
+- **CLI: `orchestrator telegram test`** - Validate bot configuration
+- **CLI: `orchestrator reset`** - Reset orphaned sessions
+- **CLI: `--force` flag** - Force resume with guardrails
+- **Config: `stuck_sessions.inactive_minutes`** - Configurable threshold (default 20 min)
+
+### v0.4.0 - Model Selection & Auto-Commit
+
+- **Model selection** - `-pm`/`-em` flags with aliases (opus/sonnet/haiku) (`0b10daf`)
+- **Auto-commit** - `--auto-commit` flag for git commit on completion (`64c7e5a`)
+- **Config file** - `~/.claude_orchestrator/config.yaml` for default models
+
+### v0.3.0 - UX Improvements
+
+- **Conversation continuity** - ClaudeSDKClient for persistent agent sessions (`61a179b`)
+- **Multi-line paste** - Support for pasting multi-line input with preview (`1223e61`)
+- **Discovery UX** - Wait for user input, improved `/ready` detection (`df7a7e8`, `89b84ae`)
+- **Response handling** - Fixed ResultMessage termination (`e55a9ef`)
+
+### v0.2.0 - Plan Import & Activity Indicator
+
+- **`--plan` flag** - Import existing plan files, skip discovery/planning (`59d8c26`)
+- **Activity indicator** - Streaming snippets with token count (`0a2c95c`)
+- **Plan saving** - Engine saves plan file from `PLAN_CONTENT` tags (`c2a742e`)
+
+### v0.1.0 - Initial Release
+
+- **Two-agent orchestration** - Planner (Opus) + Executor (Sonnet) workflow (`b6b8256`)
+- **Milestone-gated execution** - Planner reviews each milestone before proceeding
+- **Session persistence** - SQLite database for workflow state and history
+- **CLI commands** - `start`, `resume`, `respond`, `list`, `status`, `export`
+- **Blocker handling** - Pause workflow for human input
+- **Agent SDK integration** - Async query pattern with auto-approve (`761267c`, `52b5134`)
 
 ---
 
