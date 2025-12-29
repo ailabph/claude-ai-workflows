@@ -33,20 +33,19 @@ _current_orchestrator: Optional[Orchestrator] = None
 
 
 def handle_interrupt(signum, frame):
-    """Handle Ctrl+C gracefully."""
+    """
+    Handle Ctrl+C by raising KeyboardInterrupt instead of exiting.
+
+    This allows try/except KeyboardInterrupt blocks in _run_queue() and other
+    code to handle queue item status updates and cleanup properly.
+    """
     click.echo("\n")
-    click.secho("⚠️  Workflow interrupted by user", fg="yellow")
+    click.secho("⚠️  Interrupted (Ctrl+C)", fg="yellow")
 
-    if _current_orchestrator:
-        click.echo("Saving current state...")
-        try:
-            _current_orchestrator._cleanup()
-            click.secho("✓ State saved successfully", fg="green")
-        except Exception as e:
-            click.secho(f"✗ Error saving state: {e}", fg="red")
-
-    click.echo("Exiting...")
-    sys.exit(0)
+    # Raise KeyboardInterrupt to let normal exception handling run
+    # Do NOT call _cleanup() here - let the finally blocks handle it
+    # Do NOT call sys.exit() - let the exception propagate
+    signal.default_int_handler(signum, frame)
 
 
 def format_phase(phase: str) -> str:
@@ -336,6 +335,180 @@ def _handle_queue_mode(
     )
 
 
+def _is_heartbeat_recent(session: dict, inactive_minutes: int = 20) -> bool:
+    """
+    Check if a session's heartbeat is recent (within inactive_minutes).
+
+    Args:
+        session: Session dict with heartbeat_at and updated_at fields
+        inactive_minutes: Threshold for considering a session active
+
+    Returns:
+        True if heartbeat is recent, False if stale or missing
+    """
+    from datetime import timedelta
+
+    last_activity_str = session.get('heartbeat_at') or session.get('updated_at')
+    if not last_activity_str:
+        return False
+
+    try:
+        if 'T' in last_activity_str:
+            last_activity = datetime.fromisoformat(last_activity_str)
+        else:
+            last_activity = datetime.strptime(last_activity_str, "%Y-%m-%d %H:%M:%S")
+
+        threshold = datetime.now() - timedelta(minutes=inactive_minutes)
+        return last_activity >= threshold
+    except (ValueError, TypeError):
+        return False
+
+
+def _reconcile_queue_head(
+    project_id: str,
+    db_path: Optional[str],
+    auto_commit: bool,
+    telegram_notifier,
+) -> tuple:
+    """
+    Reconcile the head active queue item before processing.
+
+    Ensures sequential ordering by checking if any earlier item is running/paused
+    before allowing pending items to start.
+
+    Returns:
+        Tuple of (action, head_item) where action is one of:
+        - "ready": Safe to run the head pending item
+        - "empty": No active items, queue is done
+        - "halt_paused": Queue halted on paused item (user must resume)
+        - "halt_active": Another runner is active (recent heartbeat)
+        - "halt_orphaned": Session orphaned (stale heartbeat, needs reset)
+    """
+    from . import git
+
+    stuck_config = get_stuck_sessions_config()
+    inactive_minutes = stuck_config.get("inactive_minutes", 20)
+
+    while True:
+        # Get all active items (pending, running, paused) ordered by position
+        items = db.list_queue_items(project_id, db_path, include_completed=False)
+
+        if not items:
+            return ("empty", None)
+
+        head = items[0]  # Lowest position among active items
+        status = head["status"]
+        session_id = head.get("session_id")
+
+        if status == "pending":
+            # Safe to run this item
+            return ("ready", head)
+
+        if status == "paused":
+            # Queue halted - user must resume this session
+            click.echo()
+            click.secho(f"⏸ Queue halted: item {head['position'] + 1} is paused", fg="yellow", bold=True)
+            if session_id:
+                click.echo(f"  Resume with: orchestrator resume {session_id}")
+            return ("halt_paused", head)
+
+        if status == "running":
+            # Reconcile running item against session state
+            if not session_id:
+                # No session_id means crash before session was created - mark failed
+                click.secho(f"⚠ Queue item {head['position'] + 1} has no session - marking failed", fg="yellow")
+                db.update_queue_item(
+                    head["id"],
+                    db_path,
+                    status="failed",
+                    error_message="Queue item marked running but no session_id (crash before session created)",
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                continue  # Re-check with next item
+
+            session = db.get_session(session_id, db_path)
+            if not session:
+                # Session missing from DB - mark failed
+                click.secho(f"⚠ Queue item {head['position'] + 1} session not found - marking failed", fg="yellow")
+                db.update_queue_item(
+                    head["id"],
+                    db_path,
+                    status="failed",
+                    error_message=f"Queue item session not found: {session_id}",
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                continue
+
+            # Check session state
+            session_phase = session.get("phase")
+            session_status = session.get("status")
+
+            if session_phase == Phase.COMPLETED or session_status == Status.COMPLETED:
+                # Session completed but queue item not updated - reconcile
+                click.secho(f"✓ Reconciling: queue item {head['position'] + 1} session already completed", fg="green")
+                db.update_queue_item(
+                    head["id"],
+                    db_path,
+                    status="completed",
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+
+                # Attempt auto-commit if enabled (idempotent)
+                if auto_commit:
+                    click.echo("  Attempting auto-commit for reconciled session...")
+                    milestones = db.get_milestones(session_id, db_path)
+                    success, msg = git.auto_commit(head["feature_description"], milestones)
+                    if success:
+                        click.secho("  ✓ Changes committed", fg="green")
+                    else:
+                        click.secho(f"  ⚠ Auto-commit skipped: {msg}", fg="yellow")
+
+                # Telegram notification
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_completed(
+                        head["position"] + 1,
+                        head["feature_description"]
+                    )
+
+                continue  # Check next item
+
+            if session_phase == Phase.PAUSED or session_status == Status.PAUSED:
+                # Session paused - update queue item and halt
+                click.secho(f"⏸ Reconciling: queue item {head['position'] + 1} session is paused", fg="yellow")
+                db.update_queue_item(head["id"], db_path, status="paused")
+                return ("halt_paused", head)
+
+            # Session is still active - check heartbeat
+            if _is_heartbeat_recent(session, inactive_minutes):
+                # Another runner is active
+                click.echo()
+                click.secho("⚠ Another queue runner appears to be active", fg="yellow", bold=True)
+                click.echo(f"  Session {session_id} has recent heartbeat")
+                click.echo("  Exiting to avoid double-running.")
+                return ("halt_active", head)
+            else:
+                # Orphaned session - stale heartbeat
+                click.echo()
+                click.secho(f"⚠ Queue item {head['position'] + 1} has orphaned session", fg="yellow", bold=True)
+                click.echo(f"  Session {session_id} has stale heartbeat (>{inactive_minutes} min)")
+                click.echo()
+                click.echo("  To recover, run:")
+                click.secho(f"    orchestrator reset {session_id}", fg="cyan")
+                click.secho(f"    orchestrator resume {session_id} --force", fg="cyan")
+                return ("halt_orphaned", head)
+
+        # Unknown status - should not happen, but mark failed to avoid infinite loop
+        click.secho(f"⚠ Queue item {head['position'] + 1} has unknown status '{status}' - marking failed", fg="yellow")
+        db.update_queue_item(
+            head["id"],
+            db_path,
+            status="failed",
+            error_message=f"Unknown queue item status: {status}",
+            completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        )
+        # Continue to re-check
+
+
 def _run_queue(
     project_id: str,
     db_path: Optional[str],
@@ -365,6 +538,18 @@ def _run_queue(
     click.echo()
     click.secho("Starting queue runner...", fg="cyan", bold=True)
 
+    # Reconcile queue state before starting (handles crash recovery)
+    action, head_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier)
+
+    if action == "empty":
+        click.echo()
+        click.secho("Queue is empty - nothing to run", fg="yellow")
+        return
+
+    if action in ("halt_paused", "halt_active", "halt_orphaned"):
+        # Reconciliation printed the appropriate message, just return
+        return
+
     # Telegram: Queue started notification
     if telegram_notifier:
         all_items = db.list_queue_items(project_id, db_path, include_completed=False)
@@ -375,11 +560,26 @@ def _run_queue(
     paused_count = 0
 
     while True:
-        # Get next pending item
-        next_item = db.get_next_queue_item(project_id, db_path)
+        # Reconcile before each iteration to ensure sequential ordering
+        action, next_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier)
 
-        if not next_item:
-            # No more pending items
+        if action == "empty":
+            # No more active items
+            break
+
+        if action == "halt_paused":
+            # Queue halted on paused item
+            paused_count += 1
+            break
+
+        if action in ("halt_active", "halt_orphaned"):
+            # Queue halted for other reasons - don't count as paused
+            # (reconciliation already printed the appropriate message)
+            break
+
+        if action != "ready":
+            # Unexpected action - should not happen
+            click.secho(f"⚠ Unexpected reconciliation action: {action}", fg="yellow")
             break
 
         item_id = next_item["id"]
@@ -719,7 +919,8 @@ def start(
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--force', '-f', is_flag=True, help='Force resume orphaned sessions (bypass pause check)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool):
+@click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -854,7 +1055,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     show_activity=show_activity,
                     planner_model=None,  # Use defaults
                     executor_model=None,  # Use defaults
-                    auto_commit=False,  # Don't auto-commit on resume continuation
+                    auto_commit=auto_commit,
                     telegram=telegram,
                 )
 
@@ -890,7 +1091,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     show_activity=show_activity,
                     planner_model=None,
                     executor_model=None,
-                    auto_commit=False,
+                    auto_commit=auto_commit,
                     telegram=telegram,
                 )
         else:
@@ -933,7 +1134,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     show_activity=show_activity,
                     planner_model=None,
                     executor_model=None,
-                    auto_commit=False,
+                    auto_commit=auto_commit,
                     telegram=telegram,
                 )
         except Exception:
