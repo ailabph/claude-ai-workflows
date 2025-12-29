@@ -205,6 +205,59 @@ You are setting up a UI glossary.
 6) Add 3-5 canonical recipes matching this repo’s UI stack (routing, modals, theming).
 ```
 
+### Prompt to Bootstrap Full Design-System Docs (Templates → Instance Files)
+
+Use this when you want the *entire* design-system doc set scaffolded (not just the glossary):
+
+```
+BOOTSTRAP DESIGN-SYSTEM DOCS (TEMPLATES → INSTANCE FILES)
+
+Goal: In this repo, scaffold a complete set of design-system docs by copying the templates in `design-system/template/` into repo-specific instance files in `design-system/`, and filling in only what can be inferred safely from the codebase. Keep the result token-efficient and opinionated, optimized for AI agents.
+
+Instructions:
+1) Read these templates:
+- `design-system/template/STYLE_GUIDE_template.md`
+- `design-system/template/COLOR_TOKENS_template.md`
+- `design-system/template/COMPONENT_PATTERNS_template.md`
+- `design-system/template/PAGE_AUDIT_template.md`
+- `design-system/template/SYSTEM_UI_GLOSSARY_template.md`
+- `design-system/template/SYSTEM_UI_GLOSSARY_ref_template.md`
+
+2) Create (or replace placeholder content in) these instance files by copying the templates as a starting point:
+- `design-system/STYLE_GUIDE.md`
+- `design-system/COLOR_TOKENS.md`
+- `design-system/COMPONENT_PATTERNS.md`
+- `design-system/PAGE_AUDIT.md`
+- `design-system/SYSTEM_UI_GLOSSARY.md`
+- `design-system/SYSTEM_UI_GLOSSARY_ref.md`
+
+3) Fill in repo-specific details by inspecting the repo:
+- Determine routing framework and conventions (file-based routes? folders?) and put them in `design-system/SYSTEM_UI_GLOSSARY.md` → “Framework Bindings”.
+- Identify the primary UI entrypoints (app root/layout providers) and document them.
+- Identify the shared UI components directory (e.g. `components/common/*` or similar) and populate “Shared UI Registry” with the highest blast-radius components (5–15 items). For each item add 1 targeted `rg` search that finds usages.
+- Identify main features and produce a “Fast Map — Feature → Files” with primary screens/routes + entry points + data/services/types + shared UI used. Keep each feature compact (3–8 bullets).
+- For `design-system/STYLE_GUIDE.md`, set `[PROJECT_NAME]`, last-updated, and ensure the “Core Principles” match the repo’s styling approach (Tailwind vs CSS modules etc.). Link to where tokens actually live (tailwind config, CSS variables, theme provider).
+- For `design-system/COLOR_TOKENS.md`, either:
+  A) If the repo already has semantic tokens: extract the real token names + light/dark values and replace placeholders, OR
+  B) If the repo does not: keep the token tables but clearly mark them as “TODO” and add a short “Adoption Plan” section describing where to implement tokens.
+- For `design-system/COMPONENT_PATTERNS.md`, ensure the examples match the repo’s component library (Button/Input/Dialog components, icon system, utility `cn()` function). If the repo does not have these abstractions, adjust examples to be framework-native but still tokenized.
+- For `design-system/PAGE_AUDIT.md`, enumerate the page/route list (or top-level screens) and initialize audit rows with “🔍 Not Audited”. Add a “Priority Queue” with 3–10 high-impact screens (based on navigation prominence).
+
+4) Constraints:
+- Do not invent paths that don’t exist: every file path in these docs must either exist or be explicitly marked as a placeholder like `<path>`.
+- Prefer pointers + targeted searches over exhaustive lists.
+- Explicitly label DEV/ADMIN-only UI sections.
+- Keep everything short: tables + short bullets. Avoid long prose.
+- Ensure `design-system/SYSTEM_UI_GLOSSARY_ref.md` includes copy/paste prompts for: default UI task, shared component change, modal change, add route, and end-of-session glossary update.
+
+Output requirements:
+- List the exact files created/modified before editing.
+- After generating, provide a short “drift check” checklist confirming:
+  - glossary links to the other docs
+  - shared UI registry has usage searches
+  - theming rules match actual repo setup
+```
+
 ---
 
 ## 8) Known Repo-Specific Notes (Coinsher)
