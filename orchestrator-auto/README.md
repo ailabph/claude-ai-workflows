@@ -144,13 +144,14 @@ orchestrator start --queue --queue-reset plan1.md plan2.md
 ### `resume` - Resume existing session
 
 ```bash
-orchestrator resume <session-id> [-a "answer"] [--force]
+orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `-a, --answer` | Answer to blocker question |
 | `--force` | Force resume orphaned sessions (bypasses pause check) |
+| `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
 
 ### `reset` - Reset orphaned session
 
