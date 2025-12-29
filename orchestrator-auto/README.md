@@ -417,6 +417,20 @@ pytest tests/ --cov=orchestrator_auto
 
 ## Changelog
 
+### v0.7.0 - Plan Queue
+
+- **Plan Queue** - Queue multiple plan files for sequential execution (`--queue plan1.md plan2.md`)
+- **Queue resume** - Resume existing queue with `orchestrator start --queue` (no args)
+- **Queue reset** - Overwrite existing queue with `--queue-reset`
+- **Feature extraction** - Auto-extract feature description from plan headers (YAML frontmatter, `# Feature:`, H1)
+- **Crash recovery** - Reconcile queue state on restart; handles running/paused/orphaned items
+- **Fail-forward** - Failed plans are recorded but don't stop the queue
+- **Auto-commit per session** - `--auto-commit` applies to each completed plan in queue
+- **CLI: `resume --auto-commit`** - Resume with auto-commit for queue continuation
+- **Queue visibility** - `orchestrator list` shows queue position for queued sessions
+- **Telegram queue notifications** - Queue start, item progress, completion summary
+- **DB: `queue_items` table** - Persist queue state with project scoping
+
 ### v0.6.0 - Telegram Two-Way & Project Scoping
 
 - **Telegram Phase 2** - Inbound blocker responses via `orchestrator telegram listen`
