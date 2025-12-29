@@ -269,6 +269,109 @@ _Use `orchestrator resume {session_id} \\-\\-force` to restart_"""
 
         return self._send_message(text)
 
+    def notify_queue_started(self, queue_size: int) -> Optional[int]:
+        """
+        Send notification when queue starts.
+
+        Returns message ID if successful.
+        """
+        text = f"""🚀 *Queue Started*
+
+Running {queue_size} plan{'s' if queue_size != 1 else ''} sequentially\\.
+
+_Orchestrator will process each plan in order\\._"""
+
+        return self._send_message(text)
+
+    def notify_queue_item_started(self, position: int, feature: str) -> Optional[int]:
+        """
+        Send notification when queue item starts.
+
+        Returns message ID if successful.
+        """
+        text = f"""▶️ *Queue Item {position} Started*
+
+Feature: {self._escape_markdown(feature)}
+
+_Workflow in progress\\.\\.\\._"""
+
+        return self._send_message(text)
+
+    def notify_queue_item_completed(self, position: int, feature: str) -> Optional[int]:
+        """
+        Send notification when queue item completes.
+
+        Returns message ID if successful.
+        """
+        text = f"""✅ *Queue Item {position} Completed*
+
+Feature: {self._escape_markdown(feature)}
+
+_Continuing to next item\\.\\.\\._"""
+
+        return self._send_message(text)
+
+    def notify_queue_item_paused(self, position: int, feature: str, session_id: str) -> Optional[int]:
+        """
+        Send notification when queue item is paused (blocker).
+
+        Returns message ID if successful.
+        """
+        text = f"""⏸️ *Queue Item {position} Paused*
+
+Feature: {self._escape_markdown(feature)}
+Session: `{session_id}`
+
+_Queue halted\\._ Use `orchestrator resume {session_id}` to continue\\."""
+
+        return self._send_message(text)
+
+    def notify_queue_item_failed(self, position: int, feature: str, error: str) -> Optional[int]:
+        """
+        Send notification when queue item fails.
+
+        Returns message ID if successful.
+        """
+        text = f"""❌ *Queue Item {position} Failed*
+
+Feature: {self._escape_markdown(feature)}
+Error: {self._escape_markdown(error[:200])}
+
+_Continuing to next item \\(fail\\-forward\\)\\.\\.\\._"""
+
+        return self._send_message(text)
+
+    def notify_queue_interrupted(self, position: int, feature: str) -> Optional[int]:
+        """
+        Send notification when queue is interrupted by user.
+
+        Returns message ID if successful.
+        """
+        text = f"""⚠️ *Queue Interrupted*
+
+Stopped at item {position}: {self._escape_markdown(feature)}
+
+_Use `orchestrator start \\-\\-queue` to resume\\._"""
+
+        return self._send_message(text)
+
+    def notify_queue_completed(self, completed: int, failed: int, paused: int) -> Optional[int]:
+        """
+        Send notification when queue completes.
+
+        Returns message ID if successful.
+        """
+        total = completed + failed + paused
+        text = f"""🏁 *Queue Complete*
+
+Completed: {completed}/{total}
+Failed: {failed}/{total}
+Paused: {paused}/{total}
+
+_All items processed\\._"""
+
+        return self._send_message(text)
+
     def send_test_message(self) -> tuple[bool, str]:
         """
         Send a test message to verify configuration.

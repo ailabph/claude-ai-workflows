@@ -643,3 +643,345 @@ class TestProjectScoping:
         completed_a = db.list_sessions(temp_db, status="completed", project_id="/project/a")
         assert len(completed_a) == 1
         assert completed_a[0]["id"] == session2
+
+
+# ============================================================================
+# Phase 3: Queue Items Tests (Plan Queue Feature)
+# ============================================================================
+
+
+class TestQueueItemsTableCreation:
+    """Test that queue_items table is created properly."""
+
+    def test_queue_items_table_exists(self, temp_db):
+        """Test that init_db creates queue_items table."""
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='queue_items'
+            """)
+            result = cursor.fetchone()
+
+            assert result is not None
+
+    def test_queue_items_indexes_exist(self, temp_db):
+        """Test that queue_items indexes are created."""
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='index'
+            """)
+            indexes = {row[0] for row in cursor.fetchall()}
+
+            assert "idx_queue_items_project_status" in indexes
+            assert "idx_queue_items_session_id" in indexes
+
+
+class TestQueueItemCRUD:
+    """Test queue item CRUD operations."""
+
+    def test_create_queue_item(self, temp_db):
+        """Test creating a queue item."""
+        item_id = db.create_queue_item(
+            project_id="/project/a",
+            plan_path="docs/plan1.md",
+            feature_description="Feature 1",
+            position=0,
+            db_path=temp_db
+        )
+
+        assert item_id is not None
+        assert isinstance(item_id, int)
+
+    def test_create_multiple_queue_items(self, temp_db):
+        """Test creating multiple queue items with positions."""
+        id1 = db.create_queue_item(
+            project_id="/project/a",
+            plan_path="docs/plan1.md",
+            feature_description="Feature 1",
+            position=0,
+            db_path=temp_db
+        )
+        id2 = db.create_queue_item(
+            project_id="/project/a",
+            plan_path="docs/plan2.md",
+            feature_description="Feature 2",
+            position=1,
+            db_path=temp_db
+        )
+        id3 = db.create_queue_item(
+            project_id="/project/a",
+            plan_path="docs/plan3.md",
+            feature_description="Feature 3",
+            position=2,
+            db_path=temp_db
+        )
+
+        assert id1 is not None
+        assert id2 is not None
+        assert id3 is not None
+
+    def test_list_queue_items_returns_in_order(self, temp_db):
+        """Test that list_queue_items returns items in position order."""
+        # Create items out of order
+        db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 2, temp_db)
+        db.create_queue_item("/project/a", "docs/plan0.md", "Feature 0", 0, temp_db)
+        db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 1, temp_db)
+
+        items = db.list_queue_items("/project/a", temp_db)
+
+        assert len(items) == 3
+        assert items[0]["position"] == 0
+        assert items[1]["position"] == 1
+        assert items[2]["position"] == 2
+        assert items[0]["plan_path"] == "docs/plan0.md"
+        assert items[1]["plan_path"] == "docs/plan1.md"
+        assert items[2]["plan_path"] == "docs/plan2.md"
+
+    def test_list_queue_items_filters_by_project(self, temp_db):
+        """Test that list_queue_items filters by project_id."""
+        # Create items for different projects
+        db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        db.create_queue_item("/project/b", "docs/plan2.md", "Feature 2", 0, temp_db)
+        db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 1, temp_db)
+
+        items_a = db.list_queue_items("/project/a", temp_db)
+        items_b = db.list_queue_items("/project/b", temp_db)
+
+        assert len(items_a) == 2
+        assert len(items_b) == 1
+        assert items_a[0]["project_id"] == "/project/a"
+        assert items_b[0]["project_id"] == "/project/b"
+
+    def test_list_queue_items_include_completed_false(self, temp_db):
+        """Test that include_completed=False excludes completed/failed items."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        id2 = db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 1, temp_db)
+        id3 = db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 2, temp_db)
+
+        # Mark some as completed/failed
+        db.update_queue_item(id1, temp_db, status="completed")
+        db.update_queue_item(id3, temp_db, status="failed")
+
+        # With include_completed=True (default)
+        all_items = db.list_queue_items("/project/a", temp_db, include_completed=True)
+        assert len(all_items) == 3
+
+        # With include_completed=False
+        active_items = db.list_queue_items("/project/a", temp_db, include_completed=False)
+        assert len(active_items) == 1
+        assert active_items[0]["id"] == id2
+        assert active_items[0]["status"] == "pending"
+
+    def test_get_next_queue_item_returns_first_pending(self, temp_db):
+        """Test that get_next_queue_item returns first pending by position."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        id2 = db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 1, temp_db)
+        id3 = db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 2, temp_db)
+
+        next_item = db.get_next_queue_item("/project/a", temp_db)
+
+        assert next_item is not None
+        assert next_item["id"] == id1
+        assert next_item["position"] == 0
+        assert next_item["status"] == "pending"
+
+    def test_get_next_queue_item_skips_non_pending(self, temp_db):
+        """Test that get_next_queue_item skips running/completed items."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        id2 = db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 1, temp_db)
+        id3 = db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 2, temp_db)
+
+        # Mark first two as non-pending
+        db.update_queue_item(id1, temp_db, status="completed")
+        db.update_queue_item(id2, temp_db, status="running")
+
+        next_item = db.get_next_queue_item("/project/a", temp_db)
+
+        assert next_item is not None
+        assert next_item["id"] == id3
+        assert next_item["position"] == 2
+
+    def test_get_next_queue_item_returns_none_when_empty(self, temp_db):
+        """Test that get_next_queue_item returns None when no pending items."""
+        next_item = db.get_next_queue_item("/project/a", temp_db)
+        assert next_item is None
+
+    def test_get_next_queue_item_returns_none_when_all_completed(self, temp_db):
+        """Test that get_next_queue_item returns None when all items completed."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        db.update_queue_item(id1, temp_db, status="completed")
+
+        next_item = db.get_next_queue_item("/project/a", temp_db)
+        assert next_item is None
+
+    def test_update_queue_item_status(self, temp_db):
+        """Test updating queue item status."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(item_id, temp_db, status="running")
+
+        assert result is True
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert items[0]["status"] == "running"
+
+    def test_update_queue_item_session_id(self, temp_db):
+        """Test updating queue item with session_id."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(item_id, temp_db, session_id="abc123")
+
+        assert result is True
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert items[0]["session_id"] == "abc123"
+
+    def test_update_queue_item_multiple_fields(self, temp_db):
+        """Test updating multiple queue item fields at once."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(
+            item_id,
+            temp_db,
+            status="running",
+            session_id="abc123",
+            started_at="2025-01-01 10:00:00"
+        )
+
+        assert result is True
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert items[0]["status"] == "running"
+        assert items[0]["session_id"] == "abc123"
+        assert items[0]["started_at"] == "2025-01-01 10:00:00"
+
+    def test_update_queue_item_error_message(self, temp_db):
+        """Test updating queue item with error message."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(
+            item_id,
+            temp_db,
+            status="failed",
+            error_message="Plan parsing failed"
+        )
+
+        assert result is True
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert items[0]["status"] == "failed"
+        assert items[0]["error_message"] == "Plan parsing failed"
+
+    def test_update_queue_item_completed_at(self, temp_db):
+        """Test updating queue item with completed_at timestamp."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(
+            item_id,
+            temp_db,
+            status="completed",
+            completed_at="2025-01-01 12:00:00"
+        )
+
+        assert result is True
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert items[0]["status"] == "completed"
+        assert items[0]["completed_at"] == "2025-01-01 12:00:00"
+
+    def test_update_queue_item_no_updates_returns_false(self, temp_db):
+        """Test that update_queue_item returns False when no updates provided."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+
+        result = db.update_queue_item(item_id, temp_db)
+
+        assert result is False
+
+    def test_get_queue_item_by_session_id(self, temp_db):
+        """Test retrieving queue item by session_id."""
+        item_id = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        db.update_queue_item(item_id, temp_db, session_id="abc123")
+
+        item = db.get_queue_item_by_session_id("abc123", temp_db)
+
+        assert item is not None
+        assert item["id"] == item_id
+        assert item["session_id"] == "abc123"
+        assert item["plan_path"] == "docs/plan1.md"
+
+    def test_get_queue_item_by_session_id_not_found(self, temp_db):
+        """Test that get_queue_item_by_session_id returns None when not found."""
+        item = db.get_queue_item_by_session_id("nonexistent", temp_db)
+        assert item is None
+
+    def test_clear_active_queue_removes_pending_running_paused(self, temp_db):
+        """Test that clear_active_queue removes pending/running/paused items."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        id2 = db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 1, temp_db)
+        id3 = db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 2, temp_db)
+        id4 = db.create_queue_item("/project/a", "docs/plan4.md", "Feature 4", 3, temp_db)
+
+        # Set various statuses
+        db.update_queue_item(id1, temp_db, status="pending")
+        db.update_queue_item(id2, temp_db, status="running")
+        db.update_queue_item(id3, temp_db, status="paused")
+        db.update_queue_item(id4, temp_db, status="completed")
+
+        # Clear active queue
+        count = db.clear_active_queue("/project/a", temp_db)
+
+        assert count == 3  # Should remove pending, running, paused
+
+        # Only completed should remain
+        items = db.list_queue_items("/project/a", temp_db)
+        assert len(items) == 1
+        assert items[0]["id"] == id4
+        assert items[0]["status"] == "completed"
+
+    def test_clear_active_queue_retains_completed_and_failed(self, temp_db):
+        """Test that clear_active_queue retains completed/failed items."""
+        id1 = db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        id2 = db.create_queue_item("/project/a", "docs/plan2.md", "Feature 2", 1, temp_db)
+        id3 = db.create_queue_item("/project/a", "docs/plan3.md", "Feature 3", 2, temp_db)
+
+        db.update_queue_item(id1, temp_db, status="completed")
+        db.update_queue_item(id2, temp_db, status="failed", error_message="Error")
+        db.update_queue_item(id3, temp_db, status="pending")
+
+        count = db.clear_active_queue("/project/a", temp_db)
+
+        assert count == 1  # Only pending removed
+
+        items = db.list_queue_items("/project/a", temp_db)
+        assert len(items) == 2
+        assert items[0]["status"] == "completed"
+        assert items[1]["status"] == "failed"
+
+    def test_clear_active_queue_scoped_by_project(self, temp_db):
+        """Test that clear_active_queue only affects specified project."""
+        # Create items for two projects
+        db.create_queue_item("/project/a", "docs/plan1.md", "Feature 1", 0, temp_db)
+        db.create_queue_item("/project/b", "docs/plan2.md", "Feature 2", 0, temp_db)
+
+        # Clear project A
+        count = db.clear_active_queue("/project/a", temp_db)
+
+        assert count == 1
+
+        # Project A should be empty
+        items_a = db.list_queue_items("/project/a", temp_db)
+        assert len(items_a) == 0
+
+        # Project B should be unaffected
+        items_b = db.list_queue_items("/project/b", temp_db)
+        assert len(items_b) == 1
+
+    def test_clear_active_queue_returns_zero_when_empty(self, temp_db):
+        """Test that clear_active_queue returns 0 when no items to clear."""
+        count = db.clear_active_queue("/project/a", temp_db)
+        assert count == 0

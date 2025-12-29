@@ -37,7 +37,19 @@ orchestrator start --queue --queue-reset plan1.md plan2.md --telegram
   - `orchestrator start -f "Feature"` continues to work unchanged.
   - `orchestrator start --plan some.md -f "Feature"` continues to work unchanged.
 
-Queue mode will use `extract_feature_from_plan(plan_path)` to set each session’s `feature_description`. If extraction fails, fall back to filename stem.
+Queue mode will use `extract_feature_from_plan(plan_path)` to set each session's `feature_description`. If extraction fails, fall back to filename stem.
+
+### Mutual Exclusivity Enforcement (Click)
+
+`--queue` and `--plan` are mutually exclusive. Enforce in `cli.py` with explicit validation:
+
+```python
+# In start() command, after parsing options:
+if queue and plan:
+    raise click.UsageError("--queue and --plan are mutually exclusive. Use --queue for multiple plans or --plan for a single plan.")
+```
+
+Do **not** use Click's `cls=MutuallyExclusiveOption` pattern as it complicates the variadic argument handling. Simple validation is clearer.
 
 ### Queue Recovery Semantics (Decide Upfront)
 
@@ -57,6 +69,16 @@ To satisfy “crash recovery” without introducing a new `orchestrator queue ..
 
 **Queue item status values:** `pending`, `running`, `paused`, `completed`, `failed`.
 
+### Signal Handling (Ctrl+C)
+
+The existing `handle_interrupt` signal handler in `cli.py` calls `orchestrator._cleanup()` which persists session state. In queue mode:
+
+- **Queue state is safe**: Queue items are persisted in SQLite immediately on creation; Ctrl+C does not lose queue state.
+- **Current session is safe**: `_cleanup()` saves the current session's state as today.
+- **Resume works**: After interrupt, `orchestrator start --queue` resumes from the interrupted item.
+
+No changes needed to signal handling logic. The existing pattern works because queue items are persisted before execution begins.
+
 ### Telegram Notifier Ownership (Critical)
 
 The current `Orchestrator._cleanup()` closes `self.telegram_notifier`. In queue mode we may run multiple orchestrators sequentially.
@@ -73,7 +95,7 @@ This decision is required before implementing queue advancement.
 
 ## Milestones
 
-### M1: Database Schema & CRUD (Queue Persistence)
+### Milestone 1: Database Schema & CRUD (Queue Persistence)
 
 Add queue persistence layer with project scoping.
 
@@ -119,7 +141,7 @@ Add queue persistence layer with project scoping.
 
 ---
 
-### M2: Feature Extraction from Plan Files
+### Milestone 2: Feature Extraction from Plan Files
 
 Extract a human-friendly feature label from plan files for display/telemetry and to populate `sessions.feature_description`.
 
@@ -148,7 +170,7 @@ Extract a human-friendly feature label from plan files for display/telemetry and
 
 ---
 
-### M3: CLI: `start --queue` (Input Validation + Queue Creation)
+### Milestone 3: CLI: `start --queue` (Input Validation + Queue Creation)
 
 Add `--queue` mode to the `start` command.
 
@@ -198,7 +220,7 @@ Add `--queue` mode to the `start` command.
 
 ---
 
-### M4: Queue Runner (Advancement on Completion)
+### Milestone 4: Queue Runner (Advancement on Completion)
 
 Run queued plans sequentially.
 
@@ -213,6 +235,8 @@ Implement advancement in the CLI runner loop instead of adding an engine callbac
   - if heartbeat is recent: assume another runner is active; **exit without changes** to avoid double-running
   - if heartbeat is stale: treat as orphaned; instruct user to `orchestrator reset <session-id>` and then `orchestrator resume <session-id> --force` (queue should not auto-force)
 
+**Auto-commit behavior:** When `--auto-commit` is passed with `--queue`, apply auto-commit **per completed session** (not once at queue end). This matches the non-queue behavior where each workflow completion triggers a commit. The commit message uses each session's `feature_description`.
+
 **Tasks:**
 - [ ] In `cli.py start` queue path, implement a loop:
   - fetch next pending queue item
@@ -221,14 +245,14 @@ Implement advancement in the CLI runner loop instead of adding an engine callbac
   - store `session_id` on the queue item once created
   - run `orch.start()`
   - inspect final `orch.state.phase/status`:
-    - if completed: mark item `completed` + `completed_at`
+    - if completed: mark item `completed` + `completed_at`; run auto-commit if `--auto-commit` was passed
     - if paused: mark item `paused` (queue halts; do not advance)
     - if error/exception: mark item `failed` with `error_message` and continue to next (fail-forward)
 - [ ] Add Telegram queue notifications (if enabled):
   - notify queue started (count)
   - notify each item start/finish (optional)
   - notify queue complete summary
-- [ ] Ensure Telegram notifier lifecycle works across multiple queued orchestrators (see “Telegram Notifier Ownership”).
+- [ ] Ensure Telegram notifier lifecycle works across multiple queued orchestrators (see "Telegram Notifier Ownership").
 
 **Deliverables:**
 - Sequential queue execution
@@ -240,7 +264,7 @@ Implement advancement in the CLI runner loop instead of adding an engine callbac
 
 ---
 
-### M5: Resume Integration (Blockers + Continue Queue)
+### Milestone 5: Resume Integration (Blockers + Continue Queue)
 
 Ensure `orchestrator resume <session-id>` continues queue advancement when the resumed session completes.
 
@@ -264,7 +288,7 @@ Ensure `orchestrator resume <session-id>` continues queue advancement when the r
 
 ---
 
-### M6: Documentation + Integration Tests
+### Milestone 6: Documentation + Integration Tests
 
 Finalize feature with docs and end-to-end tests.
 
@@ -277,9 +301,7 @@ Finalize feature with docs and end-to-end tests.
   - Queue of 2 plan files completes sequentially
   - Queue pauses on blocker and does not advance
   - Resume completes blocker session and advances to next queued item
-- [ ] Decide and document auto-commit behavior in queue mode:
-  - recommended default: apply `--auto-commit` per completed session (per plan)
-  - document if different
+  - Auto-commit triggers per session when `--auto-commit` is passed
 
 **Deliverables:**
 - README updated

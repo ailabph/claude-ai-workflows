@@ -285,3 +285,81 @@ def parse_response(content: str, agent_type: str) -> Tuple[str, Dict[str, Any]]:
         return parse_executor_response(content)
     else:
         return UNKNOWN, {}
+
+
+def extract_feature_from_plan(plan_path: str) -> str:
+    """
+    Extract a human-friendly feature label from a plan file.
+
+    Tries multiple extraction strategies in order:
+    1. YAML frontmatter: `feature: <description>`
+    2. Markdown header: `# Feature: <description>`
+    3. H1 title with "Implementation Plan:": `# Implementation Plan: <description>` → `<description>`
+    4. Plain H1 title: `# <description>`
+    5. Filename stem as fallback
+
+    Args:
+        plan_path: Path to plan markdown file
+
+    Returns:
+        Extracted feature description (falls back to filename stem)
+    """
+    from pathlib import Path
+
+    path = Path(plan_path)
+
+    # Fallback: filename stem (remove .md extension)
+    filename_fallback = path.stem.replace('_', ' ').replace('-', ' ')
+
+    # Handle missing/unreadable file
+    if not path.exists():
+        return filename_fallback
+
+    try:
+        content = path.read_text()
+    except Exception:
+        # If file is unreadable, fall back to filename
+        return filename_fallback
+
+    lines = content.split('\n')
+
+    # Strategy 1: Check for YAML frontmatter (first ~20 lines)
+    if lines and lines[0].strip() == '---':
+        # Look for closing ---
+        yaml_end = -1
+        for i in range(1, min(len(lines), 20)):
+            if lines[i].strip() == '---':
+                yaml_end = i
+                break
+
+        if yaml_end > 0:
+            # Parse YAML frontmatter
+            yaml_section = lines[1:yaml_end]
+            for line in yaml_section:
+                # Match "feature: description"
+                match = re.match(r'^\s*feature:\s*(.+)', line, re.IGNORECASE)
+                if match:
+                    return match.group(1).strip()
+
+    # Strategy 2-4: Check markdown headers in first ~20 lines
+    for i, line in enumerate(lines[:20]):
+        # Strategy 2: # Feature: description
+        match = re.match(r'^\s*#\s+Feature:\s*(.+)', line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+        # Strategy 3: # Implementation Plan: description
+        match = re.match(r'^\s*#\s+Implementation Plan:\s*(.+)', line, re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+
+        # Strategy 4: Plain # Title (first H1 found)
+        match = re.match(r'^\s*#\s+([^#].+)', line)
+        if match:
+            title = match.group(1).strip()
+            # Remove trailing patterns like " - Implementation Plan"
+            title = re.sub(r'\s*-?\s*Implementation Plan\s*$', '', title, flags=re.IGNORECASE)
+            return title
+
+    # Strategy 5: Fallback to filename stem
+    return filename_fallback

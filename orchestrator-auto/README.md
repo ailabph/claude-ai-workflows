@@ -22,6 +22,15 @@ orchestrator start -f "My feature" --auto-commit
 # Start with Telegram notifications
 orchestrator start -f "My feature" --telegram
 
+# Run multiple plans sequentially (queue mode)
+orchestrator start --queue plan1.md plan2.md plan3.md
+
+# Resume existing queue
+orchestrator start --queue
+
+# Reset and recreate queue
+orchestrator start --queue --queue-reset plan1.md plan2.md
+
 # Test Telegram configuration
 orchestrator telegram test
 
@@ -87,8 +96,11 @@ orchestrator start -f "Feature description" [options]
 
 | Option | Description |
 |--------|-------------|
-| `-f, --feature` | Feature description (required) |
+| `-f, --feature` | Feature description (required unless `--queue` or `--plan` provided) |
 | `-p, --plan` | Path to existing plan file |
+| `--queue` | Queue mode: run multiple plans sequentially |
+| `--queue-reset` | Reset existing queue for this project |
+| `queue_plans` | Plan file paths (when using `--queue`) |
 | `-pm, --planner-model` | Planner model: `opus`, `sonnet`, `haiku` |
 | `-em, --executor-model` | Executor model: `opus`, `sonnet`, `haiku` |
 | `--auto-commit` | Auto-commit on completion |
@@ -96,6 +108,38 @@ orchestrator start -f "Feature description" [options]
 | `--no-telegram` | Disable Telegram notifications |
 | `--no-activity` | Disable activity indicator |
 | `-d, --db-path` | Custom database path |
+
+#### Queue Mode
+
+Queue mode enables sequential execution of multiple plan files:
+
+```bash
+# Create and run queue
+orchestrator start --queue plan1.md plan2.md plan3.md
+
+# Resume existing queue (if interrupted)
+orchestrator start --queue
+
+# Overwrite existing queue
+orchestrator start --queue --queue-reset plan1.md plan2.md
+```
+
+**Behavior:**
+
+- **Sequential execution:** Plans execute in order provided. Each plan creates a new session.
+- **Feature extraction:** Feature descriptions are extracted from each plan file (from YAML frontmatter, `# Feature:` header, or filename).
+- **Automatic advancement:** When a session completes, the next plan starts automatically.
+- **Fail-forward:** Failed plans are recorded but don't stop the queue. The next plan starts.
+- **Pause on blocker:** If a plan hits a blocker (needs human input), the queue halts. Use `orchestrator resume <session-id>` to continue.
+- **Auto-commit:** Use `--auto-commit` to commit changes after each completed plan (not once at queue end).
+- **Crash recovery:** Queue state is persisted in the database. Resuming after a crash continues from the next pending item.
+- **Queue matching:** Running the same plan list again resumes the existing queue (no duplication). Use `--queue-reset` to force recreation.
+- **Project scoping:** Queues are scoped to the current project (repo root).
+
+**Queue visibility:**
+
+- `orchestrator list` shows queue position and status for sessions in a queue
+- Queue items are displayed as: `Queue: #2 [RUNNING]`
 
 ### `resume` - Resume existing session
 
@@ -336,8 +380,7 @@ pytest tests/ --cov=orchestrator_auto
 
 ## TODO
 
-- [ ] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
-  - *Design questions:* Queue persistence (DB vs temp file vs none), feature description extraction (from plan header?), blocker behavior (pause queue vs skip to next)
+- [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [ ] **Post Feedback** - User feedback at milestones/completion
 - [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
 - [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)

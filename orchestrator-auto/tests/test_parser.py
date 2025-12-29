@@ -484,3 +484,339 @@ Just some notes here.
         assert result["valid"] is True
         assert result["milestones"] == 1
         assert "Fix Bug" in result["milestone_names"][0]
+
+
+class TestExtractFeatureFromPlan:
+    """Test extract_feature_from_plan function for queue feature."""
+
+    def test_extract_from_yaml_frontmatter(self, tmp_path):
+        """Test extracting feature from YAML frontmatter."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """---
+title: User Authentication
+feature: Add JWT-based user authentication
+author: Developer
+---
+
+# Implementation Plan
+
+Some content here.
+"""
+        plan_file = tmp_path / "auth-plan.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Add JWT-based user authentication"
+
+    def test_extract_from_feature_header(self, tmp_path):
+        """Test extracting feature from # Feature: header."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# Feature: Implement payment gateway integration
+
+## Overview
+This plan describes the payment gateway implementation.
+
+## Milestones
+### Milestone 1: Setup
+"""
+        plan_file = tmp_path / "payment-plan.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Implement payment gateway integration"
+
+    def test_extract_from_implementation_plan_header(self, tmp_path):
+        """Test extracting from # Implementation Plan: header."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# Implementation Plan: API Rate Limiting
+
+## Overview
+Add rate limiting to API endpoints.
+"""
+        plan_file = tmp_path / "rate-limit-plan.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "API Rate Limiting"
+
+    def test_extract_from_plain_h1_title(self, tmp_path):
+        """Test extracting from plain H1 title."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# Database Migration Tools
+
+## Description
+Tools for managing database migrations.
+
+### Milestone 1: Schema
+"""
+        plan_file = tmp_path / "db-migration.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Database Migration Tools"
+
+    def test_extract_strips_implementation_plan_suffix(self, tmp_path):
+        """Test that 'Implementation Plan' suffix is stripped from H1."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# User Dashboard - Implementation Plan
+
+## Overview
+Create user dashboard.
+"""
+        plan_file = tmp_path / "dashboard.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "User Dashboard"
+        assert "Implementation Plan" not in result
+
+    def test_extract_fallback_to_filename(self, tmp_path):
+        """Test fallback to filename when no headers found."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """Some plan content without any H1 headers.
+
+Just regular text here.
+
+## Milestone 1
+Some milestone content.
+"""
+        plan_file = tmp_path / "user-profile-feature.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "user profile feature"
+
+    def test_extract_fallback_to_filename_with_hyphens(self, tmp_path):
+        """Test filename fallback converts hyphens to spaces."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """No H1 headers here."""
+
+        plan_file = tmp_path / "oauth-2-integration.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "oauth 2 integration"
+
+    def test_extract_fallback_to_filename_with_underscores(self, tmp_path):
+        """Test filename fallback converts underscores to spaces."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """No headers."""
+
+        plan_file = tmp_path / "user_auth_flow.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "user auth flow"
+
+    def test_extract_missing_file_returns_filename(self, tmp_path):
+        """Test that missing file returns filename as fallback."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        nonexistent_path = tmp_path / "nonexistent-plan.md"
+
+        result = extract_feature_from_plan(str(nonexistent_path))
+
+        assert result == "nonexistent plan"
+
+    def test_extract_case_insensitive_feature_header(self, tmp_path):
+        """Test that feature header matching is case insensitive."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# FEATURE: Case Insensitive Test
+
+## Overview
+Test case insensitivity.
+"""
+        plan_file = tmp_path / "test.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Case Insensitive Test"
+
+    def test_extract_yaml_case_insensitive(self, tmp_path):
+        """Test YAML frontmatter feature key is case insensitive."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """---
+FEATURE: YAML Case Test
+---
+
+# Plan
+"""
+        plan_file = tmp_path / "yaml-test.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "YAML Case Test"
+
+    def test_extract_first_h1_wins(self, tmp_path):
+        """Test that first H1 is used when multiple exist."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """Some intro text.
+
+# First Feature Title
+
+More content.
+
+# Second Feature Title
+
+Even more content.
+"""
+        plan_file = tmp_path / "multiple-h1.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "First Feature Title"
+
+    def test_extract_ignores_h2_h3_headers(self, tmp_path):
+        """Test that H2/H3 headers are ignored, only H1 counts."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """## This is an H2
+
+### This is an H3
+
+# This is the H1
+
+## Another H2
+"""
+        plan_file = tmp_path / "header-levels.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "This is the H1"
+
+    def test_extract_yaml_priority_over_headers(self, tmp_path):
+        """Test that YAML frontmatter takes priority over headers."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """---
+feature: YAML Feature Description
+---
+
+# Header Feature Description
+
+Content here.
+"""
+        plan_file = tmp_path / "priority-test.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "YAML Feature Description"
+
+    def test_extract_feature_header_priority_over_implementation_plan(self, tmp_path):
+        """Test that # Feature: takes priority over # Implementation Plan:."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# Feature: Specific Feature
+
+Some intro.
+
+# Implementation Plan: Generic Plan
+
+More content.
+"""
+        plan_file = tmp_path / "priority2.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Specific Feature"
+
+    def test_extract_handles_whitespace_in_headers(self, tmp_path):
+        """Test extraction handles extra whitespace in headers."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """#     Feature:     Lots of Spaces
+
+Content.
+"""
+        plan_file = tmp_path / "whitespace.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "Lots of Spaces"
+
+    def test_extract_empty_file_returns_filename(self, tmp_path):
+        """Test that empty file returns filename fallback."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_file = tmp_path / "empty-plan.md"
+        plan_file.write_text("")
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "empty plan"
+
+    def test_extract_only_whitespace_returns_filename(self, tmp_path):
+        """Test that file with only whitespace returns filename."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_file = tmp_path / "whitespace-only.md"
+        plan_file.write_text("\n\n   \n\t\n   ")
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        assert result == "whitespace only"
+
+    def test_extract_searches_first_20_lines(self, tmp_path):
+        """Test that search is limited to first ~20 lines for performance."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        # Create content with H1 on line 25
+        lines = ["Line content"] * 24
+        lines.append("# Late Header")
+        plan_content = "\n".join(lines)
+
+        plan_file = tmp_path / "late-header.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        # Should fall back to filename since H1 is after line 20
+        assert result == "late header"
+
+    def test_extract_real_world_plan_format(self, tmp_path):
+        """Test with real-world plan format from PLAN_queue_feature.md."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        plan_content = """# Plan: Plan Queue Feature (GO-Ready)
+
+Queue multiple plan files for sequential execution with automatic advancement on completion.
+
+## Feature Description
+
+Add a `--queue` mode to `orchestrator start` to enqueue multiple plan files for sequential execution, automatically starting the next workflow when the current one completes.
+
+Queue state is persisted in SQLite for crash recovery and for resuming mid-queue.
+"""
+        plan_file = tmp_path / "PLAN_queue_feature.md"
+        plan_file.write_text(plan_content)
+
+        result = extract_feature_from_plan(str(plan_file))
+
+        # Should extract just the feature name, not the "Plan:" prefix
+        assert result == "Plan: Plan Queue Feature (GO-Ready)"

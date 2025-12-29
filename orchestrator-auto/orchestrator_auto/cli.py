@@ -16,6 +16,7 @@ from . import git
 from . import __version__
 from .engine import Orchestrator
 from .state import Phase, Status
+from .parser import extract_feature_from_plan, parse_plan_file
 from .config import (
     get_planner_model,
     get_executor_model,
@@ -23,6 +24,7 @@ from .config import (
     get_telegram_config,
     is_telegram_configured,
     get_stuck_sessions_config,
+    get_project_identity,
 )
 
 
@@ -178,6 +180,401 @@ def _check_stuck_sessions(telegram_notifier, db_path: Optional[str] = None) -> N
         click.secho(f"⚠ Stuck session check failed: {e}", fg="yellow")
 
 
+def _handle_queue_mode(
+    queue_plans: tuple,
+    queue_reset: bool,
+    db_path: Optional[str],
+    show_activity: bool,
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    auto_commit: bool,
+    telegram: Optional[bool],
+) -> None:
+    """
+    Handle --queue mode: validate, create/resume queue, run queue.
+    """
+    from .config import get_project_identity
+
+    # Get project identity
+    project_id, project_remote = get_project_identity()
+
+    # Load existing queue items
+    existing_queue = db.list_queue_items(project_id, db_path, include_completed=False)
+
+    # Case 1: Resume existing queue (no plans provided)
+    if not queue_plans:
+        if not existing_queue:
+            raise click.UsageError(
+                "No active queue found for this project. "
+                "Provide plan paths to create a queue: orchestrator start --queue plan1.md plan2.md"
+            )
+        click.secho(f"Resuming existing queue ({len(existing_queue)} plans)...", fg="cyan", bold=True)
+        _display_queue_status(existing_queue)
+
+        # Run the queue
+        _run_queue(
+            project_id=project_id,
+            db_path=db_path,
+            show_activity=show_activity,
+            planner_model=planner_model,
+            executor_model=executor_model,
+            auto_commit=auto_commit,
+            telegram=telegram,
+        )
+        return
+
+    # Case 2: Plans provided - validate and create/check queue
+    queue_plans_list = list(queue_plans)
+
+    # Normalize plan paths (absolute paths for comparison)
+    normalized_provided = [str(Path(p).resolve()) for p in queue_plans_list]
+
+    # Validate all plans upfront
+    click.echo("Validating plan files...")
+    validation_errors = []
+    for plan_path in queue_plans_list:
+        result = parse_plan_file(plan_path)
+        if not result["valid"]:
+            validation_errors.append(f"  ✗ {plan_path}: {result['error']}")
+        else:
+            click.echo(f"  ✓ {plan_path} ({result['milestones']} milestones)")
+
+    if validation_errors:
+        click.echo()
+        click.secho("Validation failed:", fg="red", bold=True)
+        for error in validation_errors:
+            click.echo(error)
+        sys.exit(1)
+
+    # Check if active queue exists
+    if existing_queue:
+        # Extract normalized paths from existing queue
+        normalized_existing = [str(Path(item["plan_path"]).resolve()) for item in existing_queue]
+
+        # Check if they match
+        if normalized_provided == normalized_existing:
+            click.secho("Queue already exists with same plans (resuming)...", fg="cyan", bold=True)
+            _display_queue_status(existing_queue)
+
+            # Run the queue
+            _run_queue(
+                project_id=project_id,
+                db_path=db_path,
+                show_activity=show_activity,
+                planner_model=planner_model,
+                executor_model=executor_model,
+                auto_commit=auto_commit,
+                telegram=telegram,
+            )
+            return
+        else:
+            # Mismatch - require --queue-reset
+            if not queue_reset:
+                click.secho("Error: Active queue exists with different plans", fg="red", bold=True)
+                click.echo()
+                click.echo("Existing queue:")
+                for i, item in enumerate(existing_queue, 1):
+                    click.echo(f"  {i}. {item['plan_path']}")
+                click.echo()
+                click.echo("Provided plans:")
+                for i, plan in enumerate(queue_plans_list, 1):
+                    click.echo(f"  {i}. {plan}")
+                click.echo()
+                click.secho("Use --queue-reset to replace the existing queue", fg="yellow")
+                sys.exit(1)
+
+            # Clear and recreate
+            click.secho("Clearing existing queue...", fg="yellow")
+            count = db.clear_active_queue(project_id, db_path)
+            click.echo(f"  Removed {count} items")
+
+    # Create new queue
+    click.echo()
+    click.secho("Creating queue...", fg="cyan", bold=True)
+
+    created_items = []
+    for position, plan_path in enumerate(queue_plans_list):
+        # Extract feature description from plan
+        feature_desc = extract_feature_from_plan(plan_path)
+
+        # Create queue item
+        item_id = db.create_queue_item(
+            project_id=project_id,
+            plan_path=str(Path(plan_path).resolve()),
+            feature_description=feature_desc,
+            position=position,
+            db_path=db_path,
+        )
+
+        created_items.append({
+            "id": item_id,
+            "position": position,
+            "plan_path": str(Path(plan_path).resolve()),
+            "feature_description": feature_desc,
+            "status": "pending",
+        })
+
+        click.echo(f"  {position + 1}. {Path(plan_path).name} - \"{feature_desc}\"")
+
+    click.echo()
+    click.secho(f"✓ Queue created with {len(created_items)} plans", fg="green", bold=True)
+
+    # Display queue status
+    click.echo()
+    _display_queue_status(created_items)
+
+    # Run the queue
+    click.echo()
+    _run_queue(
+        project_id=project_id,
+        db_path=db_path,
+        show_activity=show_activity,
+        planner_model=planner_model,
+        executor_model=executor_model,
+        auto_commit=auto_commit,
+        telegram=telegram,
+    )
+
+
+def _run_queue(
+    project_id: str,
+    db_path: Optional[str],
+    show_activity: bool,
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    auto_commit: bool,
+    telegram: Optional[bool],
+) -> None:
+    """
+    Run queued plans sequentially with crash recovery and fail-forward behavior.
+    """
+    global _current_orchestrator
+
+    # Resolve model names
+    resolved_planner = get_planner_model(planner_model)
+    resolved_executor = get_executor_model(executor_model)
+
+    # Setup Telegram notifier if configured
+    telegram_notifier = None
+    if telegram is not False:
+        telegram_notifier = _create_telegram_notifier(telegram)
+
+    # Check for stuck sessions
+    _check_stuck_sessions(telegram_notifier, db_path)
+
+    click.echo()
+    click.secho("Starting queue runner...", fg="cyan", bold=True)
+
+    # Telegram: Queue started notification
+    if telegram_notifier:
+        all_items = db.list_queue_items(project_id, db_path, include_completed=False)
+        telegram_notifier.notify_queue_started(len(all_items))
+
+    completed_count = 0
+    failed_count = 0
+    paused_count = 0
+
+    while True:
+        # Get next pending item
+        next_item = db.get_next_queue_item(project_id, db_path)
+
+        if not next_item:
+            # No more pending items
+            break
+
+        item_id = next_item["id"]
+        plan_path = next_item["plan_path"]
+        feature_desc = next_item["feature_description"]
+        position = next_item["position"] + 1
+
+        click.echo()
+        click.secho(f"=" * 60, fg="cyan")
+        click.secho(f"Queue Item {position}: {Path(plan_path).name}", fg="cyan", bold=True)
+        click.secho(f"Feature: {feature_desc}", fg="cyan")
+        click.secho(f"=" * 60, fg="cyan")
+        click.echo()
+
+        # Telegram: Item start notification
+        if telegram_notifier:
+            telegram_notifier.notify_queue_item_started(position, feature_desc)
+
+        try:
+            # Mark as running
+            db.update_queue_item(
+                item_id,
+                db_path,
+                status="running",
+                started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+
+            # Create orchestrator for this plan
+            orch = Orchestrator(
+                feature_description=feature_desc,
+                db_path=db_path,
+                plan_path=plan_path,
+                on_output=output_callback,
+                show_activity=show_activity,
+                planner_model=resolved_planner,
+                executor_model=resolved_executor,
+                telegram_notifier=telegram_notifier,
+            )
+            _current_orchestrator = orch
+
+            # Store session_id on queue item
+            db.update_queue_item(item_id, db_path, session_id=orch.session_id)
+
+            click.secho(f"✓ Session created: {orch.session_id}", fg="green")
+            click.echo()
+
+            # Run the workflow
+            orch.start()
+
+            # Check final status
+            final_phase = orch.state.phase
+            final_status = orch.state.status
+
+            click.echo()
+            click.secho(f"Workflow ended: phase={final_phase}, status={final_status}", fg="yellow")
+
+            if final_phase == Phase.COMPLETED:
+                # Mark queue item as completed
+                db.update_queue_item(
+                    item_id,
+                    db_path,
+                    status="completed",
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                completed_count += 1
+
+                click.secho(f"✓ Queue item {position} completed", fg="green", bold=True)
+
+                # Telegram: Item completed
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_completed(position, feature_desc)
+
+                # Auto-commit if enabled
+                if auto_commit:
+                    click.echo()
+                    click.secho("Creating auto-commit...", fg="cyan")
+                    milestones = db.get_milestones(orch.session_id, db_path)
+                    success, msg = git.auto_commit(feature_desc, milestones)
+                    if success:
+                        click.secho("✓ Changes committed", fg="green")
+                        click.echo(f"  {msg.split(chr(10))[0]}")
+                    else:
+                        click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
+
+            elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
+                # Mark queue item as paused - queue halts
+                db.update_queue_item(item_id, db_path, status="paused")
+                paused_count += 1
+
+                click.secho(f"⏸ Queue item {position} paused (blocker)", fg="yellow", bold=True)
+                click.secho("Queue halted. Use 'orchestrator resume <session-id>' to continue.", fg="yellow")
+
+                # Telegram: Item paused
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_paused(position, feature_desc, orch.session_id)
+
+                # Stop queue runner
+                break
+
+            else:
+                # Failed or other terminal state - fail forward
+                error_msg = f"Workflow ended in unexpected state: {final_phase}/{final_status}"
+                db.update_queue_item(
+                    item_id,
+                    db_path,
+                    status="failed",
+                    error_message=error_msg,
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                failed_count += 1
+
+                click.secho(f"✗ Queue item {position} failed", fg="red", bold=True)
+                click.secho(f"  Error: {error_msg}", fg="red")
+                click.secho("  Continuing to next item (fail-forward)...", fg="yellow")
+
+                # Telegram: Item failed
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_failed(position, feature_desc, error_msg)
+
+        except KeyboardInterrupt:
+            # User interrupted - mark as paused
+            click.echo()
+            click.secho("⚠ Queue interrupted by user", fg="yellow")
+            db.update_queue_item(item_id, db_path, status="paused")
+            paused_count += 1
+
+            # Telegram: Queue interrupted
+            if telegram_notifier:
+                telegram_notifier.notify_queue_interrupted(position, feature_desc)
+
+            # Stop queue runner
+            raise
+
+        except Exception as e:
+            # Workflow error - fail forward
+            error_msg = str(e)
+            db.update_queue_item(
+                item_id,
+                db_path,
+                status="failed",
+                error_message=error_msg,
+                completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            )
+            failed_count += 1
+
+            click.secho(f"✗ Queue item {position} failed with exception", fg="red", bold=True)
+            click.secho(f"  Error: {error_msg}", fg="red")
+            click.secho("  Continuing to next item (fail-forward)...", fg="yellow")
+
+            # Telegram: Item failed
+            if telegram_notifier:
+                telegram_notifier.notify_queue_item_failed(position, feature_desc, error_msg)
+
+        finally:
+            if _current_orchestrator:
+                _current_orchestrator._cleanup()
+                _current_orchestrator = None
+
+    # Queue complete - show summary
+    click.echo()
+    click.secho("=" * 60, fg="cyan")
+    click.secho("Queue Complete", fg="cyan", bold=True)
+    click.secho("=" * 60, fg="cyan")
+    click.echo()
+    click.echo(f"Completed: {click.style(str(completed_count), fg='green', bold=True)}")
+    click.echo(f"Failed:    {click.style(str(failed_count), fg='red', bold=True)}")
+    click.echo(f"Paused:    {click.style(str(paused_count), fg='yellow', bold=True)}")
+
+    # Telegram: Queue complete summary
+    if telegram_notifier:
+        telegram_notifier.notify_queue_completed(completed_count, failed_count, paused_count)
+
+
+def _display_queue_status(queue_items: list) -> None:
+    """Display formatted queue status."""
+    click.echo(f"Queue: {len(queue_items)} plans")
+    for item in queue_items:
+        position = item["position"] + 1
+        status = item["status"].upper()
+        plan_name = Path(item["plan_path"]).name
+        feature = item["feature_description"]
+
+        # Color status
+        status_colors = {
+            "PENDING": "white",
+            "RUNNING": "cyan",
+            "PAUSED": "yellow",
+            "COMPLETED": "green",
+            "FAILED": "red",
+        }
+        status_colored = click.style(f"[{status}]", fg=status_colors.get(status, "white"))
+
+        click.echo(f"  {position}. {status_colored} {plan_name} - \"{feature}\"")
+
+
 @click.group()
 @click.version_option(version=__version__, prog_name="orchestrator")
 def cli():
@@ -186,30 +583,63 @@ def cli():
 
 
 @cli.command()
-@click.option('--feature', '-f', required=True, help='Feature description')
+@click.option('--feature', '-f', required=False, help='Feature description (required unless --queue or --plan is provided)')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--plan', '-p', type=click.Path(exists=True), help='Path to existing plan file (skips discovery/planning)')
+@click.option('--queue', is_flag=True, help='Queue mode: run multiple plans sequentially')
+@click.option('--queue-reset', is_flag=True, help='Reset existing queue for this project')
+@click.argument('queue_plans', nargs=-1, type=click.Path(exists=True))
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator (default: enabled)')
 @click.option('--planner-model', '-pm', help='Model for planner agent. Aliases: opus, sonnet, haiku')
 @click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 def start(
-    feature: str,
+    feature: Optional[str],
     db_path: Optional[str],
     plan: Optional[str],
+    queue: bool,
+    queue_reset: bool,
+    queue_plans: tuple,
     show_activity: bool,
     planner_model: Optional[str],
     executor_model: Optional[str],
     auto_commit: bool,
     telegram: Optional[bool],
 ):
-    """Start a new workflow session."""
+    """Start a new workflow session or queue."""
     global _current_orchestrator
 
     # Register signal handler for Ctrl+C
     signal.signal(signal.SIGINT, handle_interrupt)
 
+    # Initialize database
+    db.init_db(db_path)
+
+    # Validate input combinations
+    if queue and plan:
+        raise click.UsageError("--queue and --plan are mutually exclusive. Use --queue for multiple plans or --plan for a single plan.")
+
+    # In queue mode, feature is optional (each plan has its own feature)
+    # In non-queue mode, feature is required unless --plan is provided
+    if not queue and not plan and not feature:
+        raise click.UsageError("--feature/-f is required unless --queue or --plan is provided.")
+
+    # Queue mode handling
+    if queue:
+        _handle_queue_mode(
+            queue_plans=queue_plans,
+            queue_reset=queue_reset,
+            db_path=db_path,
+            show_activity=show_activity,
+            planner_model=planner_model,
+            executor_model=executor_model,
+            auto_commit=auto_commit,
+            telegram=telegram,
+        )
+        return
+
+    # Non-queue mode (original behavior)
     # Resolve model names (CLI > config > defaults)
     resolved_planner = get_planner_model(planner_model)
     resolved_executor = get_executor_model(executor_model)
@@ -228,9 +658,6 @@ def start(
         if plan:
             click.echo(f"Plan: {plan}")
         click.echo()
-
-        # Initialize database
-        db.init_db(db_path)
 
         # Check for stuck sessions and notify via Telegram
         _check_stuck_sessions(telegram_notifier, db_path)
@@ -384,12 +811,135 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
         # Show final status
         click.echo()
         show_progress(orch)
-        click.secho("✓ Workflow completed!", fg="green", bold=True)
+
+        # Check if this session belongs to a queue
+        queue_item = db.get_queue_item_by_session_id(session_id, db_path)
+
+        if queue_item:
+            # This session is part of a queue - handle queue advancement
+            click.echo()
+            click.secho("Session is part of a queue", fg="cyan")
+
+            final_phase = orch.state.phase
+            final_status = orch.state.status
+            project_id = queue_item["project_id"]
+            item_id = queue_item["id"]
+            position = queue_item["position"] + 1
+
+            if final_phase == Phase.COMPLETED:
+                # Mark queue item completed and continue queue
+                db.update_queue_item(
+                    item_id,
+                    db_path,
+                    status="completed",
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                click.secho(f"✓ Queue item {position} completed", fg="green", bold=True)
+
+                # Telegram notification if configured
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_completed(position, queue_item["feature_description"])
+
+                # Continue the queue
+                click.echo()
+                click.secho("Continuing queue...", fg="cyan", bold=True)
+
+                # Continue from where we left off - get project settings from the queue item's project
+                from .config import get_project_identity, get_planner_model, get_executor_model
+
+                # Use default models for continuation (could be enhanced to store models with queue)
+                _run_queue(
+                    project_id=project_id,
+                    db_path=db_path,
+                    show_activity=show_activity,
+                    planner_model=None,  # Use defaults
+                    executor_model=None,  # Use defaults
+                    auto_commit=False,  # Don't auto-commit on resume continuation
+                    telegram=telegram,
+                )
+
+            elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
+                # Still paused - keep queue item paused
+                click.secho(f"⏸ Queue item {position} still paused (new blocker)", fg="yellow", bold=True)
+                click.secho("Queue remains halted. Resolve blocker and resume again.", fg="yellow")
+
+            else:
+                # Failed or other terminal state - fail forward
+                error_msg = f"Resume ended in unexpected state: {final_phase}/{final_status}"
+                db.update_queue_item(
+                    item_id,
+                    db_path,
+                    status="failed",
+                    error_message=error_msg,
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                click.secho(f"✗ Queue item {position} failed", fg="red", bold=True)
+                click.secho(f"  Error: {error_msg}", fg="red")
+
+                # Telegram notification if configured
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_failed(position, queue_item["feature_description"], error_msg)
+
+                # Continue to next item (fail-forward)
+                click.echo()
+                click.secho("Continuing to next queue item (fail-forward)...", fg="yellow")
+
+                _run_queue(
+                    project_id=project_id,
+                    db_path=db_path,
+                    show_activity=show_activity,
+                    planner_model=None,
+                    executor_model=None,
+                    auto_commit=False,
+                    telegram=telegram,
+                )
+        else:
+            # Not part of a queue - just complete normally
+            click.secho("✓ Workflow completed!", fg="green", bold=True)
 
     except KeyboardInterrupt:
         # Handled by signal handler
         pass
     except Exception as e:
+        # Check if this was a queue session that errored
+        try:
+            queue_item = db.get_queue_item_by_session_id(session_id, db_path)
+            if queue_item:
+                # Mark queue item as failed
+                db.update_queue_item(
+                    queue_item["id"],
+                    db_path,
+                    status="failed",
+                    error_message=str(e),
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                click.echo()
+                click.secho("Queue item marked as failed", fg="red")
+
+                # Attempt to continue queue (fail-forward)
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_failed(
+                        queue_item["position"] + 1,
+                        queue_item["feature_description"],
+                        str(e)
+                    )
+
+                click.echo()
+                click.secho("Attempting to continue queue (fail-forward)...", fg="yellow")
+
+                _run_queue(
+                    project_id=queue_item["project_id"],
+                    db_path=db_path,
+                    show_activity=show_activity,
+                    planner_model=None,
+                    executor_model=None,
+                    auto_commit=False,
+                    telegram=telegram,
+                )
+        except Exception:
+            # If we can't handle queue continuation, just show the original error
+            pass
+
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
         sys.exit(1)
     finally:
@@ -545,6 +1095,27 @@ def list_sessions(status: Optional[str], db_path: Optional[str], all_projects: b
             click.echo(f"  {session_id}")
             click.echo(f"    Feature: {session['feature_description']}")
             click.echo(f"    Phase: {phase}  Status: {status_str}")
+
+            # Check if this session belongs to a queue
+            queue_item = db.get_queue_item_by_session_id(session['id'], db_path)
+            if queue_item:
+                position = queue_item['position'] + 1  # 1-based for display
+                queue_status = queue_item['status'].upper()
+
+                # Color-code queue status
+                queue_status_colors = {
+                    "PENDING": "white",
+                    "RUNNING": "cyan",
+                    "PAUSED": "yellow",
+                    "COMPLETED": "green",
+                    "FAILED": "red",
+                }
+                queue_status_colored = click.style(
+                    f"[{queue_status}]",
+                    fg=queue_status_colors.get(queue_status, "white")
+                )
+
+                click.echo(f"    Queue: #{position} {queue_status_colored}")
 
             # Show models if set
             if session.get('planner_model') or session.get('executor_model'):

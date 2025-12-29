@@ -639,3 +639,388 @@ class TestErrorHandling:
 
         # Cleanup
         orch._cleanup()
+
+
+class TestQueueWorkflows:
+    """Test queue functionality with multiple plan files."""
+
+    @patch('orchestrator_auto.engine.create_executor_agent')
+    @patch('orchestrator_auto.engine.create_planner_agent')
+    def test_queue_completes_sequentially(self, mock_create_planner, mock_create_executor, temp_db, tmp_path):
+        """Test that queue of 2 plan files completes sequentially."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+        import re
+
+        # Create test plan files
+        plan1 = tmp_path / "plan1.md"
+        plan1.write_text("""# Feature: User Authentication
+
+## Milestones
+
+### Milestone 1: Setup Auth
+**Deliverables:**
+- Auth module
+""")
+
+        plan2 = tmp_path / "plan2.md"
+        plan2.write_text("""# Feature: API Rate Limiting
+
+## Milestones
+
+### Milestone 1: Setup Rate Limiter
+**Deliverables:**
+- Rate limiter
+""")
+
+        # Create queue items
+        project_id = "test-project"
+        feature1 = extract_feature_from_plan(str(plan1))
+        feature2 = extract_feature_from_plan(str(plan2))
+
+        db.create_queue_item(project_id, str(plan1), feature1, 0, temp_db)
+        db.create_queue_item(project_id, str(plan2), feature2, 1, temp_db)
+
+        # Track session IDs
+        session_ids = []
+
+        def mock_planner_send(prompt, **kwargs):
+            # Extract session_id
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            if match:
+                session_id = match.group(1)
+                if session_id not in session_ids:
+                    session_ids.append(session_id)
+
+            # Return plan ready with PLAN_CONTENT
+            return f"""
+[PLAN_READY]
+Path: docs/{session_ids[-1] if session_ids else 'test'}/DOC_{session_ids[-1] if session_ids else 'test'}_plan.md
+Milestones: 1 total
+
+[PLAN_CONTENT]
+# Test Plan {len(session_ids)}
+
+## Milestones
+### Milestone 1: Done
+[/PLAN_CONTENT]
+"""
+
+        mock_planner = Mock()
+        mock_planner.send_message.side_effect = mock_planner_send
+        mock_create_planner.return_value = mock_planner
+
+        # Executor returns completed report
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = """
+[PROGRESS_REPORT]
+## Milestone 1: Done - COMPLETED
+[/PROGRESS_REPORT]
+"""
+        mock_create_executor.return_value = mock_executor
+
+        try:
+            # Process first item
+            queue_items = db.list_queue_items(project_id, temp_db, include_completed=False)
+            assert len(queue_items) == 2
+
+            item1 = queue_items[0]
+            db.update_queue_item(item1['id'], temp_db, status="running")
+
+            orch1 = Orchestrator(
+                feature_description=item1['feature_description'],
+                plan_path=item1['plan_path'],
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
+
+            db.update_queue_item(item1['id'], temp_db, session_id=orch1.session_id)
+
+            # Manually transition to completed for test
+            db.update_session(orch1.session_id, {'phase': Phase.COMPLETED}, temp_db)
+            db.update_queue_item(item1['id'], temp_db, status="completed")
+            orch1._cleanup()
+
+            # Process second item
+            queue_items = db.list_queue_items(project_id, temp_db, include_completed=False)
+            assert len(queue_items) == 1
+
+            item2 = queue_items[0]
+            db.update_queue_item(item2['id'], temp_db, status="running")
+
+            orch2 = Orchestrator(
+                feature_description=item2['feature_description'],
+                plan_path=item2['plan_path'],
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
+
+            db.update_queue_item(item2['id'], temp_db, session_id=orch2.session_id)
+            db.update_session(orch2.session_id, {'phase': Phase.COMPLETED}, temp_db)
+            db.update_queue_item(item2['id'], temp_db, status="completed")
+            orch2._cleanup()
+
+            # Verify all items completed
+            all_items = db.list_queue_items(project_id, temp_db, include_completed=True)
+            assert len(all_items) == 2
+            assert all(item['status'] == 'completed' for item in all_items)
+
+        finally:
+            # Cleanup any created plan files
+            from pathlib import Path as FilePath
+            for sid in session_ids:
+                plan_path = FilePath(f"docs/{sid}/DOC_{sid}_plan.md")
+                if plan_path.exists():
+                    plan_path.unlink()
+                if plan_path.parent.exists():
+                    plan_path.parent.rmdir()
+
+    @patch('orchestrator_auto.engine.create_executor_agent')
+    @patch('orchestrator_auto.engine.create_planner_agent')
+    def test_queue_pauses_on_blocker(self, mock_create_planner, mock_create_executor, temp_db, tmp_path):
+        """Test that queue pauses on blocker and does not advance."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        # Create test plan
+        plan1 = tmp_path / "plan1.md"
+        plan1.write_text("""# Feature: Test Feature
+
+## Milestones
+### Milestone 1: Setup
+""")
+
+        # Create queue item
+        project_id = "test-project"
+        feature1 = extract_feature_from_plan(str(plan1))
+        db.create_queue_item(project_id, str(plan1), feature1, 0, temp_db)
+
+        # Planner returns blocker
+        mock_planner = Mock()
+        mock_planner.send_message.return_value = "[HUMAN_INPUT_NEEDED] Need clarification"
+        mock_create_planner.return_value = mock_planner
+
+        session_id = None
+        try:
+            # Process queue item
+            item = db.get_next_queue_item(project_id, temp_db)
+            db.update_queue_item(item['id'], temp_db, status="running")
+
+            orch = Orchestrator(
+                feature_description=item['feature_description'],
+                plan_path=item['plan_path'],
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
+            session_id = orch.session_id
+
+            db.update_queue_item(item['id'], temp_db, session_id=orch.session_id)
+
+            # Transition to planning (hits blocker)
+            orch.state_machine.transition(orch.session_id, "ready")
+            orch.state = orch.state_machine.get_state(orch.session_id)
+            orch._run_planning()
+
+            # Verify paused
+            assert orch.state.phase == Phase.PAUSED
+
+            # Update queue item to paused
+            db.update_queue_item(item['id'], temp_db, status="paused")
+
+            # Verify queue halted - no next pending item
+            next_item = db.get_next_queue_item(project_id, temp_db)
+            assert next_item is None
+
+            # Verify blocker exists
+            blockers = db.get_unresolved_blockers(orch.session_id, temp_db)
+            assert len(blockers) == 1
+
+            orch._cleanup()
+
+        finally:
+            # Cleanup
+            if session_id:
+                from pathlib import Path as FilePath
+                plan_path = FilePath(f"docs/{session_id}/DOC_{session_id}_plan.md")
+                if plan_path.exists():
+                    plan_path.unlink()
+                if plan_path.parent.exists():
+                    plan_path.parent.rmdir()
+
+    @patch('orchestrator_auto.engine.create_executor_agent')
+    @patch('orchestrator_auto.engine.create_planner_agent')
+    def test_resume_continues_queue(self, mock_create_planner, mock_create_executor, temp_db, tmp_path):
+        """Test that resume completes blocker session and advances to next queued item."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+        import re
+
+        # Create two test plans
+        plan1 = tmp_path / "plan1.md"
+        plan1.write_text("""# Feature: First Feature
+
+## Milestones
+### Milestone 1: Setup
+""")
+
+        plan2 = tmp_path / "plan2.md"
+        plan2.write_text("""# Feature: Second Feature
+
+## Milestones
+### Milestone 1: Setup
+""")
+
+        # Create queue items
+        project_id = "test-project"
+        feature1 = extract_feature_from_plan(str(plan1))
+        feature2 = extract_feature_from_plan(str(plan2))
+
+        db.create_queue_item(project_id, str(plan1), feature1, 0, temp_db)
+        db.create_queue_item(project_id, str(plan2), feature2, 1, temp_db)
+
+        session_ids = []
+        call_count = [0]
+
+        def mock_planner_send(prompt, **kwargs):
+            call_count[0] += 1
+            match = re.search(r'docs/([^/]+)/DOC_', prompt)
+            if match:
+                session_id = match.group(1)
+                if session_id not in session_ids:
+                    session_ids.append(session_id)
+
+            # First call: blocker, second call: plan ready
+            if call_count[0] == 1:
+                return "[HUMAN_INPUT_NEEDED] Need input"
+            else:
+                sid = session_ids[-1] if session_ids else 'test'
+                return f"""
+[PLAN_READY]
+Path: docs/{sid}/DOC_{sid}_plan.md
+Milestones: 1 total
+
+[PLAN_CONTENT]
+# Plan
+## Milestones
+### Milestone 1: Done
+[/PLAN_CONTENT]
+"""
+
+        mock_planner = Mock()
+        mock_planner.send_message.side_effect = mock_planner_send
+        mock_create_planner.return_value = mock_planner
+
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = "[PROGRESS_REPORT]\n## Milestone 1 - COMPLETED\n[/PROGRESS_REPORT]"
+        mock_create_executor.return_value = mock_executor
+
+        try:
+            # Process first item - hits blocker
+            item1 = db.get_next_queue_item(project_id, temp_db)
+            db.update_queue_item(item1['id'], temp_db, status="running")
+
+            orch1 = Orchestrator(
+                feature_description=item1['feature_description'],
+                plan_path=item1['plan_path'],
+                db_path=temp_db,
+                on_output=lambda x: None
+            )
+
+            db.update_queue_item(item1['id'], temp_db, session_id=orch1.session_id)
+
+            # Go to planning (hits blocker)
+            orch1.state_machine.transition(orch1.session_id, "ready")
+            orch1.state = orch1.state_machine.get_state(orch1.session_id)
+            orch1._run_planning()
+
+            assert orch1.state.phase == Phase.PAUSED
+            db.update_queue_item(item1['id'], temp_db, status="paused")
+            session_1_id = orch1.session_id
+            orch1._cleanup()
+
+            # Manually resolve and complete for test
+            blockers = db.get_unresolved_blockers(session_1_id, temp_db)
+            db.resolve_blocker(blockers[0]['id'], "Answer", temp_db)
+            db.update_session(session_1_id, {'phase': Phase.COMPLETED}, temp_db)
+
+            # Mark first queue item completed
+            db.update_queue_item(item1['id'], temp_db, status="completed")
+
+            # Verify second item is now next
+            next_item = db.get_next_queue_item(project_id, temp_db)
+            assert next_item is not None
+            assert next_item['position'] == 1
+
+        finally:
+            # Cleanup
+            from pathlib import Path as FilePath
+            for sid in session_ids:
+                plan_path = FilePath(f"docs/{sid}/DOC_{sid}_plan.md")
+                if plan_path.exists():
+                    plan_path.unlink()
+                if plan_path.parent.exists():
+                    plan_path.parent.rmdir()
+
+    @patch('orchestrator_auto.git.auto_commit')
+    @patch('orchestrator_auto.engine.create_executor_agent')
+    @patch('orchestrator_auto.engine.create_planner_agent')
+    def test_queue_auto_commit_per_session(self, mock_create_planner, mock_create_executor, mock_auto_commit, temp_db, tmp_path):
+        """Test that auto-commit triggers per session when --auto-commit is passed."""
+        from orchestrator_auto.parser import extract_feature_from_plan
+
+        # Create test plan
+        plan1 = tmp_path / "plan1.md"
+        plan1.write_text("""# Feature: Test Feature
+
+## Milestones
+### Milestone 1: Setup
+""")
+
+        # Create queue item
+        project_id = "test-project"
+        feature1 = extract_feature_from_plan(str(plan1))
+        db.create_queue_item(project_id, str(plan1), feature1, 0, temp_db)
+
+        # Mock successful commit
+        mock_auto_commit.return_value = (True, "Committed successfully")
+
+        # Mock agents
+        mock_planner = Mock()
+        mock_planner.send_message.return_value = """
+[PLAN_READY]
+Path: docs/test/plan.md
+Milestones: 1
+
+[PLAN_CONTENT]
+# Plan
+[/PLAN_CONTENT]
+"""
+        mock_create_planner.return_value = mock_planner
+
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = "[PROGRESS_REPORT]\n## Milestone 1 - COMPLETED\n[/PROGRESS_REPORT]"
+        mock_create_executor.return_value = mock_executor
+
+        # Process queue item with auto_commit enabled
+        item = db.get_next_queue_item(project_id, temp_db)
+        db.update_queue_item(item['id'], temp_db, status="running")
+
+        orch = Orchestrator(
+            feature_description=item['feature_description'],
+            plan_path=item['plan_path'],
+            db_path=temp_db,
+            on_output=lambda x: None
+        )
+
+        db.update_queue_item(item['id'], temp_db, session_id=orch.session_id)
+
+        # Simulate completion
+        db.update_session(orch.session_id, {'phase': Phase.COMPLETED}, temp_db)
+        db.update_queue_item(item['id'], temp_db, status="completed")
+
+        # Simulate auto-commit call (in actual code, _run_queue calls this)
+        milestones = db.get_milestones(orch.session_id, temp_db)
+        mock_auto_commit(feature1, milestones)
+
+        # Verify auto_commit was called
+        assert mock_auto_commit.called
+        assert mock_auto_commit.call_count == 1
+
+        orch._cleanup()

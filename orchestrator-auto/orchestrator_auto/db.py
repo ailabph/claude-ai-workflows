@@ -184,6 +184,23 @@ def init_db(db_path: Optional[str] = None) -> None:
             INSERT OR IGNORE INTO telegram_state (id, last_update_id) VALUES (1, 0)
         """)
 
+        # Queue items table (for plan queue feature)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS queue_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                project_id TEXT,
+                plan_path TEXT NOT NULL,
+                feature_description TEXT,
+                position INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                session_id TEXT,
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                started_at TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+        """)
+
         # Create indexes
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_messages_session
@@ -193,6 +210,16 @@ def init_db(db_path: Optional[str] = None) -> None:
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_milestones_session
             ON milestones(session_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_queue_items_project_status
+            ON queue_items(project_id, status)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_queue_items_session_id
+            ON queue_items(session_id)
         """)
 
         conn.commit()
@@ -726,3 +753,213 @@ def set_telegram_last_update_id(
             SET last_update_id = ?
             WHERE id = 1
         """, (last_update_id,))
+
+
+# ============================================================================
+# Queue Items Management (Plan Queue Feature)
+# ============================================================================
+
+def create_queue_item(
+    project_id: str,
+    plan_path: str,
+    feature_description: str,
+    position: int,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Create a new queue item for plan queue feature.
+
+    Args:
+        project_id: Project identifier (repo root path)
+        plan_path: Path to the plan file
+        feature_description: Extracted feature description for the plan
+        position: Position in queue (0-based ordering)
+        db_path: Custom database path
+
+    Returns:
+        Queue item ID
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO queue_items (
+                project_id, plan_path, feature_description, position
+            )
+            VALUES (?, ?, ?, ?)
+        """, (project_id, plan_path, feature_description, position))
+
+        return cursor.lastrowid
+
+
+def list_queue_items(
+    project_id: str,
+    db_path: Optional[str] = None,
+    include_completed: bool = True
+) -> List[Dict[str, Any]]:
+    """
+    List queue items for a project, ordered by position.
+
+    Args:
+        project_id: Project identifier (repo root path)
+        db_path: Custom database path
+        include_completed: If False, exclude completed/failed items
+
+    Returns:
+        List of queue item dictionaries
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        if include_completed:
+            cursor.execute("""
+                SELECT * FROM queue_items
+                WHERE project_id = ?
+                ORDER BY position ASC
+            """, (project_id,))
+        else:
+            cursor.execute("""
+                SELECT * FROM queue_items
+                WHERE project_id = ?
+                AND status NOT IN ('completed', 'failed')
+                ORDER BY position ASC
+            """, (project_id,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_next_queue_item(
+    project_id: str,
+    db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Get the next pending queue item for a project (by position).
+
+    Args:
+        project_id: Project identifier (repo root path)
+        db_path: Custom database path
+
+    Returns:
+        Next pending queue item dict, or None if no pending items
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM queue_items
+            WHERE project_id = ? AND status = 'pending'
+            ORDER BY position ASC
+            LIMIT 1
+        """, (project_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def get_queue_item_by_session_id(
+    session_id: str,
+    db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Get queue item by associated session ID (for resume integration).
+
+    Args:
+        session_id: Session ID to look up
+        db_path: Custom database path
+
+    Returns:
+        Queue item dict if found, None otherwise
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM queue_items
+            WHERE session_id = ?
+        """, (session_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+
+def update_queue_item(
+    item_id: int,
+    db_path: Optional[str] = None,
+    status: Optional[str] = None,
+    session_id: Optional[str] = None,
+    error_message: Optional[str] = None,
+    started_at: Optional[str] = None,
+    completed_at: Optional[str] = None
+) -> bool:
+    """
+    Update queue item fields.
+
+    Args:
+        item_id: Queue item ID
+        db_path: Custom database path
+        status: New status (pending, running, paused, completed, failed)
+        session_id: Associated session ID
+        error_message: Error message (for failed status)
+        started_at: Timestamp when item started
+        completed_at: Timestamp when item completed
+
+    Returns:
+        True if update succeeded, False otherwise
+    """
+    updates = {}
+    if status is not None:
+        updates["status"] = status
+    if session_id is not None:
+        updates["session_id"] = session_id
+    if error_message is not None:
+        updates["error_message"] = error_message
+    if started_at is not None:
+        updates["started_at"] = started_at
+    if completed_at is not None:
+        updates["completed_at"] = completed_at
+
+    if not updates:
+        return False
+
+    # Build dynamic UPDATE query
+    set_clause = ", ".join([f"{key} = ?" for key in updates.keys()])
+    values = list(updates.values()) + [item_id]
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            UPDATE queue_items
+            SET {set_clause}
+            WHERE id = ?
+        """, values)
+
+        return cursor.rowcount > 0
+
+
+def clear_active_queue(
+    project_id: str,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Clear all active queue items (pending, running, paused) for a project.
+
+    This is used for queue reset (--queue-reset flag).
+    Completed/failed items are retained for history.
+
+    Args:
+        project_id: Project identifier (repo root path)
+        db_path: Custom database path
+
+    Returns:
+        Number of items deleted
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM queue_items
+            WHERE project_id = ?
+            AND status IN ('pending', 'running', 'paused')
+        """, (project_id,))
+
+        return cursor.rowcount
