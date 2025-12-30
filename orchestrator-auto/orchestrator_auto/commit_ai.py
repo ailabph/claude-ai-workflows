@@ -29,6 +29,9 @@ DEFAULT_TIMEOUT = 30
 # Maximum commit message length
 MAX_MESSAGE_LENGTH = 500
 
+# Maximum subject line length (first line) - git convention
+MAX_SUBJECT_LENGTH = 72
+
 # System prompt for commit message generation
 SYSTEM_PROMPT = """You are a commit message generator. Your ONLY job is to output a commit message.
 
@@ -113,10 +116,13 @@ def _validate_format(message: str) -> bool:
     """
     Validate that message follows Conventional Commits format.
 
-    Expected format:
+    Expected formats:
     <type>: <description>
+    <type>(scope): <description>
+    <type>!: <description>           (breaking change)
+    <type>(scope)!: <description>    (scoped breaking change)
 
-    Optional body with bullet points
+    Optional body with bullet points.
     """
     if not message:
         return False
@@ -127,8 +133,10 @@ def _validate_format(message: str) -> bool:
 
     first_line = lines[0]
 
-    # Check for type: description format
-    match = re.match(r"^(\w+):\s+.+", first_line)
+    # Check for Conventional Commits format:
+    # type[(scope)][!]: description
+    # Examples: feat: add login, fix(auth): handle timeout, feat!: breaking change
+    match = re.match(r"^(\w+)(?:\([^)]+\))?!?:\s+.+", first_line)
     if not match:
         return False
 
@@ -167,7 +175,18 @@ def _clean_and_validate(response: str) -> Optional[str]:
     if not _validate_format(message):
         return None
 
-    # Truncate if too long
+    # Enforce 72-char subject line (first line)
+    lines = message.split("\n")
+    if len(lines[0]) > MAX_SUBJECT_LENGTH:
+        # Truncate subject at word boundary if possible
+        subject = lines[0][:MAX_SUBJECT_LENGTH]
+        last_space = subject.rfind(" ")
+        if last_space > MAX_SUBJECT_LENGTH // 2:
+            subject = subject[:last_space]
+        lines[0] = subject
+        message = "\n".join(lines)
+
+    # Truncate overall message if too long
     if len(message) > MAX_MESSAGE_LENGTH:
         # Try to truncate at a line boundary
         lines = message.split("\n")
@@ -222,21 +241,25 @@ async def generate_smart_commit_message_async(
         permission_mode="default",
     )
 
+    async def _query_client() -> Optional[str]:
+        """Inner async function to query the client."""
+        async with ClaudeSDKClient(options) as client:
+            await client.query(prompt)
+            response_text = ""
+
+            async for message in client.receive_messages():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            response_text += block.text
+                elif isinstance(message, ResultMessage):
+                    break
+
+            return _clean_and_validate(response_text)
+
     try:
-        async with asyncio.timeout(timeout):
-            async with ClaudeSDKClient(options) as client:
-                await client.query(prompt)
-                response_text = ""
-
-                async for message in client.receive_messages():
-                    if isinstance(message, AssistantMessage):
-                        for block in message.content:
-                            if isinstance(block, TextBlock):
-                                response_text += block.text
-                    elif isinstance(message, ResultMessage):
-                        break
-
-                return _clean_and_validate(response_text)
+        # Use wait_for for Python 3.10 compatibility (asyncio.timeout is 3.11+)
+        return await asyncio.wait_for(_query_client(), timeout=timeout)
 
     except asyncio.TimeoutError:
         # Timeout - return None for graceful fallback
@@ -308,6 +331,7 @@ __all__ = [
     "DEFAULT_MODEL",
     "DEFAULT_TIMEOUT",
     "MAX_MESSAGE_LENGTH",
+    "MAX_SUBJECT_LENGTH",
     "VALID_TYPES",
     # Internal functions exposed for testing
     "_build_prompt",

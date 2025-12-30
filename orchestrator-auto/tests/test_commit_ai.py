@@ -19,6 +19,7 @@ from orchestrator_auto.commit_ai import (
     DEFAULT_MODEL,
     DEFAULT_TIMEOUT,
     MAX_MESSAGE_LENGTH,
+    MAX_SUBJECT_LENGTH,
     VALID_TYPES,
     _build_prompt,
     _strip_code_fences,
@@ -213,6 +214,22 @@ class TestValidateFormat:
         assert _validate_format("FEAT: add feature") is True
         assert _validate_format("Feat: add feature") is True
 
+    def test_valid_with_scope(self):
+        """Test valid commit with scope."""
+        assert _validate_format("feat(auth): add login endpoint") is True
+        assert _validate_format("fix(api): resolve timeout issue") is True
+        assert _validate_format("refactor(core): restructure module") is True
+
+    def test_valid_with_breaking_change(self):
+        """Test valid commit with breaking change marker."""
+        assert _validate_format("feat!: breaking change in API") is True
+        assert _validate_format("fix!: change return type") is True
+
+    def test_valid_with_scope_and_breaking_change(self):
+        """Test valid commit with both scope and breaking change."""
+        assert _validate_format("feat(api)!: breaking change to endpoints") is True
+        assert _validate_format("refactor(core)!: major restructure") is True
+
 
 class TestCleanAndValidate:
     """Test full clean and validate pipeline."""
@@ -296,6 +313,58 @@ class TestDefaults:
     def test_max_message_length(self):
         """Test max message length is reasonable."""
         assert MAX_MESSAGE_LENGTH == 500
+
+    def test_max_subject_length(self):
+        """Test max subject length follows git convention."""
+        assert MAX_SUBJECT_LENGTH == 72
+
+
+class TestSubjectLineTruncation:
+    """Test 72-char subject line enforcement."""
+
+    def test_short_subject_unchanged(self):
+        """Test that short subjects are not modified."""
+        message = "feat: add feature"
+        result = _clean_and_validate(message)
+        assert result == "feat: add feature"
+
+    def test_exactly_72_chars_unchanged(self):
+        """Test that exactly 72-char subjects are not modified."""
+        # Create a subject that's exactly 72 chars
+        subject = "feat: " + "x" * 66  # 6 + 66 = 72
+        assert len(subject) == 72
+        result = _clean_and_validate(subject)
+        assert result == subject
+
+    def test_long_subject_truncated(self):
+        """Test that long subjects are truncated to 72 chars."""
+        # Create a subject that's too long
+        subject = "feat: " + "x" * 100  # 106 chars total
+        result = _clean_and_validate(subject)
+        assert result is not None
+        assert len(result) <= MAX_SUBJECT_LENGTH
+
+    def test_truncates_at_word_boundary(self):
+        """Test that truncation prefers word boundaries."""
+        subject = "feat: add a really long feature description that exceeds the maximum allowed length for commit subjects"
+        result = _clean_and_validate(subject)
+        assert result is not None
+        assert len(result) <= MAX_SUBJECT_LENGTH
+        # Should end at a word boundary (space before last word in original)
+        # The truncated result should be a prefix of the original that ends at a word break
+        assert subject.startswith(result)
+        # If truncated, the next char in original should be a space (word boundary)
+        if len(result) < len(subject):
+            assert subject[len(result)] == " ", f"Truncation split mid-word: '{result}'"
+
+    def test_long_subject_with_body_preserved(self):
+        """Test that body is preserved when subject is truncated."""
+        message = "feat: " + "x" * 100 + "\n\n- bullet point"
+        result = _clean_and_validate(message)
+        assert result is not None
+        lines = result.split("\n")
+        assert len(lines[0]) <= MAX_SUBJECT_LENGTH
+        assert "bullet point" in result
 
 
 class TestGenerateSmartCommitMessageAsync:

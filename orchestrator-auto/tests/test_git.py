@@ -584,8 +584,18 @@ class TestAutoCommitSmartCommitIntegration:
         assert success is True
         assert fallback_reason == "secrets_detected"
 
-    def test_auto_commit_clean_diff_no_secrets(self, temp_git_repo):
+    def test_auto_commit_clean_diff_no_secrets(self, temp_git_repo, monkeypatch):
         """Test that clean diff doesn't trigger secrets fallback."""
+        # Mock AI generation to prevent actual API calls
+        # This ensures tests don't accidentally hit the network
+        # Import the module first to ensure it's loaded, then patch
+        import orchestrator_auto.commit_ai
+        monkeypatch.setattr(
+            orchestrator_auto.commit_ai,
+            "generate_smart_commit_message",
+            lambda *args, **kwargs: "feat: add hello function"
+        )
+
         # Create a file without secrets
         test_file = Path(temp_git_repo) / "app.py"
         test_file.write_text('def hello():\n    return "Hello, World!"')
@@ -598,9 +608,34 @@ class TestAutoCommitSmartCommitIntegration:
         )
 
         assert success is True
-        # Should either succeed with AI (None) or fail AI and fallback
-        # In tests without actual AI, it will be ai_generation_failed
-        assert fallback_reason in (None, "ai_generation_failed")
+        # With mocked AI, should succeed without fallback
+        assert fallback_reason is None
+
+    def test_auto_commit_ai_failure_fallback(self, temp_git_repo, monkeypatch):
+        """Test that AI generation failure triggers graceful fallback."""
+        # Mock AI generation to return None (simulating failure)
+        # Import the module first to ensure it's loaded, then patch
+        import orchestrator_auto.commit_ai
+        monkeypatch.setattr(
+            orchestrator_auto.commit_ai,
+            "generate_smart_commit_message",
+            lambda *args, **kwargs: None
+        )
+
+        # Create a file without secrets
+        test_file = Path(temp_git_repo) / "utils.py"
+        test_file.write_text('def add(a, b):\n    return a + b')
+
+        success, msg, fallback_reason = git.auto_commit(
+            "Add utils",
+            [],
+            temp_git_repo,
+            use_smart_commit=True,
+        )
+
+        assert success is True
+        # Should fallback gracefully when AI returns None
+        assert fallback_reason == "ai_generation_failed"
 
     def test_auto_commit_never_pushes(self, temp_git_repo):
         """Test that auto_commit never pushes to remote."""
