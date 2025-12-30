@@ -354,3 +354,74 @@ class TestSmartCommitConfig:
 
         result = config.get_smart_commit_enabled(None)
         assert result is False
+
+
+class TestAutoCommitModelConfig:
+    """Test auto-commit model configuration."""
+
+    def test_cli_flag_takes_priority(self):
+        """Test that CLI flag takes highest priority."""
+        result = config.get_auto_commit_model("haiku", "claude-sonnet-4-5-20250929")
+        assert result == "claude-haiku-3-5-20241022"
+
+    def test_cli_flag_resolves_alias(self):
+        """Test that CLI flag aliases are resolved."""
+        result = config.get_auto_commit_model("opus", None)
+        assert result == "claude-opus-4-5-20251101"
+
+    def test_cli_flag_passes_full_model_id(self):
+        """Test that full model IDs are passed through."""
+        result = config.get_auto_commit_model("claude-custom-model-123", None)
+        assert result == "claude-custom-model-123"
+
+    def test_env_var_takes_priority_over_executor(self, monkeypatch):
+        """Test that env var takes priority over executor model."""
+        monkeypatch.setenv("ORCHESTRATOR_AUTO_COMMIT_MODEL", "haiku")
+        result = config.get_auto_commit_model(None, "claude-sonnet-4-5-20250929")
+        assert result == "claude-haiku-3-5-20241022"
+
+    def test_env_var_resolves_alias(self, monkeypatch):
+        """Test that env var aliases are resolved."""
+        monkeypatch.setenv("ORCHESTRATOR_AUTO_COMMIT_MODEL", "opus")
+        result = config.get_auto_commit_model(None, None)
+        assert result == "claude-opus-4-5-20251101"
+
+    def test_cli_flag_overrides_env_var(self, monkeypatch):
+        """Test that CLI flag overrides env var."""
+        monkeypatch.setenv("ORCHESTRATOR_AUTO_COMMIT_MODEL", "opus")
+        result = config.get_auto_commit_model("haiku", None)
+        assert result == "claude-haiku-3-5-20241022"
+
+    def test_config_file_model(self, tmp_path, monkeypatch):
+        """Test config file specifies commit model."""
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("auto_commit:\n  model: haiku\n")
+
+        monkeypatch.setattr(config, "find_repo_config", lambda: config_file)
+
+        result = config.get_auto_commit_model(None, None)
+        assert result == "claude-haiku-3-5-20241022"
+
+    def test_config_file_overridden_by_cli(self, tmp_path, monkeypatch):
+        """Test CLI flag overrides config file."""
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("auto_commit:\n  model: haiku\n")
+
+        monkeypatch.setattr(config, "find_repo_config", lambda: config_file)
+
+        result = config.get_auto_commit_model("opus", None)
+        assert result == "claude-opus-4-5-20251101"
+
+    def test_executor_model_fallback(self):
+        """Test fallback to executor model when no CLI/env/config."""
+        result = config.get_auto_commit_model(None, "claude-sonnet-4-5-20250929")
+        assert result == "claude-sonnet-4-5-20250929"
+
+    def test_default_executor_model_ultimate_fallback(self):
+        """Test ultimate fallback to default executor model."""
+        result = config.get_auto_commit_model(None, None)
+        assert result == config.DEFAULT_EXECUTOR_MODEL

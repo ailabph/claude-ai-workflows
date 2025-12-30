@@ -108,6 +108,8 @@ def _do_smart_auto_commit(
     milestones: list,
     path: Optional[str] = None,
     smart_commit_flag: Optional[bool] = None,
+    executor_model: Optional[str] = None,
+    auto_commit_model_flag: Optional[str] = None,
 ) -> tuple:
     """
     Perform auto-commit with smart commit support and CLI feedback.
@@ -117,12 +119,19 @@ def _do_smart_auto_commit(
         milestones: List of milestone dicts
         path: Git repo path
         smart_commit_flag: CLI flag for smart commit (None = use config)
+        executor_model: Resolved executor model for this session (fallback for commit model)
+        auto_commit_model_flag: CLI flag for commit model (--auto-commit-model)
 
     Returns:
         (success, message) tuple
     """
+    from .config import get_auto_commit_model
+
     # Determine if smart commit should be used
     use_smart = get_smart_commit_enabled(smart_commit_flag)
+
+    # Determine which model to use for smart commit
+    commit_model = get_auto_commit_model(auto_commit_model_flag, executor_model)
 
     # Status callback for CLI feedback
     def on_status(msg: str) -> None:
@@ -143,6 +152,7 @@ def _do_smart_auto_commit(
         milestones=milestones,
         path=path,
         use_smart_commit=use_smart,
+        smart_commit_model=commit_model,
         on_status=on_status,
     )
 
@@ -247,6 +257,7 @@ def _handle_queue_mode(
     auto_commit: bool,
     telegram: Optional[bool],
     smart_commit: Optional[bool] = None,
+    auto_commit_model: Optional[str] = None,
 ) -> None:
     """
     Handle --queue mode: validate, create/resume queue, run queue.
@@ -279,6 +290,7 @@ def _handle_queue_mode(
             auto_commit=auto_commit,
             telegram=telegram,
             smart_commit=smart_commit,
+            auto_commit_model=auto_commit_model,
         )
         return
 
@@ -325,6 +337,7 @@ def _handle_queue_mode(
                 auto_commit=auto_commit,
                 telegram=telegram,
                 smart_commit=smart_commit,
+                auto_commit_model=auto_commit_model,
             )
             return
         else:
@@ -394,6 +407,7 @@ def _handle_queue_mode(
         auto_commit=auto_commit,
         telegram=telegram,
         smart_commit=smart_commit,
+        auto_commit_model=auto_commit_model,
     )
 
 
@@ -432,6 +446,7 @@ def _reconcile_queue_head(
     auto_commit: bool,
     telegram_notifier,
     smart_commit: Optional[bool] = None,
+    auto_commit_model: Optional[str] = None,
 ) -> tuple:
     """
     Reconcile the head active queue item before processing.
@@ -520,10 +535,13 @@ def _reconcile_queue_head(
                 if auto_commit:
                     click.echo("  Attempting auto-commit for reconciled session...")
                     milestones = db.get_milestones(session_id, db_path)
+                    # Use executor_model from session DB for crash recovery
                     success, msg = _do_smart_auto_commit(
                         head["feature_description"],
                         milestones,
                         smart_commit_flag=smart_commit,
+                        executor_model=session.get("executor_model"),
+                        auto_commit_model_flag=auto_commit_model,
                     )
                     if success:
                         click.secho("  ✓ Changes committed", fg="green")
@@ -586,6 +604,7 @@ def _run_queue(
     auto_commit: bool,
     telegram: Optional[bool],
     smart_commit: Optional[bool] = None,
+    auto_commit_model: Optional[str] = None,
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
@@ -608,7 +627,9 @@ def _run_queue(
     click.secho("Starting queue runner...", fg="cyan", bold=True)
 
     # Reconcile queue state before starting (handles crash recovery)
-    action, head_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier, smart_commit)
+    action, head_item = _reconcile_queue_head(
+        project_id, db_path, auto_commit, telegram_notifier, smart_commit, auto_commit_model
+    )
 
     if action == "empty":
         click.echo()
@@ -730,6 +751,8 @@ def _run_queue(
                         feature_desc,
                         milestones,
                         smart_commit_flag=smart_commit,
+                        executor_model=resolved_executor,
+                        auto_commit_model_flag=auto_commit_model,
                     )
                     if success:
                         click.secho("✓ Changes committed", fg="green")
@@ -867,6 +890,7 @@ def cli():
 @click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
+@click.option('--auto-commit-model', help='Model for smart commit messages (default: executor model). Aliases: opus, sonnet, haiku')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 def start(
     feature: Optional[str],
@@ -880,6 +904,7 @@ def start(
     executor_model: Optional[str],
     auto_commit: bool,
     smart_commit: Optional[bool],
+    auto_commit_model: Optional[str],
     telegram: Optional[bool],
 ):
     """Start a new workflow session or queue."""
@@ -973,6 +998,8 @@ def start(
                 feature,
                 milestones,
                 smart_commit_flag=smart_commit,
+                executor_model=resolved_executor,
+                auto_commit_model_flag=auto_commit_model,
             )
             if success:
                 click.secho("✓ Changes committed", fg="green")
@@ -1001,7 +1028,8 @@ def start(
 @click.option('--force', '-f', is_flag=True, help='Force resume orphaned sessions (bypass pause check)')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool]):
+@click.option('--auto-commit-model', default=None, help='Model for AI commit messages (default: executor model)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str]):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -1139,6 +1167,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     auto_commit=auto_commit,
                     telegram=telegram,
                     smart_commit=smart_commit,
+                    auto_commit_model=auto_commit_model,
                 )
 
             elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
@@ -1176,6 +1205,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     auto_commit=auto_commit,
                     telegram=telegram,
                     smart_commit=smart_commit,
+                    auto_commit_model=auto_commit_model,
                 )
         else:
             # Not part of a queue - just complete normally
@@ -1220,6 +1250,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     auto_commit=auto_commit,
                     telegram=telegram,
                     smart_commit=smart_commit,
+                    auto_commit_model=auto_commit_model,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error

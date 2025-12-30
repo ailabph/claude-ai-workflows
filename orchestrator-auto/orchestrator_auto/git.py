@@ -313,6 +313,7 @@ def auto_commit(
     milestones: List[dict],
     path: Optional[str] = None,
     use_smart_commit: bool = True,
+    smart_commit_model: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
@@ -332,6 +333,7 @@ def auto_commit(
         milestones: List of completed milestones
         path: Working directory (optional)
         use_smart_commit: Use AI to generate commit message (default: True)
+        smart_commit_model: Model to use for AI generation (default: commit_ai.DEFAULT_MODEL)
         on_status: Optional callback for status updates (for CLI feedback)
 
     Returns:
@@ -388,11 +390,15 @@ def auto_commit(
                 status("Generating commit message with AI...")
                 try:
                     from .commit_ai import generate_smart_commit_message
-                    commit_msg = generate_smart_commit_message(
-                        diff=diff,
-                        stats=stats,
-                        feature_hint=feature_description,
-                    )
+                    # Build kwargs, only include model if specified
+                    ai_kwargs = {
+                        "diff": diff,
+                        "stats": stats,
+                        "feature_hint": feature_description,
+                    }
+                    if smart_commit_model:
+                        ai_kwargs["model"] = smart_commit_model
+                    commit_msg = generate_smart_commit_message(**ai_kwargs)
                     if commit_msg is None:
                         fallback_reason = "ai_generation_failed"
                         status("AI generation failed, using fallback message")

@@ -682,3 +682,65 @@ class TestAutoCommitSmartCommitIntegration:
         success, msg = result
         assert isinstance(success, bool)
         assert isinstance(msg, str)
+
+    def test_auto_commit_passes_model_to_ai(self, temp_git_repo, monkeypatch):
+        """Test that smart_commit_model is passed to generate_smart_commit_message."""
+        test_file = Path(temp_git_repo) / "test.py"
+        test_file.write_text("# test with model kwarg")
+
+        received_kwargs = {}
+
+        def mock_generate(*args, **kwargs):
+            received_kwargs.update(kwargs)
+            return "feat: mock commit message"
+
+        import orchestrator_auto.commit_ai
+        monkeypatch.setattr(
+            orchestrator_auto.commit_ai,
+            "generate_smart_commit_message",
+            mock_generate
+        )
+
+        success, msg, fallback_reason = git.auto_commit(
+            "Test feature",
+            [],
+            temp_git_repo,
+            use_smart_commit=True,
+            smart_commit_model="claude-haiku-3-5-20241022",
+        )
+
+        assert success is True
+        assert fallback_reason is None
+        assert "model" in received_kwargs
+        assert received_kwargs["model"] == "claude-haiku-3-5-20241022"
+
+    def test_auto_commit_no_model_kwarg_when_none(self, temp_git_repo, monkeypatch):
+        """Test that model kwarg is not passed when smart_commit_model is None."""
+        test_file = Path(temp_git_repo) / "test.py"
+        test_file.write_text("# test without model kwarg")
+
+        received_kwargs = {}
+
+        def mock_generate(*args, **kwargs):
+            received_kwargs.update(kwargs)
+            return "feat: mock commit message"
+
+        import orchestrator_auto.commit_ai
+        monkeypatch.setattr(
+            orchestrator_auto.commit_ai,
+            "generate_smart_commit_message",
+            mock_generate
+        )
+
+        success, msg, fallback_reason = git.auto_commit(
+            "Test feature",
+            [],
+            temp_git_repo,
+            use_smart_commit=True,
+            smart_commit_model=None,  # Explicitly None
+        )
+
+        assert success is True
+        assert fallback_reason is None
+        # Model should NOT be in kwargs when None
+        assert "model" not in received_kwargs

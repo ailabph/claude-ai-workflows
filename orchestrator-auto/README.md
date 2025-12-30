@@ -111,6 +111,7 @@ orchestrator start -f "Feature description" [options]
 | `-em, --executor-model` | Executor model: `opus`, `sonnet`, `haiku` |
 | `--auto-commit` | Auto-commit on completion |
 | `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
+| `--auto-commit-model` | Model for AI commit messages (default: executor model) |
 | `--telegram` | Enable Telegram notifications |
 | `--no-telegram` | Disable Telegram notifications |
 | `--no-activity` | Disable activity indicator |
@@ -160,6 +161,7 @@ orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 | `--force` | Force resume orphaned sessions (bypasses pause check) |
 | `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
 | `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
+| `--auto-commit-model` | Model for AI commit messages (default: executor model) |
 
 ### `reset` - Reset orphaned session
 
@@ -300,6 +302,8 @@ When `--auto-commit` is enabled, Smart Auto-Commit uses AI to analyze actual cod
 **Features:**
 - Analyzes `git diff` to understand changes
 - Generates semantic commit messages (`feat:`, `fix:`, `refactor:`, etc.)
+- Supports Conventional Commits scopes and breaking markers (e.g. `feat(cli):`, `feat!:`)
+- Enforces a 72-character subject line (first line)
 - Automatic secrets detection (blocks sensitive data from being sent to AI)
 - Graceful fallback to static messages on any error
 - **Never pushes** - only creates local commits
@@ -311,6 +315,12 @@ When `--auto-commit` is enabled, Smart Auto-Commit uses AI to analyze actual cod
 - bullet point for significant change
 - another bullet point
 ```
+
+Also accepted (when appropriate):
+- Scoped commits: `<type>(<scope>): <description>` (e.g. `feat(cli): add flag`)
+- Breaking changes: `<type>!: <description>` or `<type>(<scope>)!: <description>`
+
+Smart commit enforces a 72-character subject line (first line) and truncates safely if needed.
 
 | Type | When Used |
 |------|-----------|
@@ -344,7 +354,31 @@ orchestrator start -f "My feature" --auto-commit --smart-commit
 
 # Disable smart commit (use static messages)
 orchestrator start -f "My feature" --auto-commit --no-smart-commit
+
+# Use a specific model for commit message generation
+orchestrator start -f "My feature" --auto-commit --auto-commit-model haiku
 ```
+
+**Model Selection:**
+
+By default, Smart Auto-Commit uses the same model as the executor (typically Sonnet). You can override this to use a faster/cheaper model:
+
+```yaml
+# Config file: .claude_orchestrator/config.yaml
+auto_commit:
+  smart: true
+  model: haiku  # Use Haiku for commit messages
+```
+
+```bash
+# Environment variable
+export ORCHESTRATOR_AUTO_COMMIT_MODEL="haiku"
+
+# CLI flag (highest priority)
+orchestrator start -f "My feature" --auto-commit --auto-commit-model haiku
+```
+
+**Priority:** CLI `--auto-commit-model` > env var > config file > executor model
 
 **Secrets Detection:** Before sending any diff to the AI, Smart Auto-Commit scans for potential secrets:
 - API keys and tokens (generic patterns)
@@ -501,7 +535,9 @@ pytest tests/ --cov=orchestrator_auto
 - **Secrets Detection** - Blocks diffs with API keys, tokens, or private keys from AI
 - **Graceful Fallback** - Falls back to static messages on secrets, AI errors, or timeout
 - **CLI: `--smart-commit/--no-smart-commit`** - Enable/disable AI commit messages
+- **CLI: `--auto-commit-model`** - Override model for commit message generation (default: executor model)
 - **Config: `auto_commit.smart`** - Configure via config file or `ORCHESTRATOR_SMART_COMMIT` env var
+- **Config: `auto_commit.model`** - Configure commit model via config file or `ORCHESTRATOR_AUTO_COMMIT_MODEL` env var
 - **New modules** - `secrets.py` (9 secret patterns), `commit_ai.py` (async generation)
 - **Security** - Never logs secret values, only pattern names
 

@@ -430,6 +430,52 @@ def get_smart_commit_enabled(cli_flag: Optional[bool] = None) -> bool:
     return DEFAULT_SMART_COMMIT_ENABLED
 
 
+def get_auto_commit_model(
+    cli_model: Optional[str] = None,
+    executor_model: Optional[str] = None,
+) -> str:
+    """
+    Get model for smart auto-commit with priority: CLI > env var > config > executor model.
+
+    Config file shape:
+        auto_commit:
+          smart: true
+          model: sonnet  # or full model ID
+
+    Environment variable:
+        ORCHESTRATOR_AUTO_COMMIT_MODEL (alias or full model ID)
+
+    Args:
+        cli_model: CLI flag value (--auto-commit-model)
+        executor_model: Resolved executor model for the session (fallback)
+
+    Returns:
+        Full model ID for smart commit generation
+    """
+    # CLI flag has highest priority
+    if cli_model:
+        return resolve_model(cli_model)
+
+    # Check environment variable
+    env_value = os.environ.get("ORCHESTRATOR_AUTO_COMMIT_MODEL")
+    if env_value:
+        return resolve_model(env_value)
+
+    # Check config file
+    config = load_config()
+    auto_commit_config = config.get("auto_commit", {})
+    config_model = auto_commit_config.get("model")
+    if config_model:
+        return resolve_model(config_model)
+
+    # Fall back to executor model
+    if executor_model:
+        return executor_model
+
+    # Ultimate fallback: use default executor model
+    return get_executor_model(None)
+
+
 def get_stuck_sessions_config() -> Dict[str, Any]:
     """
     Get stuck session detection configuration.
