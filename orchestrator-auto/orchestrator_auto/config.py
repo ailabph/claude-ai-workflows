@@ -382,6 +382,53 @@ def is_telegram_configured() -> bool:
 
 DEFAULT_STUCK_INACTIVE_MINUTES = 20
 
+# Smart commit defaults
+DEFAULT_SMART_COMMIT_ENABLED = True
+
+
+# ============================================================================
+# Smart Commit Configuration
+# ============================================================================
+
+
+def get_smart_commit_enabled(cli_flag: Optional[bool] = None) -> bool:
+    """
+    Get smart commit enabled setting with priority: CLI > env var > config > default.
+
+    Smart commit uses AI to analyze diffs and generate meaningful commit messages
+    following Conventional Commits format.
+
+    Config file shape:
+        auto_commit:
+          smart: true
+
+    Environment variable:
+        ORCHESTRATOR_SMART_COMMIT (true/false)
+
+    Args:
+        cli_flag: CLI flag value (--smart-commit/--no-smart-commit)
+
+    Returns:
+        True if smart commit should be used
+    """
+    # CLI flag has highest priority
+    if cli_flag is not None:
+        return cli_flag
+
+    # Check environment variable
+    env_value = os.environ.get("ORCHESTRATOR_SMART_COMMIT")
+    if env_value is not None:
+        return env_value.lower() in ("true", "1", "yes")
+
+    # Check config file
+    config = load_config()
+    auto_commit_config = config.get("auto_commit", {})
+    if "smart" in auto_commit_config:
+        return bool(auto_commit_config["smart"])
+
+    # Default
+    return DEFAULT_SMART_COMMIT_ENABLED
+
 
 def get_stuck_sessions_config() -> Dict[str, Any]:
     """

@@ -276,3 +276,81 @@ class TestProjectIdentity:
         # Should use cwd as project_id when no git
         assert project_id == str(subdir.resolve())
         assert project_remote is None
+
+
+class TestSmartCommitConfig:
+    """Test smart commit configuration."""
+
+    def test_default_smart_commit_enabled(self):
+        """Test that smart commit is enabled by default."""
+        # Without CLI flag, env var, or config, should default to True
+        result = config.get_smart_commit_enabled(None)
+        assert result is True
+
+    def test_cli_flag_true_overrides(self):
+        """Test that CLI flag True takes precedence."""
+        result = config.get_smart_commit_enabled(True)
+        assert result is True
+
+    def test_cli_flag_false_overrides(self):
+        """Test that CLI flag False takes precedence."""
+        result = config.get_smart_commit_enabled(False)
+        assert result is False
+
+    def test_env_var_true(self, monkeypatch):
+        """Test environment variable enables smart commit."""
+        monkeypatch.setenv("ORCHESTRATOR_SMART_COMMIT", "true")
+        result = config.get_smart_commit_enabled(None)
+        assert result is True
+
+    def test_env_var_false(self, monkeypatch):
+        """Test environment variable disables smart commit."""
+        monkeypatch.setenv("ORCHESTRATOR_SMART_COMMIT", "false")
+        result = config.get_smart_commit_enabled(None)
+        assert result is False
+
+    def test_env_var_yes(self, monkeypatch):
+        """Test environment variable 'yes' enables smart commit."""
+        monkeypatch.setenv("ORCHESTRATOR_SMART_COMMIT", "yes")
+        result = config.get_smart_commit_enabled(None)
+        assert result is True
+
+    def test_env_var_1(self, monkeypatch):
+        """Test environment variable '1' enables smart commit."""
+        monkeypatch.setenv("ORCHESTRATOR_SMART_COMMIT", "1")
+        result = config.get_smart_commit_enabled(None)
+        assert result is True
+
+    def test_cli_flag_overrides_env_var(self, monkeypatch):
+        """Test that CLI flag takes precedence over env var."""
+        monkeypatch.setenv("ORCHESTRATOR_SMART_COMMIT", "true")
+        result = config.get_smart_commit_enabled(False)
+        assert result is False
+
+    def test_config_file_enabled(self, tmp_path, monkeypatch):
+        """Test config file enables smart commit."""
+        # Create config file
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("auto_commit:\n  smart: true\n")
+
+        # Mock find_repo_config to return our test config
+        monkeypatch.setattr(config, "find_repo_config", lambda: config_file)
+
+        result = config.get_smart_commit_enabled(None)
+        assert result is True
+
+    def test_config_file_disabled(self, tmp_path, monkeypatch):
+        """Test config file disables smart commit."""
+        # Create config file
+        config_dir = tmp_path / ".claude_orchestrator"
+        config_dir.mkdir()
+        config_file = config_dir / "config.yaml"
+        config_file.write_text("auto_commit:\n  smart: false\n")
+
+        # Mock find_repo_config to return our test config
+        monkeypatch.setattr(config, "find_repo_config", lambda: config_file)
+
+        result = config.get_smart_commit_enabled(None)
+        assert result is False

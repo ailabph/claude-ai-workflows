@@ -19,6 +19,12 @@ orchestrator start -f "My feature" --plan docs/plan.md
 # Start with auto-commit on completion
 orchestrator start -f "My feature" --auto-commit
 
+# Start with smart auto-commit (AI-generated messages)
+orchestrator start -f "My feature" --auto-commit --smart-commit
+
+# Disable smart commit (use static messages)
+orchestrator start -f "My feature" --auto-commit --no-smart-commit
+
 # Start with Telegram notifications
 orchestrator start -f "My feature" --telegram
 
@@ -104,6 +110,7 @@ orchestrator start -f "Feature description" [options]
 | `-pm, --planner-model` | Planner model: `opus`, `sonnet`, `haiku` |
 | `-em, --executor-model` | Executor model: `opus`, `sonnet`, `haiku` |
 | `--auto-commit` | Auto-commit on completion |
+| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
 | `--telegram` | Enable Telegram notifications |
 | `--no-telegram` | Disable Telegram notifications |
 | `--no-activity` | Disable activity indicator |
@@ -152,6 +159,7 @@ orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 | `-a, --answer` | Answer to blocker question |
 | `--force` | Force resume orphaned sessions (bypasses pause check) |
 | `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
+| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
 
 ### `reset` - Reset orphaned session
 
@@ -285,6 +293,72 @@ export ORCHESTRATOR_TELEGRAM_STUCK_MINUTES="20"
 
 **Priority:** CLI flags > env vars > repo config > global config
 
+### Smart Auto-Commit
+
+When `--auto-commit` is enabled, Smart Auto-Commit uses AI to analyze actual code changes and generate meaningful commit messages following [Conventional Commits](https://www.conventionalcommits.org/) format.
+
+**Features:**
+- Analyzes `git diff` to understand changes
+- Generates semantic commit messages (`feat:`, `fix:`, `refactor:`, etc.)
+- Automatic secrets detection (blocks sensitive data from being sent to AI)
+- Graceful fallback to static messages on any error
+- **Never pushes** - only creates local commits
+
+**Commit Message Format:**
+```
+<type>: <description>
+
+- bullet point for significant change
+- another bullet point
+```
+
+| Type | When Used |
+|------|-----------|
+| `feat` | New user-visible functionality |
+| `fix` | Bug correction |
+| `refactor` | Code restructuring (no behavior change) |
+| `docs` | Documentation only |
+| `test` | Test files only |
+| `chore` | Config, build, dependencies |
+| `style` | Formatting only |
+| `perf` | Performance optimization |
+
+**Config file** (`~/.claude_orchestrator/config.yaml` or `<repo>/.claude_orchestrator/config.yaml`):
+
+```yaml
+auto_commit:
+  smart: true  # Enable AI-generated messages (default: true)
+```
+
+**Environment variable:**
+
+```bash
+export ORCHESTRATOR_SMART_COMMIT="true"  # or "false", "yes", "1"
+```
+
+**CLI flags:**
+
+```bash
+# Enable smart commit (default when --auto-commit is used)
+orchestrator start -f "My feature" --auto-commit --smart-commit
+
+# Disable smart commit (use static messages)
+orchestrator start -f "My feature" --auto-commit --no-smart-commit
+```
+
+**Secrets Detection:** Before sending any diff to the AI, Smart Auto-Commit scans for potential secrets:
+- API keys and tokens (generic patterns)
+- Passwords and secrets in assignments
+- Private keys (RSA, EC, DSA, OpenSSH)
+- AWS credentials
+- GitHub Personal Access Tokens (`ghp_...`)
+- OpenAI API keys (`sk-...`)
+- Anthropic API key patterns
+
+If secrets are detected, the feature falls back to static message generation and logs a warning (showing pattern names, never values).
+
+**Priority:** CLI flags > env vars > repo config > global config > default (enabled)
+
 ---
 
 ## Workflow Phases
@@ -352,6 +426,8 @@ orchestrator-auto/
 │   ├── agents.py            # Agent wrappers
 │   ├── config.py            # Model config
 │   ├── git.py               # Auto-commit
+│   ├── secrets.py           # Secrets detection for smart commit
+│   ├── commit_ai.py         # AI commit message generation
 │   ├── telegram.py          # Telegram notifications
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
@@ -383,6 +459,7 @@ pytest tests/ --cov=orchestrator_auto
 
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [ ] **Post Feedback** - User feedback at milestones/completion
+- [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
 - [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
 - [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)
 - [x] **Auto-Commit** - `--auto-commit` flag for git commit on completion
@@ -416,6 +493,17 @@ pytest tests/ --cov=orchestrator_auto
 ---
 
 ## Changelog
+
+### v0.8.0 - Smart Auto-Commit
+
+- **Smart Auto-Commit** - AI-generated commit messages using Claude Haiku
+- **Conventional Commits** - Messages follow `feat:`, `fix:`, `refactor:` etc. format
+- **Secrets Detection** - Blocks diffs with API keys, tokens, or private keys from AI
+- **Graceful Fallback** - Falls back to static messages on secrets, AI errors, or timeout
+- **CLI: `--smart-commit/--no-smart-commit`** - Enable/disable AI commit messages
+- **Config: `auto_commit.smart`** - Configure via config file or `ORCHESTRATOR_SMART_COMMIT` env var
+- **New modules** - `secrets.py` (9 secret patterns), `commit_ai.py` (async generation)
+- **Security** - Never logs secret values, only pattern names
 
 ### v0.7.0 - Plan Queue
 

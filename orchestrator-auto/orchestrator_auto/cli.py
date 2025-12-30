@@ -25,6 +25,7 @@ from .config import (
     is_telegram_configured,
     get_stuck_sessions_config,
     get_project_identity,
+    get_smart_commit_enabled,
 )
 
 
@@ -100,6 +101,63 @@ def show_progress(orchestrator: Orchestrator) -> None:
 def output_callback(message: str) -> None:
     """Callback for orchestrator output."""
     click.echo(message)
+
+
+def _do_smart_auto_commit(
+    feature_description: str,
+    milestones: list,
+    path: Optional[str] = None,
+    smart_commit_flag: Optional[bool] = None,
+) -> tuple:
+    """
+    Perform auto-commit with smart commit support and CLI feedback.
+
+    Args:
+        feature_description: Feature being implemented
+        milestones: List of milestone dicts
+        path: Git repo path
+        smart_commit_flag: CLI flag for smart commit (None = use config)
+
+    Returns:
+        (success, message) tuple
+    """
+    # Determine if smart commit should be used
+    use_smart = get_smart_commit_enabled(smart_commit_flag)
+
+    # Status callback for CLI feedback
+    def on_status(msg: str) -> None:
+        if "Analyzing" in msg:
+            click.secho(f"  {msg}", fg="cyan")
+        elif "Secrets detected" in msg:
+            click.secho(f"  ⚠ {msg}", fg="yellow")
+        elif "Generating commit" in msg:
+            click.secho(f"  {msg}", fg="cyan")
+        elif "failed" in msg.lower() or "error" in msg.lower():
+            click.secho(f"  ⚠ {msg}", fg="yellow")
+        else:
+            click.echo(f"  {msg}")
+
+    # Call auto_commit with smart commit support
+    success, msg, fallback_reason = git.auto_commit(
+        feature_description=feature_description,
+        milestones=milestones,
+        path=path,
+        use_smart_commit=use_smart,
+        on_status=on_status,
+    )
+
+    # Show fallback reason if applicable
+    if success and fallback_reason:
+        if fallback_reason == "secrets_detected":
+            click.secho("  (Used static message due to potential secrets in diff)", fg="yellow")
+        elif fallback_reason == "ai_generation_failed":
+            click.secho("  (Used static message - AI generation unavailable)", fg="yellow")
+        elif fallback_reason == "smart_commit_disabled":
+            pass  # Don't mention if explicitly disabled
+    elif success and not fallback_reason and use_smart:
+        click.secho("  (AI-generated commit message)", fg="green")
+
+    return success, msg
 
 
 def _create_telegram_notifier(cli_enabled: Optional[bool] = None):
@@ -188,6 +246,7 @@ def _handle_queue_mode(
     executor_model: Optional[str],
     auto_commit: bool,
     telegram: Optional[bool],
+    smart_commit: Optional[bool] = None,
 ) -> None:
     """
     Handle --queue mode: validate, create/resume queue, run queue.
@@ -219,6 +278,7 @@ def _handle_queue_mode(
             executor_model=executor_model,
             auto_commit=auto_commit,
             telegram=telegram,
+            smart_commit=smart_commit,
         )
         return
 
@@ -264,6 +324,7 @@ def _handle_queue_mode(
                 executor_model=executor_model,
                 auto_commit=auto_commit,
                 telegram=telegram,
+                smart_commit=smart_commit,
             )
             return
         else:
@@ -332,6 +393,7 @@ def _handle_queue_mode(
         executor_model=executor_model,
         auto_commit=auto_commit,
         telegram=telegram,
+        smart_commit=smart_commit,
     )
 
 
@@ -369,6 +431,7 @@ def _reconcile_queue_head(
     db_path: Optional[str],
     auto_commit: bool,
     telegram_notifier,
+    smart_commit: Optional[bool] = None,
 ) -> tuple:
     """
     Reconcile the head active queue item before processing.
@@ -457,9 +520,14 @@ def _reconcile_queue_head(
                 if auto_commit:
                     click.echo("  Attempting auto-commit for reconciled session...")
                     milestones = db.get_milestones(session_id, db_path)
-                    success, msg = git.auto_commit(head["feature_description"], milestones)
+                    success, msg = _do_smart_auto_commit(
+                        head["feature_description"],
+                        milestones,
+                        smart_commit_flag=smart_commit,
+                    )
                     if success:
                         click.secho("  ✓ Changes committed", fg="green")
+                        click.echo(f"    {msg.split(chr(10))[0]}")
                     else:
                         click.secho(f"  ⚠ Auto-commit skipped: {msg}", fg="yellow")
 
@@ -517,6 +585,7 @@ def _run_queue(
     executor_model: Optional[str],
     auto_commit: bool,
     telegram: Optional[bool],
+    smart_commit: Optional[bool] = None,
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
@@ -539,7 +608,7 @@ def _run_queue(
     click.secho("Starting queue runner...", fg="cyan", bold=True)
 
     # Reconcile queue state before starting (handles crash recovery)
-    action, head_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier)
+    action, head_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier, smart_commit)
 
     if action == "empty":
         click.echo()
@@ -561,7 +630,7 @@ def _run_queue(
 
     while True:
         # Reconcile before each iteration to ensure sequential ordering
-        action, next_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier)
+        action, next_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier, smart_commit)
 
         if action == "empty":
             # No more active items
@@ -657,7 +726,11 @@ def _run_queue(
                     click.echo()
                     click.secho("Creating auto-commit...", fg="cyan")
                     milestones = db.get_milestones(orch.session_id, db_path)
-                    success, msg = git.auto_commit(feature_desc, milestones)
+                    success, msg = _do_smart_auto_commit(
+                        feature_desc,
+                        milestones,
+                        smart_commit_flag=smart_commit,
+                    )
                     if success:
                         click.secho("✓ Changes committed", fg="green")
                         click.echo(f"  {msg.split(chr(10))[0]}")
@@ -793,6 +866,7 @@ def cli():
 @click.option('--planner-model', '-pm', help='Model for planner agent. Aliases: opus, sonnet, haiku')
 @click.option('--executor-model', '-em', help='Model for executor agent. Aliases: opus, sonnet, haiku')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
+@click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 def start(
     feature: Optional[str],
@@ -805,6 +879,7 @@ def start(
     planner_model: Optional[str],
     executor_model: Optional[str],
     auto_commit: bool,
+    smart_commit: Optional[bool],
     telegram: Optional[bool],
 ):
     """Start a new workflow session or queue."""
@@ -836,6 +911,7 @@ def start(
             executor_model=executor_model,
             auto_commit=auto_commit,
             telegram=telegram,
+            smart_commit=smart_commit,
         )
         return
 
@@ -893,7 +969,11 @@ def start(
             click.echo()
             click.secho("Creating auto-commit...", fg="cyan")
             milestones = db.get_milestones(orch.session_id, db_path)
-            success, msg = git.auto_commit(feature, milestones)
+            success, msg = _do_smart_auto_commit(
+                feature,
+                milestones,
+                smart_commit_flag=smart_commit,
+            )
             if success:
                 click.secho("✓ Changes committed", fg="green")
                 click.echo(f"  {msg.split(chr(10))[0]}")  # First line of output
@@ -920,7 +1000,8 @@ def start(
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--force', '-f', is_flag=True, help='Force resume orphaned sessions (bypass pause check)')
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool):
+@click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool]):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -1057,6 +1138,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     executor_model=None,  # Use defaults
                     auto_commit=auto_commit,
                     telegram=telegram,
+                    smart_commit=smart_commit,
                 )
 
             elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
@@ -1093,6 +1175,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     executor_model=None,
                     auto_commit=auto_commit,
                     telegram=telegram,
+                    smart_commit=smart_commit,
                 )
         else:
             # Not part of a queue - just complete normally
@@ -1136,6 +1219,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     executor_model=None,
                     auto_commit=auto_commit,
                     telegram=telegram,
+                    smart_commit=smart_commit,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error
