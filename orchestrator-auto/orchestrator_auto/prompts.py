@@ -3,6 +3,21 @@ System prompts and templates for orchestrator-auto agents.
 """
 
 # =============================================================================
+# DEFAULT CHAT PROMPT (for direct chat mode)
+# =============================================================================
+
+DEFAULT_CHAT_PROMPT = """You are a helpful AI assistant in a direct chat session.
+
+You have access to the user's codebase and can:
+- Read and analyze files
+- Execute bash commands
+- Search code with grep/glob
+- Make edits when requested
+
+Be concise and helpful. Focus on answering questions and completing tasks efficiently.
+When making changes, explain what you're doing briefly."""
+
+# =============================================================================
 # PLANNER/REVIEWER AGENT SYSTEM PROMPT
 # =============================================================================
 

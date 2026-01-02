@@ -123,8 +123,8 @@ class TestPasteAwareInput:
             assert display == ""
             assert content == ""
 
-    def test_eof_handled(self):
-        """Test EOF is handled gracefully."""
+    def test_eof_default_returns_empty(self):
+        """Test EOF returns empty strings by default (backward compat)."""
         handler = PasteAwareInput()
 
         with patch.object(handler, '_get_session') as mock_session:
@@ -135,17 +135,27 @@ class TestPasteAwareInput:
             assert display == ""
             assert content == ""
 
-    def test_keyboard_interrupt_handled(self):
-        """Test KeyboardInterrupt is handled gracefully."""
+    def test_eof_with_flag_returns_none(self):
+        """Test EOF returns (None, None) when return_none_on_eof=True."""
+        handler = PasteAwareInput()
+
+        with patch.object(handler, '_get_session') as mock_session:
+            mock_session.return_value.prompt = MagicMock(side_effect=EOFError)
+
+            display, content = handler.prompt("Test: ", return_none_on_eof=True)
+
+            assert display is None
+            assert content is None
+
+    def test_keyboard_interrupt_raised(self):
+        """Test KeyboardInterrupt is re-raised (not swallowed)."""
         handler = PasteAwareInput()
 
         with patch.object(handler, '_get_session') as mock_session:
             mock_session.return_value.prompt = MagicMock(side_effect=KeyboardInterrupt)
 
-            display, content = handler.prompt("Test: ")
-
-            assert display == ""
-            assert content == ""
+            with pytest.raises(KeyboardInterrupt):
+                handler.prompt("Test: ")
 
 
 class TestModuleFunctions:
@@ -167,9 +177,22 @@ class TestModuleFunctions:
 
         display, content = prompt_with_paste_support("Test: ")
 
-        mock_handler.prompt.assert_called_once_with("Test: ")
+        mock_handler.prompt.assert_called_once_with("Test: ", return_none_on_eof=False)
         assert display == "display"
         assert content == "content"
+
+    @patch('orchestrator_auto.input_handler.get_input_handler')
+    def test_prompt_with_paste_support_return_none_on_eof(self, mock_get_handler):
+        """Test convenience function passes return_none_on_eof parameter."""
+        mock_handler = MagicMock()
+        mock_handler.prompt.return_value = (None, None)
+        mock_get_handler.return_value = mock_handler
+
+        display, content = prompt_with_paste_support("Test: ", return_none_on_eof=True)
+
+        mock_handler.prompt.assert_called_once_with("Test: ", return_none_on_eof=True)
+        assert display is None
+        assert content is None
 
     def test_simple_input_fallback(self):
         """Test simple_input uses standard input."""

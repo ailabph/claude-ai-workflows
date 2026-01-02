@@ -44,17 +44,25 @@ class PasteAwareInput:
             )
         return self._session
 
-    def prompt(self, prompt_text: str = "You: ") -> Tuple[str, Optional[str]]:
+    def prompt(
+        self,
+        prompt_text: str = "You: ",
+        return_none_on_eof: bool = False,
+    ) -> Tuple[Optional[str], Optional[str]]:
         """
         Prompt for user input with paste detection.
 
         Args:
             prompt_text: The prompt to display
+            return_none_on_eof: If True, return (None, None) on EOF/Ctrl+D.
+                               If False (default), return ("", "") for backward compatibility.
 
         Returns:
             Tuple of (display_text, full_content)
-            - display_text: What to show in logs (collapsed for pastes)
-            - full_content: The actual full content to use
+            - (None, None) on EOF/Ctrl+D when return_none_on_eof=True
+            - ("", "") on EOF/Ctrl+D when return_none_on_eof=False (default)
+            - ("", "") on empty input (just Enter)
+            - (display, content) on normal input
         """
         session = self._get_session()
 
@@ -84,8 +92,14 @@ class PasteAwareInput:
                 # Single line input
                 return text, text
 
-        except (EOFError, KeyboardInterrupt):
+        except EOFError:
+            if return_none_on_eof:
+                return None, None
             return "", ""
+        except KeyboardInterrupt:
+            # Always re-raise KeyboardInterrupt - let caller handle it
+            # (orchestrator has signal handler, chat has try/except)
+            raise
 
     def get_last_paste(self) -> Optional[str]:
         """Get the content of the last paste operation."""
@@ -108,18 +122,23 @@ def get_input_handler() -> PasteAwareInput:
     return _input_handler
 
 
-def prompt_with_paste_support(prompt_text: str = "You: ") -> Tuple[str, str]:
+def prompt_with_paste_support(
+    prompt_text: str = "You: ",
+    return_none_on_eof: bool = False,
+) -> Tuple[Optional[str], Optional[str]]:
     """
     Prompt for input with multi-line paste support.
 
     Args:
         prompt_text: The prompt to display
+        return_none_on_eof: If True, return (None, None) on EOF.
+                           If False (default), return ("", "").
 
     Returns:
         Tuple of (display_text, full_content)
     """
     handler = get_input_handler()
-    return handler.prompt(prompt_text)
+    return handler.prompt(prompt_text, return_none_on_eof=return_none_on_eof)
 
 
 def simple_input(prompt_text: str = "You: ") -> str:

@@ -43,6 +43,10 @@ orchestrator telegram test
 # Listen for Telegram blocker replies (Phase 2)
 orchestrator telegram listen
 
+# Direct chat with Claude (no orchestration)
+orchestrator chat
+orchestrator chat -m opus --no-tools
+
 # List sessions (current project only)
 orchestrator list
 
@@ -234,6 +238,48 @@ orchestrator telegram listen [--poll-interval N] [--once] [--verbose]
 | `-v, --verbose` | Show debug output for ignored messages |
 
 Listens for Telegram replies to blocker notifications. When you reply to a blocker message in Telegram, the listener resolves the blocker and prepares the session for resume.
+
+### `chat` - Direct chat with Claude
+
+```bash
+orchestrator chat [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-m, --model` | Model: opus, sonnet, haiku (default: sonnet) |
+| `-s, --system-prompt` | Path to custom system prompt file |
+| `--no-tools` | Disable file/bash tools (pure chat mode) |
+| `--show-activity` | Show streaming activity indicator (default) |
+| `--no-activity` | Disable streaming activity indicator |
+
+Start a direct chat session with Claude without the orchestration workflow. Useful for quick questions, ad-hoc tasks, or interactive coding sessions.
+
+**In-Chat Commands:**
+- `/exit`, `/quit` - End chat session
+- `/help` - Show available commands
+- `/clear` - Clear conversation (reset context)
+- `/model <alias>` - Switch model (resets context)
+
+**Examples:**
+
+```bash
+# Default chat (Sonnet with tools)
+orchestrator chat
+
+# Chat with Opus
+orchestrator chat -m opus
+
+# Pure chat mode (no file/bash tools)
+orchestrator chat --no-tools
+
+# Custom system prompt
+echo "You are a Python expert." > prompt.txt
+orchestrator chat -s prompt.txt
+
+# Combine options
+orchestrator chat -m opus --no-tools --no-activity
+```
 
 ---
 
@@ -507,6 +553,7 @@ pytest tests/ --cov=orchestrator_auto
 ## TODO
 
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
+- [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
 - [ ] **Post Feedback** - User feedback at milestones/completion
 - [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
 - [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)

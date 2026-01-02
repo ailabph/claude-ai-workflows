@@ -1927,5 +1927,32 @@ def telegram_listen(db_path: Optional[str], poll_interval: int, once: bool, verb
         listener.close()
 
 
+@cli.command()
+@click.option('--model', '-m', default='sonnet',
+              help='Model: opus, sonnet, haiku (default: sonnet)')
+@click.option('--system-prompt', '-s', type=click.Path(exists=True),
+              help='Path to custom system prompt file')
+@click.option('--no-tools', is_flag=True,
+              help='Disable file/bash tools (pure chat)')
+@click.option('--show-activity/--no-activity', default=True,
+              help='Show streaming activity indicator (default: enabled)')
+def chat(model: str, system_prompt: Optional[str], no_tools: bool, show_activity: bool):
+    """Start a direct chat session with Claude (no orchestration)."""
+    from .chat import ChatSession
+
+    # Load system prompt from file if provided
+    prompt_content = None
+    if system_prompt:
+        prompt_content = Path(system_prompt).read_text()
+
+    session = ChatSession(
+        model=model,
+        system_prompt=prompt_content,
+        tools_enabled=not no_tools,
+        show_activity=show_activity,
+    )
+    session.start()
+
+
 if __name__ == '__main__':
     cli()

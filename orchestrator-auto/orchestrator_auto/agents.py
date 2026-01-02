@@ -16,7 +16,7 @@ from claude_agent_sdk.types import (
     TextBlock,
 )
 
-from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT
+from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT, DEFAULT_CHAT_PROMPT
 
 
 # Tool permissions for both agents (list of tool names)
@@ -352,3 +352,33 @@ def create_executor_agent(
         kwargs["cwd"] = cwd
 
     return ExecutorAgent(**kwargs)
+
+
+def create_chat_agent(
+    model: str = "claude-sonnet-4-5-20250929",
+    system_prompt: Optional[str] = None,
+    allowed_tools: Optional[List[str]] = None,
+    cwd: Optional[Path] = None,
+) -> BaseAgent:
+    """
+    Factory function to create a direct chat agent.
+
+    Unlike ExecutorAgent, this uses a custom system prompt suitable
+    for general-purpose chat rather than milestone-based execution.
+
+    Args:
+        model: Claude model to use
+        system_prompt: Custom system prompt (default: DEFAULT_CHAT_PROMPT)
+        allowed_tools: List of allowed tools (default: all tools, empty list = no tools)
+        cwd: Working directory
+
+    Returns:
+        BaseAgent instance configured for direct chat
+    """
+    return BaseAgent(
+        system_prompt=system_prompt or DEFAULT_CHAT_PROMPT,
+        allowed_tools=allowed_tools if allowed_tools is not None else DEFAULT_TOOLS,
+        model=model,
+        session_id="chat",
+        cwd=cwd,
+    )
