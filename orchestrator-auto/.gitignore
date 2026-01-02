@@ -28,3 +28,11 @@ AGENT*
 .opencode*
 .claude*
 .cursor*
+
+# Session logs and milestone files (generated during orchestrator runs)
+session_*.md
+MILESTONE*_*.md
+
+# Verification/manual test scripts
+verify_milestone*.py
+test_*_manual.py

@@ -798,14 +798,17 @@ class TelegramListener:
             Reply text if received, None on timeout
         """
         start_time = time.time()
+        last_update_id = 0
 
         while time.time() - start_time < timeout:
-            remaining = timeout - (time.time() - start_time)
-            poll_timeout = min(5, remaining)
-
-            updates = self._get_updates(offset=0)
+            updates = self._get_updates(offset=last_update_id)
 
             for update in updates:
+                # Track last update_id to avoid reprocessing
+                update_id = update.get("update_id", 0)
+                if update_id >= last_update_id:
+                    last_update_id = update_id + 1
+
                 message = update.get("message", {})
                 reply_to = message.get("reply_to_message", {})
 

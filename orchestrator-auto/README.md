@@ -508,7 +508,7 @@ pytest tests/ --cov=orchestrator_auto
 
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [ ] **Post Feedback** - User feedback at milestones/completion
-- [ ] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
+- [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
 - [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
 - [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
 - [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)
