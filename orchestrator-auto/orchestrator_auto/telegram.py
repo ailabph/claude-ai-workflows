@@ -391,6 +391,16 @@ _This is a test message._"""
         else:
             return False, "Failed to send test message. Check bot token and chat ID."
 
+    def send_ping(self) -> Optional[int]:
+        """
+        Send a ping message for 2-way verification.
+
+        Returns:
+            message_id if successful, None otherwise
+        """
+        text = "🏓 *Ping!*\n\nReply to this message to verify 2-way communication."
+        return self._send_message(text)
+
     @staticmethod
     def _escape_markdown(text: str) -> str:
         """Escape special Markdown characters."""
@@ -771,6 +781,43 @@ class TelegramListener:
     def stop(self) -> None:
         """Stop the polling loop gracefully."""
         self._running = False
+
+    def wait_for_pong(
+        self,
+        ping_message_id: int,
+        timeout: int = 60
+    ) -> Optional[str]:
+        """
+        Wait for a reply to the ping message.
+
+        Args:
+            ping_message_id: The message_id of the sent ping
+            timeout: Seconds to wait before timing out
+
+        Returns:
+            Reply text if received, None on timeout
+        """
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            remaining = timeout - (time.time() - start_time)
+            poll_timeout = min(5, remaining)
+
+            updates = self._get_updates(offset=0)
+
+            for update in updates:
+                message = update.get("message", {})
+                reply_to = message.get("reply_to_message", {})
+
+                # Check if this is a reply to our ping
+                if reply_to.get("message_id") == ping_message_id:
+                    # Validate chat_id matches
+                    if str(message.get("chat", {}).get("id")) == self.chat_id:
+                        return message.get("text", "")
+
+            time.sleep(self.poll_interval)
+
+        return None
 
 
 def create_listener_from_config(config: dict) -> Optional[TelegramListener]:

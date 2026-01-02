@@ -1701,6 +1701,93 @@ def telegram_test():
         sys.exit(1)
 
 
+@telegram.command("ping")
+@click.option("--timeout", default=60, help="Seconds to wait for reply (default: 60)")
+@click.option("-v", "--verbose", is_flag=True, help="Show debug output")
+def telegram_ping(timeout: int, verbose: bool):
+    """Verify 2-way Telegram communication with ping-pong.
+
+    Sends a ping message to your configured Telegram chat and waits for
+    you to reply. This verifies that both outbound and inbound messaging
+    work correctly before relying on blocker replies.
+
+    Reply to the ping message (not a new message) to confirm 2-way communication.
+    """
+    try:
+        from .telegram import TelegramNotifier, TelegramListener, HTTPX_AVAILABLE
+
+        if not HTTPX_AVAILABLE:
+            click.secho("✗ httpx is required. Install with: pip install httpx", fg="red")
+            sys.exit(1)
+
+        telegram_config = get_telegram_config()
+
+        if not telegram_config.get("bot_token") or not telegram_config.get("chat_id"):
+            click.secho("✗ Telegram not configured", fg="red")
+            click.echo()
+            click.echo("Configure via ~/.claude_orchestrator/config.yaml:")
+            click.echo()
+            click.echo("  telegram:")
+            click.echo("    enabled: true")
+            click.echo("    bot_token: \"YOUR_BOT_TOKEN\"")
+            click.echo("    chat_id: \"YOUR_CHAT_ID\"")
+            click.echo()
+            click.echo("Or via environment variables:")
+            click.echo("  ORCHESTRATOR_TELEGRAM_BOT_TOKEN")
+            click.echo("  ORCHESTRATOR_TELEGRAM_CHAT_ID")
+            sys.exit(1)
+
+        click.echo("Sending ping message to Telegram...")
+
+        notifier = TelegramNotifier(
+            bot_token=telegram_config["bot_token"],
+            chat_id=telegram_config["chat_id"],
+        )
+
+        message_id = notifier.send_ping()
+
+        if not message_id:
+            click.secho("✗ Failed to send ping message", fg="red")
+            notifier.close()
+            sys.exit(1)
+
+        click.secho(f"✓ Ping sent (message_id: {message_id})", fg="green")
+        click.echo()
+        click.echo(f"Waiting for your reply in Telegram (timeout: {timeout}s)...")
+        click.echo("Reply to the ping message with any text to confirm 2-way communication.")
+        click.echo()
+
+        listener = TelegramListener(
+            bot_token=telegram_config["bot_token"],
+            chat_id=telegram_config["chat_id"],
+            verbose=verbose,
+        )
+
+        try:
+            reply = listener.wait_for_pong(message_id, timeout=timeout)
+
+            if reply:
+                click.secho(f'✓ Pong received: "{reply}"', fg="green")
+                click.secho("✓ 2-way communication verified!", fg="green", bold=True)
+                # Send confirmation back
+                notifier._send_message("✓ Pong received! 2-way communication verified.")
+            else:
+                click.secho(f"✗ Timeout: No reply received within {timeout}s.", fg="red")
+                click.echo("Check that you replied to the ping message (not a new message).")
+                sys.exit(1)
+        finally:
+            listener.close()
+            notifier.close()
+
+    except ImportError as e:
+        click.secho(f"✗ Import error: {e}", fg="red")
+        click.echo("Install telegram dependencies: pip install httpx")
+        sys.exit(1)
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red")
+        sys.exit(1)
+
+
 @telegram.command("listen")
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--poll-interval', default=3, help='Poll interval in seconds (default: 3)')
