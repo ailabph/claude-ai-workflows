@@ -47,9 +47,10 @@ class TestChatSessionInit:
 class TestChatSessionConversation:
     """Test basic conversation flow."""
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_basic_conversation(self, mock_create_agent, mock_input):
+    def test_basic_conversation(self, mock_create_agent, mock_input, mock_isatty):
         """Test basic send/receive flow."""
         # Setup mock agent
         mock_agent = MagicMock()
@@ -71,9 +72,10 @@ class TestChatSessionConversation:
         mock_agent.send_message.assert_called_once_with("Hello", on_chunk=ANY)
         mock_agent.close.assert_called()  # Cleanup called
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_multiple_messages(self, mock_create_agent, mock_input):
+    def test_multiple_messages(self, mock_create_agent, mock_input, mock_isatty):
         """Test multiple message exchanges."""
         mock_agent = MagicMock()
         mock_agent.send_message.side_effect = ["Response 1", "Response 2", "Response 3"]
@@ -98,9 +100,10 @@ class TestChatSessionConversation:
 class TestChatSessionExitHandling:
     """Test various exit mechanisms."""
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_eof_exits(self, mock_create_agent, mock_input):
+    def test_eof_exits(self, mock_create_agent, mock_input, mock_isatty):
         """Test Ctrl+D (EOF) exits gracefully."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -114,9 +117,10 @@ class TestChatSessionExitHandling:
         mock_agent.send_message.assert_not_called()  # No message sent
         mock_agent.close.assert_called()  # Cleanup still called
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_ctrl_c_exits(self, mock_create_agent, mock_input):
+    def test_ctrl_c_exits(self, mock_create_agent, mock_input, mock_isatty):
         """Test Ctrl+C exits gracefully via KeyboardInterrupt."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -130,9 +134,10 @@ class TestChatSessionExitHandling:
         mock_agent.send_message.assert_not_called()
         mock_agent.close.assert_called()  # Cleanup still called
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_empty_reprompts(self, mock_create_agent, mock_input):
+    def test_empty_reprompts(self, mock_create_agent, mock_input, mock_isatty):
         """Test empty Enter reprompts instead of exiting."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -153,9 +158,10 @@ class TestChatSessionExitHandling:
 class TestChatSessionCommands:
     """Test in-chat commands."""
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_exit_command(self, mock_create_agent, mock_input):
+    def test_exit_command(self, mock_create_agent, mock_input, mock_isatty):
         """Test /exit command."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -168,9 +174,10 @@ class TestChatSessionCommands:
         assert session.conversation_active is False
         mock_agent.close.assert_called()
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_quit_command(self, mock_create_agent, mock_input):
+    def test_quit_command(self, mock_create_agent, mock_input, mock_isatty):
         """Test /quit command."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -183,9 +190,10 @@ class TestChatSessionCommands:
         assert session.conversation_active is False
         mock_agent.close.assert_called()
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_help_command(self, mock_create_agent, mock_input):
+    def test_help_command(self, mock_create_agent, mock_input, mock_isatty):
         """Test /help command."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -202,9 +210,10 @@ class TestChatSessionCommands:
             # Verify help was printed
             assert any('/exit' in str(call) for call in mock_echo.call_args_list)
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_clear_command(self, mock_create_agent, mock_input):
+    def test_clear_command(self, mock_create_agent, mock_input, mock_isatty):
         """Test /clear command recreates agent."""
         mock_agent1 = MagicMock()
         mock_agent2 = MagicMock()
@@ -223,10 +232,11 @@ class TestChatSessionCommands:
         # Verify new agent was created (initial + after /clear)
         assert mock_create_agent.call_count >= 2
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
     @patch('orchestrator_auto.chat.get_executor_model')
-    def test_model_command(self, mock_get_model, mock_create_agent, mock_input):
+    def test_model_command(self, mock_get_model, mock_create_agent, mock_input, mock_isatty):
         """Test /model command switches model."""
         mock_agent1 = MagicMock()
         mock_agent2 = MagicMock()
@@ -251,9 +261,10 @@ class TestChatSessionCommands:
         # Verify new agent was created
         assert mock_create_agent.call_count >= 2
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_unknown_command(self, mock_create_agent, mock_input):
+    def test_unknown_command(self, mock_create_agent, mock_input, mock_isatty):
         """Test unknown commands show error."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -318,9 +329,10 @@ class TestChatSessionAgentLifecycle:
         # Verify first agent was closed
         mock_agent1.close.assert_called_once()
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_cleanup_called_on_exit(self, mock_create_agent, mock_input):
+    def test_cleanup_called_on_exit(self, mock_create_agent, mock_input, mock_isatty):
         """Test cleanup is called when session ends."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -337,10 +349,11 @@ class TestChatSessionAgentLifecycle:
 class TestChatSessionActivityIndicator:
     """Test streaming activity indicator integration."""
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
     @patch('orchestrator_auto.chat.StreamingIndicator')
-    def test_activity_indicator_enabled(self, mock_indicator_class, mock_create_agent, mock_input):
+    def test_activity_indicator_enabled(self, mock_indicator_class, mock_create_agent, mock_input, mock_isatty):
         """Test activity indicator created when enabled."""
         mock_agent = MagicMock()
         mock_agent.send_message.return_value = "Response"
@@ -362,10 +375,11 @@ class TestChatSessionActivityIndicator:
         # Verify indicator.finish() was called
         mock_indicator.finish.assert_called()
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
     @patch('orchestrator_auto.chat.StreamingIndicator')
-    def test_activity_indicator_disabled(self, mock_indicator_class, mock_create_agent, mock_input):
+    def test_activity_indicator_disabled(self, mock_indicator_class, mock_create_agent, mock_input, mock_isatty):
         """Test no activity indicator when disabled."""
         mock_agent = MagicMock()
         mock_agent.send_message.return_value = "Response"
@@ -386,9 +400,10 @@ class TestChatSessionActivityIndicator:
 class TestChatSessionEdgeCases:
     """Test edge cases and error conditions."""
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_whitespace_only_input_reprompts(self, mock_create_agent, mock_input):
+    def test_whitespace_only_input_reprompts(self, mock_create_agent, mock_input, mock_isatty):
         """Test whitespace-only input reprompts."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -404,10 +419,11 @@ class TestChatSessionEdgeCases:
         # Verify no message sent to agent
         mock_agent.send_message.assert_not_called()
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
     @patch('orchestrator_auto.chat.get_executor_model')
-    def test_invalid_model_shows_error(self, mock_get_model, mock_create_agent, mock_input):
+    def test_invalid_model_shows_error(self, mock_get_model, mock_create_agent, mock_input, mock_isatty):
         """Test invalid model alias shows error."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
@@ -431,9 +447,10 @@ class TestChatSessionEdgeCases:
             secho_calls = [str(call) for call in mock_secho.call_args_list]
             assert any('unknown model' in str(call).lower() for call in secho_calls)
 
+    @patch('sys.stdin.isatty', return_value=True)
     @patch('orchestrator_auto.input_handler.prompt_with_paste_support')
     @patch('orchestrator_auto.chat.create_chat_agent')
-    def test_model_command_without_argument(self, mock_create_agent, mock_input):
+    def test_model_command_without_argument(self, mock_create_agent, mock_input, mock_isatty):
         """Test /model without argument shows usage."""
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
