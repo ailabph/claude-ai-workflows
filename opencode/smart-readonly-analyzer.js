@@ -38,8 +38,8 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
       'wc', 'pwd', 'echo', 'which', 'whereis', 'man', 'tree', 'file', 'stat',
       'du', 'df', 'whoami', 'printenv', 'env', 'type', 'command'],
 
-    // find is only safe without -delete, -exec, -execdir, -ok, -okdir
-    findSafe: /^find\s+(?!.*(-delete|-exec|-execdir|-ok|-okdir))/,
+    // find is only safe without destructive/write actions
+    findSafe: /^find\s+(?!.*(-delete|-exec|-execdir|-ok|-okdir|-fprint|-fprint0|-fprintf|-fls))/,
 
     // Git read-only
     git: /^git\s+(status|log|diff|show|branch|remote(\s+-v)?|config\s+--get|rev-parse|describe|tag|ls-files|ls-remote|shortlog|blame|reflog|cherry)(\s|$)/,
@@ -271,10 +271,10 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     /(AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|API_KEY|AUTH_TOKEN|PASSWORD|SECRET)[=]\S+/gi,
     // Authorization headers
     /(Authorization:\s*)(Bearer\s+)?\S+/gi,
-    // Base64-ish tokens (require = or / to distinguish from git SHAs and filenames)
+    // Base64-ish tokens (require = or + or / to distinguish from git SHAs and filenames)
     // This avoids redacting 40-char hex git SHAs or long filenames
-    /\b[A-Za-z0-9_-]{32,}[=]{1,2}\b/g,  // base64 with padding
-    /\b[A-Za-z0-9+/]{40,}(?![a-f0-9]{0,8}\b)/g,  // base64 with + or /, not followed by more hex
+    /\b[A-Za-z0-9_-]{32,}={1,2}\b/g,  // base64 with padding (ends in = or ==)
+    /\b(?=[A-Za-z0-9+/]*[+/])[A-Za-z0-9+/]{32,}\b/g,  // 32+ chars with at least one + or /
   ];
 
   // Redact sensitive content in command for logging and AI
