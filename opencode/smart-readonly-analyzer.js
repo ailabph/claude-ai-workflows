@@ -1,6 +1,37 @@
 export const SmartReadOnlyAnalyzer = async ({ client }) => {
   console.log('✅ SmartReadOnlyAnalyzer plugin loaded!');
 
+  // Sensitive file patterns - curated list of credential-bearing paths
+  const sensitivePathPatterns = [
+    /\.env($|\..*)/i,                    // .env, .env.local, .env.production, etc.
+    /\.ssh\//,                           // SSH keys
+    /\.aws\//,                           // AWS credentials
+    /\.git\/config$/,                    // Git config (may have tokens)
+    /\.npmrc$/,                          // NPM auth tokens
+    /\.pypirc$/,                         // PyPI credentials
+    /\.netrc$/,                          // Network credentials
+    /\.docker\/config\.json$/,           // Docker auth
+    /credentials\.json$/,                // Generic credentials
+    /secrets?\.(json|ya?ml|toml)$/i,     // Secrets files
+    /\.kube\/config$/,                   // Kubernetes config
+    /\.gnupg\//,                         // GPG keys
+    /id_rsa|id_ed25519|id_ecdsa/,        // SSH private keys
+    /\.pem$/,                            // Certificates/keys
+    /\.key$/,                            // Key files
+    /password|passwd|token|api[_-]?key/i, // Files with sensitive names
+  ];
+
+  // Shell operators that warrant user review
+  const shellOperatorPatterns = [
+    /\|{1,2}/,                           // | or ||
+    /&&/,                                // &&
+    />\s*/,                              // > redirect
+    />>/,                                // >> append
+    /\$\(/,                              // $() subshell
+    /`[^`]+`/,                           // backtick subshell
+    /;\s*\S/,                            // ; command chaining
+  ];
+
   const readOnlyPatterns = {
     // Basic system commands
     simple: ['ls', 'cat', 'grep', 'find', 'head', 'tail', 'less', 'more',
@@ -170,6 +201,55 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     return dangerousPatterns.some(pattern => pattern.test(cmd));
   };
 
+  // Check if command contains shell operators that warrant review
+  const hasShellOperators = (cmd) => {
+    return shellOperatorPatterns.some(pattern => pattern.test(cmd));
+  };
+
+  // Extract file paths from command
+  const extractPaths = (cmd) => {
+    // Match quoted and unquoted paths
+    const paths = [];
+    // Quoted paths
+    const quotedMatches = cmd.match(/["']([^"']+)["']/g) || [];
+    quotedMatches.forEach(m => paths.push(m.replace(/["']/g, '')));
+    // Unquoted paths (words containing / or starting with .)
+    const words = cmd.split(/\s+/);
+    words.forEach(w => {
+      if ((w.includes('/') || w.startsWith('.')) && !w.startsWith('-')) {
+        paths.push(w);
+      }
+    });
+    return paths;
+  };
+
+  // Check if command targets sensitive files
+  const targetsSensitiveFiles = (cmd) => {
+    const paths = extractPaths(cmd);
+    return paths.filter(p => sensitivePathPatterns.some(pattern => pattern.test(p)));
+  };
+
+  // Check if grep/rg command is in "safe" mode (files-only or count)
+  const isGrepSafeMode = (cmd) => {
+    const firstWord = cmd.trim().split(/\s+/)[0];
+    if (!['grep', 'rg', 'ripgrep', 'ag', 'ack'].includes(firstWord)) return false;
+    // Safe modes: -l (files only), -c/--count, --files-with-matches
+    return /\s(-l|--files-with-matches|-c|--count)\b/.test(cmd);
+  };
+
+  // Redact sensitive paths in command for logging
+  const redactCommand = (cmd) => {
+    let redacted = cmd;
+    const sensitivePaths = targetsSensitiveFiles(cmd);
+    sensitivePaths.forEach(path => {
+      // Redact the path but keep the filename hint
+      const parts = path.split('/');
+      const filename = parts[parts.length - 1];
+      redacted = redacted.replace(path, `[REDACTED:${filename}]`);
+    });
+    return redacted;
+  };
+
   const analyzeWithAI = async (command) => {
     try {
       const response = await client.chat.create({
@@ -208,42 +288,91 @@ Respond ONLY with JSON (no markdown):
   };
 
   return {
-    "permission.ask": async ({ request }) => {
-      if (request.tool !== "bash") {
+    "permission.ask": async (args) => {
+      // Handle multiple payload shapes from different runtimes
+      // Could be: { request: { tool, command } } or { tool, command } or { tool_input: { command } }
+      const request = args.request ?? args;
+      const tool = request?.tool ?? request?.tool_name;
+      const command = (
+        request?.command ??
+        request?.tool_input?.command ??
+        request?.input?.command ??
+        request?.args?.command
+      )?.trim();
+
+      // Only process bash commands
+      if (tool !== "bash" && tool !== "Bash") {
         return { status: "ask" };
       }
 
-      const command = request.command?.trim();
-      if (!command) return { status: "ask" };
+      if (!command) {
+        console.log(`⚠️ No command found in request, asking user`);
+        return { status: "ask" };
+      }
+
+      const redacted = redactCommand(command);
+      const sensitivePaths = targetsSensitiveFiles(command);
+      const hasSensitiveTargets = sensitivePaths.length > 0;
+
+      // Check for sensitive file access
+      if (hasSensitiveTargets) {
+        // Allow grep/rg in safe mode (files-only, count) with less friction
+        if (isGrepSafeMode(command)) {
+          console.log(`⚠️ Asking (sensitive file, but safe grep mode): ${redacted}`);
+          console.log(`   Reason: Accessing sensitive paths in files-only/count mode`);
+          return { status: "ask" };
+        }
+        // Full content access to sensitive files - always ask
+        console.log(`⚠️ Asking (sensitive file read): ${redacted}`);
+        console.log(`   Reason: Command accesses credential-bearing files: ${sensitivePaths.map(p => p.split('/').pop()).join(', ')}`);
+        return { status: "ask" };
+      }
+
+      // Check for shell operators (pipes, redirects, subshells)
+      if (hasShellOperators(command)) {
+        // Still allow known read-only commands with pipes
+        if (isReadOnly(command.split(/[|&;]|\$\(/)[0].trim())) {
+          console.log(`✅ Auto-approved (read-only with operators): ${redacted}`);
+          return { status: "allow" };
+        }
+        console.log(`⚠️ Asking (shell operators detected): ${redacted}`);
+        console.log(`   Reason: Command contains pipes, redirects, or subshells`);
+        return { status: "ask" };
+      }
 
       // Fast path: known read-only
       if (isReadOnly(command)) {
-        console.log(`✅ Auto-approved (pattern): ${command}`);
+        console.log(`✅ Auto-approved (pattern): ${redacted}`);
         return { status: "allow" };
       }
 
-      // Fast path: known dangerous
+      // Known dangerous patterns - ask instead of deny
       if (isDangerous(command)) {
-        console.log(`🚫 Blocked (pattern): ${command}`);
-        return { status: "deny" };
+        console.log(`⚠️ Asking (dangerous pattern): ${redacted}`);
+        console.log(`   Reason: Command matches dangerous pattern (destructive/mutating operation)`);
+        return { status: "ask" };
       }
 
       // Slow path: AI analysis
-      console.log(`🤔 Analyzing with AI: ${command}`);
+      console.log(`🤔 Analyzing with AI: ${redacted}`);
       const analysis = await analyzeWithAI(command);
 
       if (analysis.isReadOnly && analysis.confidence > 0.80) {
-        console.log(`🤖 AI Auto-approved: ${command}`);
+        console.log(`🤖 AI Auto-approved: ${redacted}`);
         console.log(`   Reason: ${analysis.reason}`);
         console.log(`   Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
         return { status: "allow" };
-      } else if (analysis.isDangerous && analysis.confidence > 0.85) {
-        console.log(`🚫 AI Blocked: ${command}`);
-        console.log(`   Reason: ${analysis.reason}`);
-        return { status: "deny" };
       }
 
-      console.log(`❓ AI uncertain (${(analysis.confidence * 100).toFixed(0)}%), asking user`);
+      // For dangerous or uncertain commands, ask with explanation
+      if (analysis.isDangerous) {
+        console.log(`⚠️ Asking (AI flagged as dangerous): ${redacted}`);
+        console.log(`   Reason: ${analysis.reason}`);
+        return { status: "ask" };
+      }
+
+      console.log(`⚠️ Asking (AI uncertain, ${(analysis.confidence * 100).toFixed(0)}%): ${redacted}`);
+      console.log(`   Reason: ${analysis.reason || 'Could not determine if command is read-only'}`);
       return { status: "ask" };
     }
   };
