@@ -206,27 +206,49 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     return shellOperatorPatterns.some(pattern => pattern.test(cmd));
   };
 
-  // Extract file paths from command
+  // Bare sensitive filenames that should be detected without path prefix
+  const bareSensitiveFilenames = [
+    'credentials.json', 'secrets.json', 'secrets.yaml', 'secrets.yml', 'secrets.toml',
+    'id_rsa', 'id_ed25519', 'id_ecdsa', 'id_dsa',
+    '.env', '.npmrc', '.pypirc', '.netrc',
+  ];
+
+  // Extract file paths and potential sensitive tokens from command
   const extractPaths = (cmd) => {
-    // Match quoted and unquoted paths
-    const paths = [];
+    const paths = new Set();
     // Quoted paths
     const quotedMatches = cmd.match(/["']([^"']+)["']/g) || [];
-    quotedMatches.forEach(m => paths.push(m.replace(/["']/g, '')));
-    // Unquoted paths (words containing / or starting with .)
+    quotedMatches.forEach(m => paths.add(m.replace(/["']/g, '')));
+    // Unquoted tokens: paths (contain /), dotfiles (start with .), or files with extensions
     const words = cmd.split(/\s+/);
     words.forEach(w => {
-      if ((w.includes('/') || w.startsWith('.')) && !w.startsWith('-')) {
-        paths.push(w);
+      if (w.startsWith('-')) return; // skip flags
+      if (w.includes('/') || w.startsWith('.')) {
+        paths.add(w);
+      }
+      // Also check bare filenames with extensions that might be sensitive
+      if (w.includes('.') && !w.startsWith('-')) {
+        paths.add(w);
+      }
+      // Check known bare sensitive filenames
+      if (bareSensitiveFilenames.includes(w)) {
+        paths.add(w);
       }
     });
-    return paths;
+    return Array.from(paths);
   };
 
   // Check if command targets sensitive files
   const targetsSensitiveFiles = (cmd) => {
     const paths = extractPaths(cmd);
-    return paths.filter(p => sensitivePathPatterns.some(pattern => pattern.test(p)));
+    const matches = paths.filter(p => sensitivePathPatterns.some(pattern => pattern.test(p)));
+    // Also check for bare sensitive filenames directly in command
+    bareSensitiveFilenames.forEach(filename => {
+      if (cmd.includes(filename) && !matches.some(m => m.includes(filename))) {
+        matches.push(filename);
+      }
+    });
+    return matches;
   };
 
   // Check if grep/rg command is in "safe" mode (files-only or count)
@@ -237,41 +259,70 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     return /\s(-l|--files-with-matches|-c|--count)\b/.test(cmd);
   };
 
-  // Redact sensitive paths in command for logging
+  // Patterns for inline secrets that should be redacted
+  const inlineSecretPatterns = [
+    // Flags with values: --token=xxx, --password xxx, -p xxx
+    /(--(token|password|secret|api[_-]?key|auth|credential|private[_-]?key))[=\s]+\S+/gi,
+    /(-(p|k|t)\s+)\S+/g, // common short flags for password/key/token
+    // Environment variable assignments with sensitive names
+    /(AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|API_KEY|AUTH_TOKEN|PASSWORD|SECRET)[=]\S+/gi,
+    // Authorization headers
+    /(Authorization:\s*)(Bearer\s+)?\S+/gi,
+    // Long hex/base64 strings (likely tokens) - 32+ chars
+    /\b[A-Za-z0-9+/=_-]{32,}\b/g,
+  ];
+
+  // Redact sensitive content in command for logging and AI
   const redactCommand = (cmd) => {
     let redacted = cmd;
+
+    // Redact sensitive file paths
     const sensitivePaths = targetsSensitiveFiles(cmd);
     sensitivePaths.forEach(path => {
-      // Redact the path but keep the filename hint
       const parts = path.split('/');
       const filename = parts[parts.length - 1];
       redacted = redacted.replace(path, `[REDACTED:${filename}]`);
     });
+
+    // Redact inline secrets
+    inlineSecretPatterns.forEach(pattern => {
+      redacted = redacted.replace(pattern, (match, prefix) => {
+        // Keep the flag/key name, redact the value
+        if (prefix) return `${prefix}[REDACTED]`;
+        return '[REDACTED]';
+      });
+    });
+
     return redacted;
   };
 
-  const analyzeWithAI = async (command) => {
+  // AI analysis receives redacted command to avoid sending secrets upstream
+  const analyzeWithAI = async (redactedCommand) => {
     try {
       const response = await client.chat.create({
         messages: [{
           role: "user",
-          content: `Analyze this bash command and determine if it's read-only (no modifications to filesystem, system, processes, databases, or remote resources).
+          content: `Analyze this bash command and determine if it should be auto-approved or require user confirmation.
 
-Command: ${command}
+Command: ${redactedCommand}
 
-Consider these frameworks:
-- Python/Django: pytest, mypy, show_urls are safe; migrate, pip install are not
-- Node/React/Next: npm test, jest, eslint are safe; npm install, next build are not
-- Ruby/Rails: rspec, rails routes are safe; rails db:migrate, gem install are not
-- PHP/Laravel: phpunit, route:list are safe; artisan migrate, composer install are not
-- Commands with pipes, grep, head are usually safe if base command is safe
+Auto-approve criteria (all must be true):
+- Command only reads data (no writes to filesystem, databases, or remote resources)
+- No destructive operations (delete, overwrite, force-push, etc.)
+- No package installations or system modifications
+- No credential exposure risk
+
+Framework examples:
+- SAFE: pytest, mypy, eslint, rspec, phpunit, cargo test, go test, rails routes, npm test
+- NEEDS REVIEW: pip install, npm install, migrate, build, deploy, push, rm, mv
 
 Respond ONLY with JSON (no markdown):
 {
-  "isReadOnly": boolean,
-  "isDangerous": boolean,
+  "shouldAutoApprove": boolean,
+  "riskLevel": "none" | "low" | "medium" | "high",
   "confidence": 0.0-1.0,
-  "reason": "brief explanation"
+  "reason": "brief explanation",
+  "riskFlags": ["list", "of", "concerns"]
 }`
         }],
         temperature: 0,
@@ -280,10 +331,18 @@ Respond ONLY with JSON (no markdown):
 
       const text = response.content[0].text.trim();
       const cleanText = text.replace(/```json\n?/g, '').replace(/```\n?/g, '');
-      return JSON.parse(cleanText);
+      const result = JSON.parse(cleanText);
+      // Map new schema to existing code expectations
+      return {
+        isReadOnly: result.shouldAutoApprove,
+        isDangerous: result.riskLevel === 'high',
+        confidence: result.confidence,
+        reason: result.reason,
+        riskFlags: result.riskFlags || [],
+      };
     } catch (error) {
       console.error('AI analysis failed:', error);
-      return { isReadOnly: false, isDangerous: false, confidence: 0, reason: 'Analysis failed' };
+      return { isReadOnly: false, isDangerous: false, confidence: 0, reason: 'Analysis failed', riskFlags: [] };
     }
   };
 
@@ -316,10 +375,10 @@ Respond ONLY with JSON (no markdown):
 
       // Check for sensitive file access
       if (hasSensitiveTargets) {
-        // Allow grep/rg in safe mode (files-only, count) with less friction
+        // Note: both cases ask, but we differentiate in logging for context
         if (isGrepSafeMode(command)) {
-          console.log(`⚠️ Asking (sensitive file, but safe grep mode): ${redacted}`);
-          console.log(`   Reason: Accessing sensitive paths in files-only/count mode`);
+          console.log(`⚠️ Asking (sensitive file, grep safe mode): ${redacted}`);
+          console.log(`   Reason: Searching sensitive paths (files-only/count mode - lower risk)`);
           return { status: "ask" };
         }
         // Full content access to sensitive files - always ask
@@ -328,15 +387,12 @@ Respond ONLY with JSON (no markdown):
         return { status: "ask" };
       }
 
-      // Check for shell operators (pipes, redirects, subshells)
+      // Check for shell operators (pipes, redirects, subshells) - always ask
+      // Cannot safely auto-approve because right side of operator may be destructive
+      // e.g., "ls && rm -rf ." or "cat file | sh"
       if (hasShellOperators(command)) {
-        // Still allow known read-only commands with pipes
-        if (isReadOnly(command.split(/[|&;]|\$\(/)[0].trim())) {
-          console.log(`✅ Auto-approved (read-only with operators): ${redacted}`);
-          return { status: "allow" };
-        }
         console.log(`⚠️ Asking (shell operators detected): ${redacted}`);
-        console.log(`   Reason: Command contains pipes, redirects, or subshells`);
+        console.log(`   Reason: Command contains pipes, redirects, or subshells - requires review`);
         return { status: "ask" };
       }
 
@@ -353,9 +409,9 @@ Respond ONLY with JSON (no markdown):
         return { status: "ask" };
       }
 
-      // Slow path: AI analysis
+      // Slow path: AI analysis (use redacted command to avoid sending secrets upstream)
       console.log(`🤔 Analyzing with AI: ${redacted}`);
-      const analysis = await analyzeWithAI(command);
+      const analysis = await analyzeWithAI(redacted);
 
       if (analysis.isReadOnly && analysis.confidence > 0.80) {
         console.log(`🤖 AI Auto-approved: ${redacted}`);
