@@ -33,10 +33,13 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
   ];
 
   const readOnlyPatterns = {
-    // Basic system commands
-    simple: ['ls', 'cat', 'grep', 'find', 'head', 'tail', 'less', 'more',
+    // Basic system commands (note: find excluded - has destructive flags)
+    simple: ['ls', 'cat', 'grep', 'head', 'tail', 'less', 'more',
       'wc', 'pwd', 'echo', 'which', 'whereis', 'man', 'tree', 'file', 'stat',
       'du', 'df', 'whoami', 'printenv', 'env', 'type', 'command'],
+
+    // find is only safe without -delete, -exec, -execdir, -ok, -okdir
+    findSafe: /^find\s+(?!.*(-delete|-exec|-execdir|-ok|-okdir))/,
 
     // Git read-only
     git: /^git\s+(status|log|diff|show|branch|remote(\s+-v)?|config\s+--get|rev-parse|describe|tag|ls-files|ls-remote|shortlog|blame|reflog|cherry)(\s|$)/,
@@ -268,8 +271,10 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     /(AWS_SECRET_ACCESS_KEY|AWS_SESSION_TOKEN|GITHUB_TOKEN|API_KEY|AUTH_TOKEN|PASSWORD|SECRET)[=]\S+/gi,
     // Authorization headers
     /(Authorization:\s*)(Bearer\s+)?\S+/gi,
-    // Long hex/base64 strings (likely tokens) - 32+ chars
-    /\b[A-Za-z0-9+/=_-]{32,}\b/g,
+    // Base64-ish tokens (require = or / to distinguish from git SHAs and filenames)
+    // This avoids redacting 40-char hex git SHAs or long filenames
+    /\b[A-Za-z0-9_-]{32,}[=]{1,2}\b/g,  // base64 with padding
+    /\b[A-Za-z0-9+/]{40,}(?![a-f0-9]{0,8}\b)/g,  // base64 with + or /, not followed by more hex
   ];
 
   // Redact sensitive content in command for logging and AI
@@ -306,15 +311,16 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
 
 Command: ${redactedCommand}
 
-Auto-approve criteria (all must be true):
-- Command only reads data (no writes to filesystem, databases, or remote resources)
+Auto-approve criteria:
 - No destructive operations (delete, overwrite, force-push, etc.)
-- No package installations or system modifications
+- No package installations or system-wide modifications
 - No credential exposure risk
+- No writes outside workspace (system files, home dir config, etc.)
+- Workspace-local writes are OK (caches, build artifacts, test outputs, .pyc files)
 
 Framework examples:
-- SAFE: pytest, mypy, eslint, rspec, phpunit, cargo test, go test, rails routes, npm test
-- NEEDS REVIEW: pip install, npm install, migrate, build, deploy, push, rm, mv
+- SAFE: pytest, mypy, eslint, rspec, phpunit, cargo test, go test, rails routes, npm test, tsc, coverage
+- NEEDS REVIEW: pip install, npm install, migrate, deploy, push, rm, mv, chmod, chown
 
 Respond ONLY with JSON (no markdown):
 {
@@ -350,7 +356,8 @@ Respond ONLY with JSON (no markdown):
     "permission.ask": async (args) => {
       // Handle multiple payload shapes from different runtimes
       // Could be: { request: { tool, command } } or { tool, command } or { tool_input: { command } }
-      const request = args.request ?? args;
+      // Also handle undefined/null args to prevent crashes
+      const request = args?.request ?? args ?? {};
       const tool = request?.tool ?? request?.tool_name;
       const command = (
         request?.command ??
