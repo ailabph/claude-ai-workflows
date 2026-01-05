@@ -248,3 +248,4 @@ $RECYCLE.BIN/
 CLAUDE.md
 AGENT.md
 AGENTS.md
+.coverage*
