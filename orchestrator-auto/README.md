@@ -91,12 +91,36 @@ conda activate orchestrator-auto
 # 3. Install
 pip install -e .
 
-# 4. Set API key
-export ANTHROPIC_API_KEY="your-api-key"
+# 4. Configure authentication (choose one)
 
-# 5. Verify
-orchestrator --help
+# Option A: Claude Pro/Max subscription (recommended)
+# First, ensure Claude Code CLI is installed and logged in
+claude login
+# Then generate a long-lived token
+claude setup-token
+# Add to your shell config (~/.zshrc or ~/.bashrc)
+export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-your-token"
+
+# Option B: API key (pay-as-you-go)
+# Get key from https://console.anthropic.com/settings/keys
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key"
+
+# 5. Verify installation and auth
+orchestrator check
 ```
+
+### Authentication Notes
+
+| Method | Env Variable | Billing | Best For |
+|--------|--------------|---------|----------|
+| **Claude Subscription** | `CLAUDE_CODE_OAUTH_TOKEN` | Pro/Max plan | Personal use, included usage |
+| **API Key** | `ANTHROPIC_API_KEY` | Pay-per-use | Teams, high volume, CI/CD |
+
+**Important:**
+- Don't set both variables simultaneously (causes conflicts)
+- OAuth tokens (`sk-ant-oat01-...`) go in `CLAUDE_CODE_OAUTH_TOKEN`
+- API keys (`sk-ant-api03-...`) go in `ANTHROPIC_API_KEY`
+- Run `orchestrator check` to verify your setup
 
 ---
 
