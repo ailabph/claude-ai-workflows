@@ -17,6 +17,7 @@ from . import __version__
 from .engine import Orchestrator
 from .state import Phase, Status
 from .parser import extract_feature_from_plan, parse_plan_file
+from .auth import detect_auth, format_auth_display
 from .config import (
     get_planner_model,
     get_executor_model,
@@ -72,6 +73,19 @@ def format_status(status: str) -> str:
     }
     color = colors.get(status, "white")
     return click.style(status.upper(), fg=color, bold=True)
+
+
+def display_auth_info() -> None:
+    """Detect and display auth info with appropriate coloring."""
+    auth_info = detect_auth()
+    auth_display = format_auth_display(auth_info)
+
+    # Use yellow for warnings (⚠ or Unknown)
+    if "⚠" in auth_display or "Unknown" in auth_display:
+        for line in auth_display.split("\n"):
+            click.secho(line, fg="yellow")
+    else:
+        click.echo(auth_display)
 
 
 def show_progress(orchestrator: Orchestrator) -> None:
@@ -954,6 +968,7 @@ def start(
         click.secho("Starting new workflow session...", fg="cyan", bold=True)
         click.echo(f"Feature: {feature}")
         click.echo(f"Models: Planner={get_model_display_name(resolved_planner)} | Executor={get_model_display_name(resolved_executor)}")
+        display_auth_info()
         if telegram_notifier:
             click.echo("Telegram: enabled")
         if plan:
@@ -1043,6 +1058,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 
     try:
         click.secho(f"Resuming session: {session_id}", fg="cyan", bold=True)
+        display_auth_info()
         if telegram_notifier:
             click.echo("Telegram: enabled")
         if force:
@@ -1486,6 +1502,22 @@ def status(session_id: str, db_path: Optional[str]):
             planner_display = get_model_display_name(session['planner_model']) if session.get('planner_model') else "default"
             executor_display = get_model_display_name(session['executor_model']) if session.get('executor_model') else "default"
             click.echo(f"Models: Planner={click.style(planner_display, fg='blue')} | Executor={click.style(executor_display, fg='magenta')}")
+
+        # Auth info (if available)
+        if session.get('auth_source'):
+            auth_source = session['auth_source']
+            # Format auth source for display
+            auth_display = {
+                'api_key': 'API Key (ANTHROPIC_API_KEY)',
+                'oauth_token': 'OAuth Token (CLAUDE_CODE_OAUTH_TOKEN)',
+                'credentials_file': 'Credentials File (~/.claude/.credentials.json)',
+                'bedrock': 'AWS Bedrock',
+                'vertex': 'Google Vertex AI',
+                'foundry': 'Azure Foundry',
+                'multiple': 'Multiple Sources (see auth_signals)',
+                'unknown': 'Unknown',
+            }.get(auth_source, auth_source)
+            click.echo(f"Auth: {auth_display}")
         click.echo()
 
         # Milestone progress
@@ -1578,6 +1610,20 @@ def export(session_id: str, output: Optional[str], db_path: Optional[str]):
             planner_display = get_model_display_name(session['planner_model']) if session.get('planner_model') else "default"
             executor_display = get_model_display_name(session['executor_model']) if session.get('executor_model') else "default"
             content.append(f"**Models:** Planner={planner_display} | Executor={executor_display}\n")
+        if session.get('auth_source'):
+            auth_source = session['auth_source']
+            # Format auth source for display
+            auth_display = {
+                'api_key': 'API Key (ANTHROPIC_API_KEY)',
+                'oauth_token': 'OAuth Token (CLAUDE_CODE_OAUTH_TOKEN)',
+                'credentials_file': 'Credentials File',
+                'bedrock': 'AWS Bedrock',
+                'vertex': 'Google Vertex AI',
+                'foundry': 'Azure Foundry',
+                'multiple': 'Multiple Sources',
+                'unknown': 'Unknown',
+            }.get(auth_source, auth_source)
+            content.append(f"**Auth:** {auth_display}\n")
         content.append(f"**Created:** {session['created_at']}\n")
         content.append(f"**Updated:** {session['updated_at']}\n")
         content.append("\n---\n\n")
@@ -1939,6 +1985,9 @@ def telegram_listen(db_path: Optional[str], poll_interval: int, once: bool, verb
 def chat(model: str, system_prompt: Optional[str], no_tools: bool, show_activity: bool):
     """Start a direct chat session with Claude (no orchestration)."""
     from .chat import ChatSession
+
+    # Display auth info at startup
+    display_auth_info()
 
     # Load system prompt from file if provided
     prompt_content = None

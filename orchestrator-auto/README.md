@@ -454,6 +454,26 @@ If secrets are detected, the feature falls back to static message generation and
 
 **Priority:** CLI flags > env vars > repo config > global config > default (enabled)
 
+### Auth Source Detection
+
+At startup, orchestrator displays the detected authentication source:
+
+| Source | Display |
+|--------|---------|
+| API Key | `Auth: ANTHROPIC_API_KEY (sk-ant-api03-...)` |
+| OAuth Token | `Auth: CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat01-...)` |
+| AWS Bedrock | `Auth: AWS Bedrock (CLAUDE_CODE_USE_BEDROCK)` |
+| Google Vertex | `Auth: Google Vertex AI (CLAUDE_CODE_USE_VERTEX)` |
+| Azure Foundry | `Auth: Azure Foundry (CLAUDE_CODE_USE_FOUNDRY)` |
+| Credentials File | `Auth: Credentials file (~/.claude/.credentials.json)` |
+| Multiple | Warning listing all detected sources |
+| Unknown | Note that keychain/other methods may still work |
+
+**Limitations:**
+- macOS Keychain credentials cannot be detected
+- Credentials file format (~/.claude/.credentials.json) is best-effort
+- When multiple sources detected, Claude Code chooses (we don't assert priority)
+
 ---
 
 ## Workflow Phases
@@ -555,6 +575,7 @@ pytest tests/ --cov=orchestrator_auto
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
 - [ ] **Post Feedback** - User feedback at milestones/completion
+- [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
 - [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
 - [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
 - [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
@@ -590,6 +611,16 @@ pytest tests/ --cov=orchestrator_auto
 ---
 
 ## Changelog
+
+### v0.9.0 - Auth Source Detection
+
+- **Auth Source Detection** - Display detected auth method at startup (API key, OAuth, cloud providers)
+- **Multi-signal detection** - Detects env vars + credentials file (~/.claude/.credentials.json on Linux)
+- **Session tracking** - Auth source stored in database per session
+- **CLI: `status`** - Shows auth method used for session
+- **CLI: `export`** - Includes auth method in markdown export
+- **New module** - `auth.py` with `detect_auth()`, `format_auth_display()`
+- **DB schema** - Added `auth_source`, `auth_signals`, `auth_detected_at` columns
 
 ### v0.8.0 - Smart Auto-Commit
 

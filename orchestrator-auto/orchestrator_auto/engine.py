@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from .telegram import TelegramNotifier
 
 from . import db
+from .auth import detect_auth
 from .config import get_project_identity
 from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
 from .state import StateMachine, WorkflowState, TransitionEvent
@@ -108,6 +109,9 @@ class Orchestrator:
                 # Get project identity for session scoping
                 project_id, project_remote = get_project_identity()
 
+                # Detect auth source for tracking
+                auth_info = detect_auth()
+
                 # Create new session with discovery
                 self.session_id = db.create_session(
                     feature_description=feature_description,
@@ -115,6 +119,7 @@ class Orchestrator:
                     executor_model=executor_model,
                     project_id=project_id,
                     project_remote=project_remote,
+                    auth_info=auth_info.to_db_dict(),
                     db_path=db_path
                 )
                 self.state = self.state_machine.get_state(self.session_id)
@@ -152,6 +157,9 @@ class Orchestrator:
         # Get project identity for session scoping
         project_id, project_remote = get_project_identity()
 
+        # Detect auth source for tracking
+        auth_info = detect_auth()
+
         # Create session with model configuration
         self.session_id = db.create_session(
             feature_description=feature_description,
@@ -159,6 +167,7 @@ class Orchestrator:
             executor_model=self.executor_model,
             project_id=project_id,
             project_remote=project_remote,
+            auth_info=auth_info.to_db_dict(),
             db_path=self.db_path
         )
 

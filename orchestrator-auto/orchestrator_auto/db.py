@@ -118,6 +118,17 @@ def init_db(db_path: Optional[str] = None) -> None:
         except sqlite3.OperationalError:
             pass
 
+        # Add auth tracking columns if they don't exist
+        for column, col_type in [
+            ("auth_source", "TEXT"),
+            ("auth_signals", "TEXT"),
+            ("auth_detected_at", "TIMESTAMP"),
+        ]:
+            try:
+                cursor.execute(f"ALTER TABLE sessions ADD COLUMN {column} {col_type}")
+            except sqlite3.OperationalError:
+                pass  # Column already exists
+
         # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -240,6 +251,7 @@ def create_session(
     executor_model: Optional[str] = None,
     project_id: Optional[str] = None,
     project_remote: Optional[str] = None,
+    auth_info: Optional[Dict[str, Any]] = None,
     db_path: Optional[str] = None
 ) -> str:
     """
@@ -251,22 +263,30 @@ def create_session(
         executor_model: Model for executor agent
         project_id: Project identifier (repo root path)
         project_remote: Git remote URL (optional)
+        auth_info: Authentication info dict from AuthInfo.to_db_dict()
         db_path: Custom database path
     """
 
     session_id = str(uuid.uuid4())[:8]  # Short ID for CLI convenience
     now = _sqlite_timestamp()
 
+    # Extract auth fields if provided
+    auth_source = auth_info.get("auth_source") if auth_info else None
+    auth_signals = auth_info.get("auth_signals") if auth_info else None
+    auth_detected_at = auth_info.get("auth_detected_at") if auth_info else None
+
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO sessions (
                 id, feature_description, planner_model, executor_model,
-                heartbeat_at, project_id, project_remote
+                heartbeat_at, project_id, project_remote,
+                auth_source, auth_signals, auth_detected_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (session_id, feature_description, planner_model, executor_model,
-              now, project_id, project_remote))
+              now, project_id, project_remote,
+              auth_source, auth_signals, auth_detected_at))
 
     return session_id
 
