@@ -36,7 +36,32 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     // Basic system commands (note: find excluded - has destructive flags)
     simple: ['ls', 'cat', 'grep', 'head', 'tail', 'less', 'more',
       'wc', 'pwd', 'echo', 'which', 'whereis', 'man', 'tree', 'file', 'stat',
-      'du', 'df', 'whoami', 'printenv', 'env', 'type', 'command'],
+      'du', 'df', 'whoami', 'printenv', 'env', 'type', 'command',
+      // Text processing
+      'awk', 'cut', 'sort', 'uniq', 'tr', 'column', 'nl', 'tac', 'rev', 'paste', 'join',
+      // File inspection
+      'od', 'hexdump', 'hd', 'xxd', 'strings', 'diff', 'comm', 'cmp', 'patch',
+      // Checksums
+      'md5sum', 'sha1sum', 'sha256sum', 'sha512sum', 'cksum', 'sum',
+      // Data processing
+      'jq', 'yq', 'xmllint', 'xq',
+      // Path utilities
+      'dirname', 'basename', 'readlink', 'realpath', 'pathchk',
+      // Date/math
+      'date', 'cal', 'bc', 'expr', 'seq', 'factor',
+      // Decompression to stdout
+      'zcat', 'bzcat', 'xzcat', 'zless', 'bzless', 'xzless',
+      // Encoding
+      'base64', 'base32', 'uuencode', 'uudecode',
+      // Network read-only
+      'ping', 'traceroute', 'nslookup', 'dig', 'host', 'whois', 'ifconfig', 'ip',
+      // Process inspection
+      'ps', 'top', 'htop', 'pgrep', 'lsof', 'netstat', 'ss',
+      // Misc
+      'yes', 'true', 'false', 'sleep', 'watch', 'tee', 'xargs'],
+
+    // sed is only safe without -i (in-place edit)
+    sedSafe: /^sed\s+(?!.*-i)/,
 
     // find is only safe without destructive/write actions
     findSafe: /^find\s+(?!.*(-delete|-exec|-execdir|-ok|-okdir|-fprint|-fprint0|-fprintf|-fls))/,
@@ -146,6 +171,23 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
 
     // Terraform
     terraform: /^terraform\s+(show|plan|validate|output|state\s+(list|show)|providers|version|fmt\s+-check)(\s|$)/,
+
+    // Archive tools (read-only operations)
+    tar: /^tar\s+(-t|--list)/,
+    unzip: /^unzip\s+-l/,
+    zip: /^zip\s+-sf/,
+    gzip: /^(gzip\s+-[cdlt]|gunzip|gzcat)/,
+    bzip2: /^(bzip2\s+-[cdt]|bunzip2)/,
+    xz: /^(xz\s+-[cdlt]|unxz)/,
+
+    // curl (safe read operations - GET by default, or explicit -X GET)
+    curl: /^curl\s+(?!.*(-X\s+(POST|PUT|DELETE|PATCH)|--request\s+(POST|PUT|DELETE|PATCH)))/,
+
+    // wget (safe when outputting to stdout or just checking)
+    wget: /^wget\s+(--spider|-O\s+-|--output-document=-)/,
+
+    // grep variants (rg = ripgrep, ag = silver searcher)
+    grepVariants: /^(rg|ripgrep|ag|ack|ack-grep)\s/,
   };
 
   const dangerousPatterns = [
@@ -189,15 +231,95 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
   ];
 
   const isReadOnly = (cmd) => {
-    const firstWord = cmd.trim().split(/\s+/)[0];
+    const trimmed = cmd.trim();
+    const firstWord = trimmed.split(/\s+/)[0];
     if (readOnlyPatterns.simple.includes(firstWord)) return true;
 
     for (const [key, pattern] of Object.entries(readOnlyPatterns)) {
       if (key === 'simple') continue;
-      if (pattern.test(cmd)) return true;
+      if (pattern.test(trimmed)) return true;
     }
 
     return false;
+  };
+
+  // Parse command into pipeline segments, respecting quotes
+  const parsePipeline = (cmd) => {
+    const segments = [];
+    let current = '';
+    let inQuote = null;
+    let escaped = false;
+
+    for (let i = 0; i < cmd.length; i++) {
+      const char = cmd[i];
+
+      if (escaped) {
+        current += char;
+        escaped = false;
+        continue;
+      }
+
+      if (char === '\\') {
+        escaped = true;
+        current += char;
+        continue;
+      }
+
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = char;
+        current += char;
+        continue;
+      }
+
+      if (char === inQuote) {
+        inQuote = null;
+        current += char;
+        continue;
+      }
+
+      if (char === '|' && !inQuote) {
+        // Check if it's || (OR operator) - this needs special handling
+        if (cmd[i + 1] === '|') {
+          current += '||';
+          i++; // skip next |
+          continue;
+        }
+        // It's a pipe - save current segment
+        if (current.trim()) {
+          segments.push(current.trim());
+        }
+        current = '';
+        continue;
+      }
+
+      current += char;
+    }
+
+    // Add final segment
+    if (current.trim()) {
+      segments.push(current.trim());
+    }
+
+    return segments;
+  };
+
+  // Check if all commands in a pipeline are read-only
+  const isPipelineReadOnly = (cmd) => {
+    const segments = parsePipeline(cmd);
+
+    // If no pipe found, return null (let normal checks handle it)
+    if (segments.length <= 1) {
+      return null;
+    }
+
+    // Check each segment
+    for (const segment of segments) {
+      if (!isReadOnly(segment)) {
+        return false;
+      }
+    }
+
+    return true;
   };
 
   const isDangerous = (cmd) => {
@@ -394,12 +516,27 @@ Respond ONLY with JSON (no markdown):
         return { status: "ask" };
       }
 
-      // Check for shell operators (pipes, redirects, subshells) - always ask
-      // Cannot safely auto-approve because right side of operator may be destructive
-      // e.g., "ls && rm -rf ." or "cat file | sh"
+      // Check for shell operators (pipes, redirects, subshells)
       if (hasShellOperators(command)) {
+        // Special case: if it's ONLY a pipe (|) and all pipeline segments are read-only, auto-approve
+        const hasPipe = /\|(?!\|)/.test(command); // single pipe, not ||
+        const hasOtherOperators = /(\|\||&&|>>?|\$\(|`[^`]+`|;\s*\S)/.test(command);
+
+        if (hasPipe && !hasOtherOperators) {
+          const pipelineCheck = isPipelineReadOnly(command);
+          if (pipelineCheck === true) {
+            console.log(`✅ Auto-approved (read-only pipeline): ${redacted}`);
+            return { status: "allow" };
+          } else if (pipelineCheck === false) {
+            console.log(`⚠️ Asking (pipeline contains non-read-only command): ${redacted}`);
+            console.log(`   Reason: One or more commands in the pipeline may modify state`);
+            return { status: "ask" };
+          }
+        }
+
+        // Other operators (||, &&, >, $(), etc.) or mixed operators - always ask
         console.log(`⚠️ Asking (shell operators detected): ${redacted}`);
-        console.log(`   Reason: Command contains pipes, redirects, or subshells - requires review`);
+        console.log(`   Reason: Command contains redirects, subshells, or control operators - requires review`);
         return { status: "ask" };
       }
 
