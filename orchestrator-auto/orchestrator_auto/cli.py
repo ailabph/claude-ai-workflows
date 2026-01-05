@@ -2003,5 +2003,231 @@ def chat(model: str, system_prompt: Optional[str], no_tools: bool, show_activity
     session.start()
 
 
+@cli.command()
+@click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
+def check(verbose: bool):
+    """Run health checks on dependencies, permissions, and authentication."""
+    import importlib
+    import tempfile
+    import os
+
+    click.echo()
+    click.secho("=" * 60, bold=True)
+    click.secho("  ORCHESTRATOR HEALTH CHECK", bold=True)
+    click.secho("=" * 60, bold=True)
+    click.echo()
+
+    all_passed = True
+
+    # -------------------------------------------------------------------------
+    # 1. Dependencies Check
+    # -------------------------------------------------------------------------
+    click.secho("1. Dependencies", bold=True)
+
+    required_deps = [
+        ("claude_agent_sdk", "claude-agent-sdk", True),
+        ("click", "click", True),
+        ("prompt_toolkit", "prompt_toolkit", True),
+        ("yaml", "pyyaml", True),
+    ]
+    optional_deps = [
+        ("httpx", "httpx", False),  # For Telegram
+    ]
+
+    for module_name, package_name, required in required_deps + optional_deps:
+        try:
+            importlib.import_module(module_name)
+            click.echo(f"   {click.style('✓', fg='green')} {package_name}")
+        except ImportError:
+            if required:
+                click.echo(f"   {click.style('✗', fg='red')} {package_name} (MISSING - required)")
+                all_passed = False
+            else:
+                click.echo(f"   {click.style('○', fg='yellow')} {package_name} (optional, not installed)")
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
+    # 2. Permissions Check
+    # -------------------------------------------------------------------------
+    click.secho("2. Permissions", bold=True)
+
+    # Check database directory
+    db_dir = db.DEFAULT_DB_DIR
+    try:
+        db_dir.mkdir(parents=True, exist_ok=True)
+        # Test write permission
+        test_file = db_dir / ".write_test"
+        test_file.write_text("test")
+        test_file.unlink()
+        click.echo(f"   {click.style('✓', fg='green')} Database directory: {db_dir}")
+        if verbose:
+            click.echo(f"      Writable: Yes")
+    except (PermissionError, OSError) as e:
+        click.echo(f"   {click.style('✗', fg='red')} Database directory: {db_dir}")
+        click.echo(f"      Error: {e}")
+        all_passed = False
+
+    # Check if database exists and is accessible
+    db_path = db.DEFAULT_DB_PATH
+    if db_path.exists():
+        try:
+            with db.get_connection() as conn:
+                conn.execute("SELECT 1")
+            click.echo(f"   {click.style('✓', fg='green')} Database file: {db_path}")
+            if verbose:
+                # Count sessions
+                with db.get_connection() as conn:
+                    cursor = conn.execute("SELECT COUNT(*) FROM sessions")
+                    count = cursor.fetchone()[0]
+                click.echo(f"      Sessions: {count}")
+        except Exception as e:
+            click.echo(f"   {click.style('✗', fg='red')} Database file: {db_path}")
+            click.echo(f"      Error: {e}")
+            all_passed = False
+    else:
+        click.echo(f"   {click.style('○', fg='yellow')} Database file: Not created yet (will be created on first use)")
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
+    # 3. Authentication Check
+    # -------------------------------------------------------------------------
+    click.secho("3. Authentication", bold=True)
+
+    auth_info = detect_auth()
+
+    if not auth_info.is_configured:
+        click.echo(f"   {click.style('✗', fg='red')} No authentication detected")
+        click.echo(f"      Set ANTHROPIC_API_KEY or run 'claude setup-token'")
+        click.echo(f"      Note: macOS Keychain credentials cannot be detected")
+        all_passed = False
+    else:
+        # Show detected sources
+        for signal in auth_info.signals:
+            source_name = signal.source.value.replace("_", " ").title()
+            if signal.env_var:
+                hint = f" ({signal.key_hint})" if signal.key_hint else ""
+                click.echo(f"   {click.style('✓', fg='green')} {signal.env_var}{hint}")
+            elif signal.file_path:
+                click.echo(f"   {click.style('✓', fg='green')} Credentials file: {signal.file_path}")
+
+        if auth_info.has_multiple:
+            click.secho(f"   ⚠ Multiple sources detected - Claude Code will choose one", fg="yellow")
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
+    # 4. API Connection Test
+    # -------------------------------------------------------------------------
+    click.secho("4. API Connection", bold=True)
+
+    if not auth_info.is_configured:
+        click.echo(f"   {click.style('○', fg='yellow')} Skipped (no auth configured)")
+    else:
+        # Check if using OAuth token (requires Claude Agent SDK) vs API key (anthropic SDK)
+        from .auth import AuthSource
+        uses_oauth = any(
+            s.source == AuthSource.OAUTH_TOKEN or s.source == AuthSource.CREDENTIALS_FILE
+            for s in auth_info.signals
+        )
+        uses_api_key = any(s.source == AuthSource.API_KEY for s in auth_info.signals)
+
+        if uses_oauth and not uses_api_key:
+            # OAuth token - use Claude Agent SDK for testing
+            click.echo(f"   Testing connection via Claude Agent SDK...")
+            try:
+                import asyncio
+                from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+
+                async def test_oauth_connection():
+                    options = ClaudeAgentOptions(
+                        model="claude-haiku-3-5-20241022",
+                    )
+                    async with ClaudeSDKClient(options) as client:
+                        await client.query("Say 'ok'")
+                        async for message in client.receive_messages():
+                            if hasattr(message, 'content'):
+                                return message.content
+                        return None
+
+                result = asyncio.run(test_oauth_connection())
+                if result:
+                    click.echo(f"   {click.style('✓', fg='green')} Connection successful (OAuth)")
+                    if verbose:
+                        click.echo(f"      Auth: Claude Code OAuth token")
+                else:
+                    click.echo(f"   {click.style('✗', fg='red')} Connection failed: No response")
+                    all_passed = False
+
+            except Exception as e:
+                error_msg = str(e)
+                if "401" in error_msg or "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
+                    click.echo(f"   {click.style('✗', fg='red')} Authentication failed")
+                    click.echo(f"      Error: OAuth token invalid or expired")
+                    click.echo(f"      Try: claude setup-token")
+                else:
+                    click.echo(f"   {click.style('✗', fg='red')} Connection test failed")
+                    click.echo(f"      Error: {e}")
+                if verbose:
+                    click.echo(f"      Details: {e}")
+                all_passed = False
+        else:
+            # API key - use anthropic SDK directly
+            click.echo(f"   Testing connection via Anthropic SDK...")
+            try:
+                import anthropic
+
+                # Create client and make a minimal request
+                client = anthropic.Anthropic()
+                response = client.messages.create(
+                    model="claude-haiku-3-5-20241022",
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": "Say 'ok'"}],
+                )
+
+                # Check response
+                if response.content and len(response.content) > 0:
+                    click.echo(f"   {click.style('✓', fg='green')} Connection successful")
+                    if verbose:
+                        click.echo(f"      Model: claude-haiku-3-5-20241022")
+                        click.echo(f"      Response: {response.content[0].text.strip()}")
+                else:
+                    click.echo(f"   {click.style('✗', fg='red')} Connection failed: Empty response")
+                    all_passed = False
+
+            except anthropic.AuthenticationError as e:
+                click.echo(f"   {click.style('✗', fg='red')} Authentication failed")
+                click.echo(f"      Error: Invalid API key or unauthorized")
+                if verbose:
+                    click.echo(f"      Details: {e}")
+                all_passed = False
+            except anthropic.APIConnectionError as e:
+                click.echo(f"   {click.style('✗', fg='red')} Connection failed")
+                click.echo(f"      Error: Could not reach Anthropic API")
+                if verbose:
+                    click.echo(f"      Details: {e}")
+                all_passed = False
+            except Exception as e:
+                click.echo(f"   {click.style('✗', fg='red')} Connection test failed")
+                click.echo(f"      Error: {e}")
+                all_passed = False
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
+    # Summary
+    # -------------------------------------------------------------------------
+    click.secho("=" * 60, bold=True)
+    if all_passed:
+        click.secho("  ✓ All checks passed", fg="green", bold=True)
+    else:
+        click.secho("  ✗ Some checks failed", fg="red", bold=True)
+    click.secho("=" * 60, bold=True)
+    click.echo()
+
+    sys.exit(0 if all_passed else 1)
+
+
 if __name__ == '__main__':
     cli()

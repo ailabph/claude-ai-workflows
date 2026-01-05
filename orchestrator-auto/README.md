@@ -70,6 +70,10 @@ orchestrator respond <session-id> "Your answer here"
 
 # Export session to markdown
 orchestrator export <session-id> -o report.md
+
+# Health check (dependencies, permissions, auth, API connection)
+orchestrator check
+orchestrator check -v  # verbose output
 ```
 
 ---
@@ -202,6 +206,44 @@ orchestrator status <session-id>
 
 ```bash
 orchestrator export <session-id> [-o output.md]
+```
+
+### `check` - Health check
+
+```bash
+orchestrator check [-v]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-v, --verbose` | Show detailed output (session count, response text) |
+
+Runs health checks on:
+1. **Dependencies** - Required packages (claude-agent-sdk, click, prompt_toolkit, pyyaml) and optional (httpx)
+2. **Permissions** - Database directory writable, database file accessible
+3. **Authentication** - Detected auth source (API key, OAuth token, cloud providers, credentials file)
+4. **API Connection** - Tests connection with a minimal request:
+   - **OAuth tokens** (`CLAUDE_CODE_OAUTH_TOKEN`) - Tests via Claude Agent SDK
+   - **API keys** (`ANTHROPIC_API_KEY`) - Tests via Anthropic SDK
+
+Exit code: 0 if all checks pass, 1 if any fail.
+
+**Example output:**
+```
+1. Dependencies
+   ✓ claude-agent-sdk
+   ✓ click
+   ...
+
+2. Permissions
+   ✓ Database directory: ~/.claude_orchestrator
+
+3. Authentication
+   ✓ CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat01...)
+
+4. API Connection
+   Testing connection via Claude Agent SDK...
+   ✓ Connection successful (OAuth)
 ```
 
 ### `telegram test` - Test Telegram configuration
@@ -612,11 +654,13 @@ pytest tests/ --cov=orchestrator_auto
 
 ## Changelog
 
-### v0.9.0 - Auth Source Detection
+### v0.9.0 - Auth Source Detection & Health Check
 
 - **Auth Source Detection** - Display detected auth method at startup (API key, OAuth, cloud providers)
 - **Multi-signal detection** - Detects env vars + credentials file (~/.claude/.credentials.json on Linux)
 - **Session tracking** - Auth source stored in database per session
+- **CLI: `check`** - Health check command for dependencies, permissions, auth, and API connection
+- **CLI: `check` OAuth support** - Tests OAuth tokens via Claude Agent SDK, API keys via Anthropic SDK
 - **CLI: `status`** - Shows auth method used for session
 - **CLI: `export`** - Includes auth method in markdown export
 - **New module** - `auth.py` with `detect_auth()`, `format_auth_display()`
