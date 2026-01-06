@@ -243,8 +243,9 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     return false;
   };
 
-  // Parse command into pipeline segments, respecting quotes
-  const parsePipeline = (cmd) => {
+  // Parse command into segments, respecting quotes
+  // Splits on pipes (|), AND chains (&&), and OR chains (||)
+  const parseCommandChain = (cmd) => {
     const segments = [];
     let current = '';
     let inQuote = null;
@@ -277,14 +278,28 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
         continue;
       }
 
-      if (char === '|' && !inQuote) {
-        // Check if it's || (OR operator) - this needs special handling
-        if (cmd[i + 1] === '|') {
-          current += '||';
-          i++; // skip next |
-          continue;
+      // Check for && (AND operator)
+      if (char === '&' && cmd[i + 1] === '&' && !inQuote) {
+        if (current.trim()) {
+          segments.push(current.trim());
         }
-        // It's a pipe - save current segment
+        current = '';
+        i++; // skip next &
+        continue;
+      }
+
+      // Check for || (OR operator)
+      if (char === '|' && cmd[i + 1] === '|' && !inQuote) {
+        if (current.trim()) {
+          segments.push(current.trim());
+        }
+        current = '';
+        i++; // skip next |
+        continue;
+      }
+
+      // Check for single | (pipe)
+      if (char === '|' && !inQuote) {
         if (current.trim()) {
           segments.push(current.trim());
         }
@@ -303,11 +318,11 @@ export const SmartReadOnlyAnalyzer = async ({ client }) => {
     return segments;
   };
 
-  // Check if all commands in a pipeline are read-only
-  const isPipelineReadOnly = (cmd) => {
-    const segments = parsePipeline(cmd);
+  // Check if all commands in a chain (pipes, &&, ||) are read-only
+  const isCommandChainReadOnly = (cmd) => {
+    const segments = parseCommandChain(cmd);
 
-    // If no pipe found, return null (let normal checks handle it)
+    // If no chain operators found, return null (let normal checks handle it)
     if (segments.length <= 1) {
       return null;
     }
@@ -518,25 +533,28 @@ Respond ONLY with JSON (no markdown):
 
       // Check for shell operators (pipes, redirects, subshells)
       if (hasShellOperators(command)) {
-        // Special case: if it's ONLY a pipe (|) and all pipeline segments are read-only, auto-approve
-        const hasPipe = /\|(?!\|)/.test(command); // single pipe, not ||
-        const hasOtherOperators = /(\|\||&&|>>?|\$\(|`[^`]+`|;\s*\S)/.test(command);
+        // Check for operators that can be safely analyzed vs those that always need review
+        const hasPipe = /\|(?!\|)/.test(command);       // single pipe |
+        const hasAndChain = /&&/.test(command);         // && operator
+        const hasOrChain = /\|\|/.test(command);        // || operator
+        const hasDangerousOperators = /(>>?|\$\(|`[^`]+`|;\s*\S)/.test(command); // redirects, subshells, semicolons
 
-        if (hasPipe && !hasOtherOperators) {
-          const pipelineCheck = isPipelineReadOnly(command);
-          if (pipelineCheck === true) {
-            console.log(`✅ Auto-approved (read-only pipeline): ${redacted}`);
+        // If command only uses safe chainable operators (|, &&, ||), check if all segments are read-only
+        if ((hasPipe || hasAndChain || hasOrChain) && !hasDangerousOperators) {
+          const chainCheck = isCommandChainReadOnly(command);
+          if (chainCheck === true) {
+            console.log(`✅ Auto-approved (read-only chain): ${redacted}`);
             return { status: "allow" };
-          } else if (pipelineCheck === false) {
-            console.log(`⚠️ Asking (pipeline contains non-read-only command): ${redacted}`);
-            console.log(`   Reason: One or more commands in the pipeline may modify state`);
+          } else if (chainCheck === false) {
+            console.log(`⚠️ Asking (chain contains non-read-only command): ${redacted}`);
+            console.log(`   Reason: One or more commands in the chain may modify state`);
             return { status: "ask" };
           }
         }
 
-        // Other operators (||, &&, >, $(), etc.) or mixed operators - always ask
+        // Dangerous operators (>, >>, $(), backticks, ;) - always ask
         console.log(`⚠️ Asking (shell operators detected): ${redacted}`);
-        console.log(`   Reason: Command contains redirects, subshells, or control operators - requires review`);
+        console.log(`   Reason: Command contains redirects, subshells, or semicolons - requires review`);
         return { status: "ask" };
       }
 
