@@ -2,6 +2,8 @@
 
 This directory contains Claude Code configuration files, custom hooks, and agent definitions for enhanced development workflows.
 
+**Official Documentation:** [Claude Code CLI Reference](https://docs.anthropic.com/en/docs/claude-code/cli-reference)
+
 ## Directory Structure
 
 ```
