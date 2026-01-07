@@ -65,6 +65,10 @@ orchestrator resume <session-id> --force
 # Reset an orphaned session (refresh heartbeat)
 orchestrator reset <session-id>
 
+# Force-complete a stuck session
+orchestrator complete <session-id>
+orchestrator complete <session-id> --auto-commit
+
 # Respond to a blocker
 orchestrator respond <session-id> "Your answer here"
 
@@ -202,6 +206,40 @@ orchestrator reset <session-id>
 ```
 
 Refreshes heartbeat and prepares session for force resume. Use when a session is stuck in ACTIVE status but no process is running.
+
+### `complete` - Force-complete a stuck session
+
+```bash
+orchestrator complete <session-id> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--auto-commit` | Auto-commit changes after completion |
+| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
+| `--auto-commit-model` | Model for AI commit messages |
+
+Force-completes a session that has finished all work but is stuck due to:
+- Incorrect milestone count in the system
+- Blocker that cannot be resolved normally
+- Other edge cases where manual completion is needed
+
+**What it does:**
+1. Resolves any unresolved blockers (marks them as "Force-completed by user")
+2. Sets session phase and status to COMPLETED
+3. Optionally runs auto-commit with smart commit message generation
+
+**Examples:**
+```bash
+# Simple force-complete
+orchestrator complete 7a6b014b
+
+# Force-complete and commit changes
+orchestrator complete 7a6b014b --auto-commit
+
+# Force-complete with specific commit model
+orchestrator complete 7a6b014b --auto-commit --auto-commit-model haiku
+```
 
 ### `respond` - Answer a blocker
 
@@ -701,6 +739,14 @@ pytest tests/ --cov=orchestrator_auto
 - **Fix: current_milestone falsy check** - Changed `current_milestone or 1` to explicit None check (`if current_milestone is not None`) to properly handle edge case where milestone could be 0.
 
 - **Fix: Truncated diff warning to AI** - When large diffs are truncated for AI commit message generation, the AI is now informed with a `[DIFF TRUNCATED]` marker so it doesn't make assumptions about unseen code changes.
+
+**New Features:**
+
+- **CLI: `complete`** - Force-complete stuck sessions that have finished all work but are blocked due to incorrect milestone counts or unresolvable blockers. Supports `--auto-commit` for committing changes.
+
+**UX Improvements:**
+
+- **Blocker message shows CLI command** - When a blocker occurs, the message now shows a copy-paste ready CLI command (`orchestrator respond <id> "answer"`) instead of Python code.
 
 ### v0.9.0 - Auth Source Detection & Health Check
 

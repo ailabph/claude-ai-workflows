@@ -1385,6 +1385,125 @@ def reset(session_id: str, db_path: Optional[str]):
         sys.exit(1)
 
 
+@cli.command()
+@click.argument('session_id')
+@click.option('--db-path', '-d', help='Custom database path')
+@click.option('--auto-commit', is_flag=True, help='Auto-commit changes after completion')
+@click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI-generated commit messages')
+@click.option('--auto-commit-model', help='Model for AI commit messages')
+def complete(session_id: str, db_path: Optional[str], auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str]):
+    """Force-complete a stuck session.
+
+    Use this when a session has finished all work but is stuck due to:
+    - Incorrect milestone count in the system
+    - Blocker that cannot be resolved normally
+    - Other edge cases where manual completion is needed
+
+    This command will:
+    1. Mark the session as completed
+    2. Resolve any unresolved blockers
+    3. Optionally commit changes (with --auto-commit)
+
+    Examples:
+        orchestrator complete 7a6b014b
+        orchestrator complete 7a6b014b --auto-commit
+    """
+    from .config import resolve_model, load_config
+    from . import git
+
+    try:
+        # Initialize database
+        db.init_db(db_path)
+
+        # Check if session exists
+        session = db.get_session(session_id, db_path)
+        if not session:
+            click.secho(f"✗ Session '{session_id}' not found", fg="red")
+            sys.exit(1)
+
+        # Show current state
+        click.secho(f"Force completing session: {session_id}", fg="cyan", bold=True)
+        click.echo(f"Feature: {session['feature_description']}")
+        click.echo(f"Phase: {session['phase']}")
+        click.echo(f"Progress: {session.get('current_milestone', 0)}/{session.get('total_milestones', 0)} milestones")
+        click.echo()
+
+        if session['phase'] == Phase.COMPLETED:
+            click.secho("✓ Session is already completed", fg="green")
+            sys.exit(0)
+
+        # Resolve any unresolved blockers
+        blockers = db.get_unresolved_blockers(session_id, db_path)
+        if blockers:
+            click.echo(f"Resolving {len(blockers)} unresolved blocker(s)...")
+            for blocker in blockers:
+                db.resolve_blocker(
+                    blocker["id"],
+                    "Force-completed by user via 'orchestrator complete' command",
+                    db_path
+                )
+            click.secho(f"  ✓ Resolved {len(blockers)} blocker(s)", fg="green")
+
+        # Mark session as completed
+        db.update_session(
+            session_id,
+            {
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'completed_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            },
+            db_path
+        )
+        click.secho("✓ Session marked as completed", fg="green")
+
+        # Handle auto-commit if requested
+        if auto_commit:
+            click.echo()
+            click.echo("Running auto-commit...")
+
+            # Determine smart commit settings
+            config = load_config()
+            use_smart = smart_commit
+            if use_smart is None:
+                use_smart = config.get("auto_commit", {}).get("smart", True)
+
+            # Determine commit model
+            commit_model = auto_commit_model
+            if commit_model is None:
+                commit_model = config.get("auto_commit", {}).get("model")
+            if commit_model:
+                commit_model = resolve_model(commit_model)
+
+            # Get milestone info for commit message
+            milestones = []
+            current = session.get('current_milestone', 0)
+            for i in range(1, current + 1):
+                milestones.append({"name": f"Milestone {i}", "status": "completed"})
+
+            # Run auto-commit
+            success, message, fallback_reason = git.auto_commit(
+                feature_description=session['feature_description'],
+                milestones=milestones,
+                use_smart_commit=use_smart,
+                smart_commit_model=commit_model,
+                on_status=lambda msg: click.echo(f"  {msg}"),
+            )
+
+            if success:
+                click.secho(f"  ✓ Committed: {message[:60]}...", fg="green")
+                if fallback_reason:
+                    click.echo(f"    (used fallback: {fallback_reason})")
+            else:
+                click.secho(f"  ⚠ Commit skipped: {message}", fg="yellow")
+
+        click.echo()
+        click.secho("✓ Session force-completed successfully", fg="green", bold=True)
+
+    except Exception as e:
+        click.secho(f"✗ Error: {e}", fg="red", bold=True)
+        sys.exit(1)
+
+
 @cli.command("list")
 @click.option('--status', '-s', help='Filter by status (active, paused, completed, failed)')
 @click.option('--db-path', '-d', help='Custom database path')
