@@ -1445,12 +1445,12 @@ def complete(session_id: str, db_path: Optional[str], auto_commit: bool, smart_c
             click.secho(f"  ✓ Resolved {len(blockers)} blocker(s)", fg="green")
 
         # Mark session as completed
+        # Note: sessions table uses updated_at (auto-updated), not completed_at
         db.update_session(
             session_id,
             {
                 'phase': Phase.COMPLETED,
                 'status': Status.COMPLETED,
-                'completed_at': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             },
             db_path
         )
