@@ -559,3 +559,145 @@ class TestErrorHandling:
         # Should handle error gracefully
         assert result.exit_code != 0
         assert 'Error' in result.output
+
+
+class TestCompleteCommand:
+    """Test the complete command for force-completing stuck sessions."""
+
+    def test_complete_paused_session(self, runner, temp_db):
+        """Test force-completing a paused session with blocker."""
+        # Create a session in execution phase
+        session_id = db.create_session(
+            feature_description="Test feature",
+            planner_model="opus",
+            executor_model="sonnet",
+            db_path=temp_db
+        )
+
+        # Update to execution phase with progress
+        db.update_session(
+            session_id,
+            {
+                'phase': Phase.PAUSED,
+                'status': Status.PAUSED,
+                'current_milestone': 5,
+                'total_milestones': 7,
+                'previous_phase': Phase.EXECUTION,
+            },
+            temp_db
+        )
+
+        # Create an unresolved blocker
+        blocker_id = db.create_blocker(session_id, "executor", "Stuck on milestone", temp_db)
+
+        # Run complete command
+        result = runner.invoke(cli, ['complete', session_id, '-d', temp_db])
+
+        # Verify success
+        assert result.exit_code == 0
+        assert 'Force completing session' in result.output
+        assert 'Session marked as completed' in result.output
+        assert 'Resolved 1 blocker' in result.output
+
+        # Verify session is now completed
+        session = db.get_session(session_id, temp_db)
+        assert session['phase'] == Phase.COMPLETED
+        assert session['status'] == Status.COMPLETED
+
+        # Verify blocker is resolved
+        blockers = db.get_unresolved_blockers(session_id, temp_db)
+        assert len(blockers) == 0
+
+    def test_complete_execution_session(self, runner, temp_db):
+        """Test force-completing an active execution session."""
+        # Create a session in execution phase
+        session_id = db.create_session(
+            feature_description="Test feature",
+            planner_model="opus",
+            executor_model="sonnet",
+            db_path=temp_db
+        )
+
+        db.update_session(
+            session_id,
+            {
+                'phase': Phase.EXECUTION,
+                'status': Status.ACTIVE,
+                'current_milestone': 3,
+                'total_milestones': 5,
+            },
+            temp_db
+        )
+
+        # Run complete command
+        result = runner.invoke(cli, ['complete', session_id, '-d', temp_db])
+
+        # Verify success
+        assert result.exit_code == 0
+        assert 'Session marked as completed' in result.output
+
+        # Verify session is completed
+        session = db.get_session(session_id, temp_db)
+        assert session['phase'] == Phase.COMPLETED
+
+    def test_complete_already_completed(self, runner, temp_db):
+        """Test completing an already completed session."""
+        # Create a completed session
+        session_id = db.create_session(
+            feature_description="Test feature",
+            planner_model="opus",
+            executor_model="sonnet",
+            db_path=temp_db
+        )
+
+        db.update_session(
+            session_id,
+            {'phase': Phase.COMPLETED, 'status': Status.COMPLETED},
+            temp_db
+        )
+
+        # Run complete command
+        result = runner.invoke(cli, ['complete', session_id, '-d', temp_db])
+
+        # Should exit gracefully
+        assert result.exit_code == 0
+        assert 'already completed' in result.output
+
+    def test_complete_nonexistent_session(self, runner, temp_db):
+        """Test completing a nonexistent session."""
+        result = runner.invoke(cli, ['complete', 'nonexistent123', '-d', temp_db])
+
+        assert result.exit_code != 0
+        assert 'not found' in result.output
+
+    def test_complete_multiple_blockers(self, runner, temp_db):
+        """Test force-completing a session with multiple blockers."""
+        # Create a session
+        session_id = db.create_session(
+            feature_description="Test feature",
+            planner_model="opus",
+            executor_model="sonnet",
+            db_path=temp_db
+        )
+
+        db.update_session(
+            session_id,
+            {'phase': Phase.PAUSED, 'status': Status.PAUSED},
+            temp_db
+        )
+
+        # Create multiple unresolved blockers
+        db.create_blocker(session_id, "executor", "Blocker 1", temp_db)
+        db.create_blocker(session_id, "planner", "Blocker 2", temp_db)
+        db.create_blocker(session_id, "executor", "Blocker 3", temp_db)
+
+        # Run complete command
+        result = runner.invoke(cli, ['complete', session_id, '-d', temp_db])
+
+        # Verify all blockers resolved
+        assert result.exit_code == 0
+        assert 'Resolved 3 blocker' in result.output
+
+        # Verify no unresolved blockers remain
+        blockers = db.get_unresolved_blockers(session_id, temp_db)
+        assert len(blockers) == 0
