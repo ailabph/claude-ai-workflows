@@ -5,7 +5,7 @@ Coordinates Planner and Executor agents through discovery, planning,
 and execution phases with automatic milestone approval and blocker handling.
 """
 
-from typing import Optional, Dict, Any, Callable, TYPE_CHECKING
+from typing import Optional, Dict, Any, Callable, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .telegram import TelegramNotifier
@@ -132,6 +132,10 @@ class Orchestrator:
 
         # Track current blocker
         self.current_blocker_id: Optional[int] = None
+
+        # Pending human response to inject into agent conversation on resume
+        # Format: {"agent": "planner"|"executor", "answer": str, "question": str}
+        self._pending_response: Optional[Dict[str, str]] = None
 
     def _start_with_plan(self, feature_description: str, plan_path: str) -> None:
         """
@@ -281,6 +285,10 @@ class Orchestrator:
         """
         Resume a paused session.
 
+        When resuming with an answer, the answer is stored as a pending response
+        and injected into the appropriate agent's conversation when the phase
+        continues. This ensures the agent actually receives the human's input.
+
         Args:
             answer: Optional answer to current blocker
         """
@@ -304,6 +312,14 @@ class Orchestrator:
                 db.resolve_blocker(blocker["id"], answer, self.db_path)
                 self._log_message("human", "user", answer)
 
+                # Store pending response to inject into agent conversation
+                # This ensures the agent actually receives the human's answer
+                self._pending_response = {
+                    "agent": blocker["agent"],  # "planner" or "executor"
+                    "answer": answer,
+                    "question": blocker["question"],
+                }
+
                 # Resume to previous phase
                 success, self.state, error = self.state_machine.transition(
                     self.session_id,
@@ -320,6 +336,59 @@ class Orchestrator:
     def respond(self, answer: str) -> None:
         """Respond to a blocker. Alias for resume()."""
         self.resume(answer)
+
+    def _inject_pending_response(self, target_agent: str) -> Optional[str]:
+        """
+        Inject pending human response into the appropriate agent's conversation.
+
+        This method checks if there's a pending response from a human (after
+        resolving a blocker) and sends it to the agent that raised the blocker.
+        This ensures continuity - the agent actually receives the human's answer.
+
+        Args:
+            target_agent: The agent type being used ("planner" or "executor")
+
+        Returns:
+            The agent's response to the injected message, or None if no pending response
+        """
+        if not self._pending_response:
+            return None
+
+        # Only inject if this is the agent that raised the blocker
+        if self._pending_response["agent"] != target_agent:
+            return None
+
+        answer = self._pending_response["answer"]
+        question = self._pending_response["question"]
+
+        # Clear pending response before sending (prevent re-injection)
+        self._pending_response = None
+
+        self._output(f"\n→ Injecting human response to {target_agent}...\n")
+
+        # Format the response with context about what was asked
+        injection_prompt = f"""Human response to your previous question:
+
+Question: {question}
+
+Answer: {answer}
+
+Please continue based on this information."""
+
+        # Get the appropriate agent and send the response
+        if target_agent == "planner":
+            agent = self._create_planner()
+        else:
+            agent = self._create_executor()
+
+        response = self._send_with_activity(
+            agent, injection_prompt, f"{target_agent.capitalize()} processing response"
+        )
+
+        # Log the response
+        self._log_message(target_agent, "assistant", response)
+
+        return response
 
     def _output(self, message: str) -> None:
         """Output a message via callback."""
@@ -627,8 +696,44 @@ The orchestrator will save the file for you.
         planner = self._create_planner()
         executor = self._create_executor()
 
-        current_milestone = self.state.current_milestone or 1
+        # FIX: Inject any pending human response before continuing
+        # This ensures the agent receives the human's answer after a blocker is resolved
+        executor_injection = self._inject_pending_response("executor")
+        planner_injection = self._inject_pending_response("planner")
+
+        # If we injected a response to executor, parse it to continue the flow
+        if executor_injection:
+            response_type, data = parse_executor_response(executor_injection)
+            if response_type == EXECUTOR_REPORT:
+                # Agent produced a report after receiving human input
+                report_content = data["content"]
+                self._output(f"\n✓ Executor produced report after human input\n")
+                validation, _ = self._route_to_planner(report_content)
+                if validation == "approved":
+                    # Milestone was approved, increment counter
+                    # FIX: Use explicit None check instead of falsy check
+                    # to avoid treating milestone 0 as None (though milestones typically start at 1)
+                    base_milestone = self.state.current_milestone if self.state.current_milestone is not None else 1
+                    current_milestone = base_milestone + 1
+                    success, self.state, error = self.state_machine.transition(
+                        self.session_id,
+                        TransitionEvent.MILESTONE_APPROVED.value,
+                        current_milestone=base_milestone
+                    )
+                elif validation == "blocked":
+                    return
+                # For "changes_requested", continue to milestone loop below
+            elif response_type == EXECUTOR_BLOCKED:
+                self._handle_blocker("executor", data["reason"])
+                return
+
+        # FIX: Use explicit None check instead of falsy check
+        current_milestone = self.state.current_milestone if self.state.current_milestone is not None else 1
         total_milestones = self.state.total_milestones
+
+        # FIX: Track retry count per milestone to prevent infinite loops
+        # when planner keeps requesting changes
+        retry_count = 0
 
         while current_milestone <= total_milestones:
             self._output(f"\n--- Milestone {current_milestone}/{total_milestones} ---\n")
@@ -661,12 +766,14 @@ The orchestrator will save the file for you.
                 self._output(f"\n✓ Executor completed milestone {current_milestone}\n")
 
                 # Route to planner for validation
-                validation = self._route_to_planner(report_content)
+                # FIX: Handle tuple return (validation_result, executor_response)
+                validation, executor_feedback_response = self._route_to_planner(report_content)
 
                 if validation == "approved":
                     # Auto-continue to next milestone
                     completed_milestone = current_milestone
                     current_milestone += 1
+                    retry_count = 0  # Reset retry count on success
                     success, self.state, error = self.state_machine.transition(
                         self.session_id,
                         TransitionEvent.MILESTONE_APPROVED.value,
@@ -685,9 +792,27 @@ The orchestrator will save the file for you.
                     )
 
                 elif validation == "changes_requested":
-                    # Executor needs to fix issues
-                    # Loop will re-execute this milestone
-                    pass
+                    # FIX: Track retry count to prevent infinite loops
+                    # After MAX_CHANGES_RETRIES, pause for human intervention
+                    retry_count += 1
+                    MAX_CHANGES_RETRIES = 3
+
+                    if retry_count >= MAX_CHANGES_RETRIES:
+                        self._output(f"\n⚠ Maximum retries ({MAX_CHANGES_RETRIES}) reached for milestone {current_milestone}\n")
+                        self._handle_blocker(
+                            "executor",
+                            f"Milestone {current_milestone} has been retried {retry_count} times without approval. "
+                            f"Please review the executor's work and provide guidance."
+                        )
+                        return
+
+                    # FIX: Parse executor's response to feedback instead of re-sending milestone prompt
+                    # The executor already received feedback and responded - use that response
+                    if executor_feedback_response:
+                        executor_response = executor_feedback_response
+                        # Continue the loop - we already have the executor's new response
+                        # Parse it and continue without sending another milestone prompt
+                        continue
 
                 elif validation == "blocked":
                     # Paused for human input
@@ -707,8 +832,14 @@ The orchestrator will save the file for you.
                 return
 
             else:
+                # FIX: Improved error message for unrecognized executor response
+                # Provides clearer guidance on what tags are expected
                 self._output("\n⚠ Executor response not recognized. Pausing.\n")
-                self._handle_blocker("executor", "Unexpected response format")
+                self._handle_blocker(
+                    "executor",
+                    f"Executor response did not contain expected tags ([PROGRESS_REPORT], "
+                    f"[CLARIFICATION_NEEDED], or [BLOCKED]). Please review and provide guidance."
+                )
                 return
 
         # All milestones complete
@@ -728,7 +859,7 @@ The orchestrator will save the file for you.
             total_milestones=total_milestones,
         )
 
-    def _route_to_planner(self, report: str) -> str:
+    def _route_to_planner(self, report: str) -> Tuple[str, Optional[str]]:
         """
         Route progress report to planner for validation.
 
@@ -736,7 +867,9 @@ The orchestrator will save the file for you.
             report: Executor's progress report
 
         Returns:
-            "approved", "changes_requested", or "blocked"
+            Tuple of (validation_result, executor_response):
+            - validation_result: "approved", "changes_requested", or "blocked"
+            - executor_response: Executor's response to feedback (for changes_requested), None otherwise
         """
         planner = self._create_planner()
 
@@ -764,7 +897,7 @@ The orchestrator will save the file for you.
         if response_type == PLANNER_APPROVED:
             milestone_num = data.get("milestone", self.state.current_milestone)
             self._output(f"\n✓ Planner approved Milestone {milestone_num}\n")
-            return "approved"
+            return ("approved", None)
 
         elif response_type == PLANNER_CHANGES_REQUESTED:
             issues = data.get("issues", [])
@@ -772,29 +905,43 @@ The orchestrator will save the file for you.
             for issue in issues:
                 self._output(f"  - {issue}\n")
 
-            # Send feedback to executor
+            # Send feedback to executor and capture response
+            # FIX: Return executor's response so main loop can parse it
+            # instead of re-sending the milestone prompt (which caused duplicates)
             feedback = CHANGES_REQUESTED_TEMPLATE.format(
                 milestone_number=self.state.current_milestone,
                 issues="\n".join([f"- {issue}" for issue in issues])
             )
-            self._route_to_executor(feedback)
-            return "changes_requested"
+            executor_response = self._route_to_executor(feedback)
+            return ("changes_requested", executor_response)
 
         elif response_type == PLANNER_BLOCKED:
             question = data.get("question", "Unknown question")
             self._handle_blocker("planner", question)
-            return "blocked"
+            return ("blocked", None)
 
         else:
-            self._output("\n⚠ Planner response not recognized\n")
-            return "blocked"
+            # FIX: Create actual blocker when planner response is not recognized
+            # Previously this returned "blocked" without creating a blocker record,
+            # leaving the session in an inconsistent state (trying to resume with no blocker)
+            self._output("\n⚠ Planner response not recognized. Creating blocker for review.\n")
+            self._handle_blocker(
+                "planner",
+                f"Planner response did not contain expected tags ([MILESTONE_APPROVED], "
+                f"[CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED]). Please review the response "
+                f"and provide guidance on how to proceed."
+            )
+            return ("blocked", None)
 
-    def _route_to_executor(self, feedback: str) -> None:
+    def _route_to_executor(self, feedback: str) -> str:
         """
         Route feedback to executor.
 
         Args:
             feedback: Planner's feedback or instructions
+
+        Returns:
+            Executor's response (for parsing in the main loop)
         """
         executor = self._create_executor()
 
@@ -804,6 +951,8 @@ The orchestrator will save the file for you.
         self._log_message("executor", "assistant", response)
 
         self._output(f"\n→ Executor response: {response[:200]}...\n")
+
+        return response
 
     def _handle_blocker(self, agent: str, question: str) -> None:
         """

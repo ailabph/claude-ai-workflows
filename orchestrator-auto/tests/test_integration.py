@@ -167,9 +167,10 @@ Summary: The plan is ready for execution.
         )
         orch.state = orch.state_machine.get_state(orch.session_id)
 
-        # Execute routing methods directly - now returns string
+        # Execute routing methods directly
+        # FIX: _route_to_planner now returns tuple (validation, executor_response)
         report = mock_executor.send_message("Execute milestone")
-        result = orch._route_to_planner(report)
+        result, executor_response = orch._route_to_planner(report)
 
         # Verify milestone approved
         assert result == "approved"

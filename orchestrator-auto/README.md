@@ -680,7 +680,27 @@ pytest tests/ --cov=orchestrator_auto
 
 ### v0.9.1 - Bug Fixes
 
+**Critical Fixes:**
+
+- **Fix: Blocker response not sent to agent** - When humans responded to blockers, the answer was logged but never actually sent to the agent that raised the blocker. Added `_inject_pending_response()` method that delivers human responses to the appropriate agent's conversation on resume, ensuring continuity.
+
 - **Fix: BLOCKED tag parser too strict** - The `[BLOCKED]` response parser required exact text `Cannot proceed:` after the tag, causing valid blocker responses like `[BLOCKED] Cannot execute tests...` to be parsed as "Unexpected response format". Parser now accepts any text after `[BLOCKED]`.
+
+- **Fix: MILESTONE_APPROVED parser too strict** - The `[MILESTONE_APPROVED]` parser required "Milestone N approved" text. Now accepts the tag alone and extracts milestone number if present in the response.
+
+- **Fix: Unrecognized response creates proper blocker** - When planner/executor responses didn't match expected tags, the code returned "blocked" without creating a blocker record, leaving sessions in an inconsistent state. Now creates proper blocker with descriptive message.
+
+**Medium Fixes:**
+
+- **Fix: Infinite loop prevention in changes_requested** - Added retry counter (max 3 attempts) for milestone changes. After max retries, pauses for human intervention instead of looping indefinitely. Also fixed `_route_to_planner` to return executor's response to feedback, avoiding duplicate milestone prompts.
+
+**Minor Fixes:**
+
+- **Fix: Event loop conflicts in agents** - Removed global event loop setting (`asyncio.set_event_loop()`) that caused conflicts when planner and executor agents were both active. Each agent now manages its own event loop without global side effects.
+
+- **Fix: current_milestone falsy check** - Changed `current_milestone or 1` to explicit None check (`if current_milestone is not None`) to properly handle edge case where milestone could be 0.
+
+- **Fix: Truncated diff warning to AI** - When large diffs are truncated for AI commit message generation, the AI is now informed with a `[DIFF TRUNCATED]` marker so it doesn't make assumptions about unseen code changes.
 
 ### v0.9.0 - Auth Source Detection & Health Check
 

@@ -27,7 +27,8 @@ def parse_planner_response(content: str) -> Tuple[str, Dict[str, Any]]:
     Parse planner response for structured tags.
 
     Detects and extracts:
-    - [MILESTONE_APPROVED] → ("approved", {"milestone": N})
+    - [MILESTONE_APPROVED] → ("approved", {"milestone": N or None})
+      Note: milestone number is optional, extracted if present in text
     - [CHANGES_REQUESTED] → ("changes_requested", {"issues": [...]})
     - [HUMAN_INPUT_NEEDED] → ("blocked", {"question": "..."})
     - [PLAN_READY] → ("plan_ready", {"path": "...", "milestones": N})
@@ -39,10 +40,18 @@ def parse_planner_response(content: str) -> Tuple[str, Dict[str, Any]]:
         Tuple of (response_type, extracted_data)
     """
     # Check for MILESTONE_APPROVED
-    milestone_approved_pattern = r'\[MILESTONE_APPROVED\].*?Milestone\s+(\d+)\s+approved'
-    match = re.search(milestone_approved_pattern, content, re.IGNORECASE | re.DOTALL)
-    if match:
-        milestone_num = int(match.group(1))
+    # FIX: Made pattern more flexible - accepts [MILESTONE_APPROVED] with optional milestone number
+    # Patterns matched:
+    #   [MILESTONE_APPROVED] Milestone 1 approved  -> milestone=1
+    #   [MILESTONE_APPROVED] Looks good!           -> milestone=None (from context)
+    #   [MILESTONE_APPROVED]                       -> milestone=None (from context)
+    if re.search(r'\[MILESTONE_APPROVED\]', content, re.IGNORECASE):
+        # Try to extract milestone number if present
+        milestone_num = None
+        milestone_pattern = r'[Mm]ilestone\s+(\d+)'
+        milestone_match = re.search(milestone_pattern, content)
+        if milestone_match:
+            milestone_num = int(milestone_match.group(1))
         return PLANNER_APPROVED, {"milestone": milestone_num}
 
     # Check for CHANGES_REQUESTED

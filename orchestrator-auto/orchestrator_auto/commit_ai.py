@@ -87,12 +87,21 @@ FORBIDDEN_PATTERNS = [
 
 def _build_prompt(diff: str, stats: Dict[str, int], feature_hint: str) -> str:
     """Build the user prompt for commit message generation."""
+    # FIX: Inform AI when diff is truncated so it doesn't make assumptions
+    # about unseen code changes
+    DIFF_LIMIT = 6000
+    truncated = len(diff) > DIFF_LIMIT
+    diff_content = diff[:DIFF_LIMIT]
+
+    if truncated:
+        diff_content += f"\n\n[DIFF TRUNCATED - original was {len(diff)} chars, showing first {DIFF_LIMIT}]"
+
     return USER_PROMPT_TEMPLATE.format(
         feature_hint=feature_hint or "Code changes",
         files_changed=stats.get("files_changed", 0),
         insertions=stats.get("insertions", 0),
         deletions=stats.get("deletions", 0),
-        diff=diff[:6000],  # Truncate diff for prompt (leave room for rest)
+        diff=diff_content,
     )
 
 

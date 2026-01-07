@@ -287,7 +287,8 @@ class TestOrchestratorExecution:
         orch.state = orch.state_machine.get_state(orch.session_id)
 
         # Test route_to_planner with changes requested
-        result = orch._route_to_planner("Test report")
+        # FIX: _route_to_planner now returns tuple (validation, executor_response)
+        result, executor_response = orch._route_to_planner("Test report")
         assert result == "changes_requested"
 
         # Verify planner was called
@@ -384,7 +385,8 @@ class TestOrchestratorMessageRouting:
         orch.state = orch.state_machine.get_state(orch.session_id)
 
         # Route report
-        result = orch._route_to_planner("Test report")
+        # FIX: _route_to_planner now returns tuple (validation, executor_response)
+        result, executor_response = orch._route_to_planner("Test report")
 
         assert result == "approved"
         assert mock_planner.send_message.called

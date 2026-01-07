@@ -69,10 +69,16 @@ class BaseAgent:
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """Get or create a persistent event loop for this agent."""
+        """
+        Get or create a persistent event loop for this agent.
+
+        FIX: Don't set as global event loop to avoid conflicts when multiple
+        agents are active (planner + executor). Each agent manages its own loop.
+        """
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
+            # FIX: Removed asyncio.set_event_loop(self._loop) to prevent
+            # global event loop conflicts between planner and executor agents
         return self._loop
 
     def _get_options(self) -> ClaudeAgentOptions:
