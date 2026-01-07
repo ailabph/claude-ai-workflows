@@ -191,7 +191,8 @@ def parse_executor_response(content: str) -> Tuple[str, Dict[str, Any]]:
         return EXECUTOR_CLARIFICATION, {"question": question}
 
     # Check for BLOCKED
-    blocked_pattern = r'\[BLOCKED\]\s*Cannot proceed:\s*(.+?)(?:\[|$)'
+    # Pattern is flexible: matches "[BLOCKED] reason" or "[BLOCKED] Cannot proceed: reason"
+    blocked_pattern = r'\[BLOCKED\]\s*(?:Cannot proceed:\s*)?(.+?)(?:\[|$)'
     match = re.search(blocked_pattern, content, re.IGNORECASE | re.DOTALL)
     if match:
         reason = match.group(1).strip()

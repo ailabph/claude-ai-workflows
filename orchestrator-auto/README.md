@@ -678,6 +678,10 @@ pytest tests/ --cov=orchestrator_auto
 
 ## Changelog
 
+### v0.9.1 - Bug Fixes
+
+- **Fix: BLOCKED tag parser too strict** - The `[BLOCKED]` response parser required exact text `Cannot proceed:` after the tag, causing valid blocker responses like `[BLOCKED] Cannot execute tests...` to be parsed as "Unexpected response format". Parser now accepts any text after `[BLOCKED]`.
+
 ### v0.9.0 - Auth Source Detection & Health Check
 
 - **Auth Source Detection** - Display detected auth method at startup (API key, OAuth, cloud providers)
