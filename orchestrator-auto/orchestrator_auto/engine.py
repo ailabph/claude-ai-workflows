@@ -964,7 +964,10 @@ The orchestrator will save the file for you.
         """
         self._output(f"\n⏸ Workflow paused - {agent} needs input:\n")
         self._output(f"  {question}\n")
-        self._output(f"\nUse orchestrator.respond('your answer') to continue.\n")
+        # Show CLI command with session ID for easy copy-paste
+        short_id = self.session_id[:8]
+        self._output(f"\nTo continue, run:\n")
+        self._output(f"  orchestrator respond {short_id} \"your answer here\"\n")
 
         # Create blocker record
         blocker_id = db.create_blocker(
