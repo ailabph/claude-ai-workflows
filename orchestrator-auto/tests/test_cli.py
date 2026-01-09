@@ -1038,6 +1038,7 @@ from orchestrator_auto.cli import (
     _is_watch_candidate,
     _get_pending_plans,
     _find_available_converted_path,
+    _strip_terminal_suffix,
     _rename_to_terminal,
     WatchResult,
 )
@@ -1086,6 +1087,37 @@ class TestWatchCandidateSelection:
         """'done' not at end of stem is valid."""
         assert _is_watch_candidate(Path("done-feature.md")) is True
         assert _is_watch_candidate(Path("feature-done-v2.md")) is True
+
+
+class TestStripTerminalSuffix:
+    """Tests for _strip_terminal_suffix helper."""
+
+    def test_strips_done_suffix(self):
+        """Strips _done suffix."""
+        assert _strip_terminal_suffix("feature_done") == "feature"
+
+    def test_strips_failed_suffix(self):
+        """Strips _failed suffix."""
+        assert _strip_terminal_suffix("feature_failed") == "feature"
+
+    def test_strips_paused_suffix(self):
+        """Strips _paused suffix."""
+        assert _strip_terminal_suffix("feature_paused") == "feature"
+
+    def test_leaves_plain_stem_unchanged(self):
+        """Plain stems without terminal suffix are unchanged."""
+        assert _strip_terminal_suffix("feature") == "feature"
+        assert _strip_terminal_suffix("my-feature-plan") == "my-feature-plan"
+
+    def test_only_strips_suffix_not_middle(self):
+        """Only strips suffix, not if it appears in middle of name."""
+        assert _strip_terminal_suffix("done-feature") == "done-feature"
+        assert _strip_terminal_suffix("feature-done-v2") == "feature-done-v2"
+
+    def test_handles_multiple_terminal_suffixes(self):
+        """Only strips the outermost terminal suffix."""
+        # If somehow feature_done_paused exists, strip _paused
+        assert _strip_terminal_suffix("feature_done_paused") == "feature_done"
 
 
 class TestGetPendingPlans:
@@ -1449,10 +1481,11 @@ class TestPostResumeReconciliation:
         )
 
         # Now rename to done (as watch mode would do)
+        # Note: _paused suffix is REPLACED, not appended
         success, new_path = _rename_to_terminal(paused_plan, '_done', session_id, temp_db)
 
         assert success
-        assert Path(new_path).name == "feature_paused_done.md"  # Note: adds to existing stem
+        assert Path(new_path).name == "feature_done.md"  # Replaces _paused, not appends
         assert Path(new_path).exists()
         # Verify DB was updated
         session = db.get_session(session_id, temp_db)
@@ -1476,11 +1509,11 @@ class TestPostResumeReconciliation:
             temp_db
         )
 
-        # Rename to failed
+        # Rename to failed (replaces _paused suffix)
         success, new_path = _rename_to_terminal(paused_plan, '_failed', session_id, temp_db)
 
         assert success
-        assert Path(new_path).name == "feature_paused_failed.md"
+        assert Path(new_path).name == "feature_failed.md"  # Replaces _paused, not appends
         assert Path(new_path).exists()
 
     def test_session_still_active_not_renamed(self, tmp_path, temp_db):

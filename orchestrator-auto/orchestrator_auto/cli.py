@@ -2616,6 +2616,7 @@ def _get_pending_plans(plans_dir: Path) -> List[Path]:
     Get candidate plans sorted by mtime ascending, then filename ascending.
 
     This provides deterministic oldest-first processing order.
+    Handles race conditions where files may be deleted between glob() and stat().
 
     Args:
         plans_dir: Directory to scan for .md files
@@ -2624,7 +2625,20 @@ def _get_pending_plans(plans_dir: Path) -> List[Path]:
         List of Path objects sorted by (mtime, filename)
     """
     candidates = [p for p in plans_dir.glob('*.md') if _is_watch_candidate(p)]
-    return sorted(candidates, key=lambda p: (p.stat().st_mtime, p.name))
+
+    # Build list with mtime, handling race condition if file is deleted
+    sortable = []
+    for p in candidates:
+        try:
+            mtime = p.stat().st_mtime
+            sortable.append((mtime, p.name, p))
+        except FileNotFoundError:
+            # File was deleted between glob() and stat() - skip it
+            continue
+
+    # Sort by (mtime, filename) and extract just the paths
+    sortable.sort(key=lambda x: (x[0], x[1]))
+    return [item[2] for item in sortable]
 
 
 def _find_available_converted_path(original: Path) -> Path:
@@ -2652,6 +2666,19 @@ def _find_available_converted_path(original: Path) -> Path:
     raise RuntimeError(f"Too many converted files for {original.name}")
 
 
+def _strip_terminal_suffix(stem: str) -> str:
+    """
+    Strip terminal suffixes (_done, _failed, _paused) from a filename stem.
+
+    This allows renaming feature_paused -> feature_done instead of
+    feature_paused -> feature_paused_done.
+    """
+    for terminal in ('_done', '_failed', '_paused'):
+        if stem.endswith(terminal):
+            return stem[:-len(terminal)]
+    return stem
+
+
 def _rename_to_terminal(
     plan_path: Path,
     suffix: str,
@@ -2660,6 +2687,11 @@ def _rename_to_terminal(
 ) -> tuple:
     """
     Rename plan file to terminal state and update DB.
+
+    If the file already has a terminal suffix (_done, _failed, _paused),
+    it is replaced rather than appended. For example:
+    - feature.md + _done -> feature_done.md
+    - feature_paused.md + _done -> feature_done.md (replaces _paused)
 
     Args:
         plan_path: Path to the plan file
@@ -2670,8 +2702,9 @@ def _rename_to_terminal(
     Returns:
         Tuple of (success, new_path_or_error_message)
     """
-    # Build new filename: feature.md -> feature_done.md
-    new_name = f"{plan_path.stem}{suffix}{plan_path.suffix}"
+    # Strip any existing terminal suffix before adding new one
+    base_stem = _strip_terminal_suffix(plan_path.stem)
+    new_name = f"{base_stem}{suffix}{plan_path.suffix}"
     new_path = plan_path.parent / new_name
 
     try:
@@ -2768,34 +2801,34 @@ def watch(
                 if session and session.get('phase') != Phase.PAUSED:
                     # Session was resumed externally - do post-resume reconciliation
                     final_phase = session.get('phase')
+                    final_status = session.get('status')
 
-                    # Check for terminal phases only
-                    if final_phase in (Phase.COMPLETED,):
-                        if paused_plan_path and paused_plan_path.exists():
-                            success, new_path = _rename_to_terminal(
-                                paused_plan_path, '_done', paused_session_id, db_path
-                            )
-                            if success:
-                                click.secho(f"✓ Resumed session completed: {Path(new_path).name}", fg="green")
-                            else:
-                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
-
-                        # Clear from currently_processing if it was there
-                        if paused_plan_path:
-                            currently_processing.discard(paused_plan_path.name)
-
-                        # Clear pause state and continue queue
-                        paused_session_id = None
-                        paused_plan_path = None
-
-                    elif session.get('status') == Status.FAILED or final_phase == Phase.COMPLETED:
-                        # Failed or completed with failed status
+                    # Check status FIRST - failed status takes precedence over phase
+                    if final_status == Status.FAILED:
+                        # Session failed (regardless of phase)
                         if paused_plan_path and paused_plan_path.exists():
                             success, new_path = _rename_to_terminal(
                                 paused_plan_path, '_failed', paused_session_id, db_path
                             )
                             if success:
                                 click.secho(f"✗ Resumed session failed: {Path(new_path).name}", fg="red")
+                            else:
+                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
+
+                        if paused_plan_path:
+                            currently_processing.discard(paused_plan_path.name)
+
+                        paused_session_id = None
+                        paused_plan_path = None
+
+                    elif final_phase == Phase.COMPLETED:
+                        # Session completed successfully
+                        if paused_plan_path and paused_plan_path.exists():
+                            success, new_path = _rename_to_terminal(
+                                paused_plan_path, '_done', paused_session_id, db_path
+                            )
+                            if success:
+                                click.secho(f"✓ Resumed session completed: {Path(new_path).name}", fg="green")
                             else:
                                 click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
 
@@ -2905,7 +2938,7 @@ def _quarantine_and_convert(plan_path: Path, auto_convert: bool) -> Optional[Pat
     Returns:
         Path to converted file, or None if conversion failed/disabled
     """
-    from .convert import convert_plan, validate_plan_content, ConversionError
+    from .convert import convert_plan, ConversionError
 
     content = plan_path.read_text()
 
@@ -3023,7 +3056,8 @@ def _process_watch_file(
         orch = Orchestrator(
             feature_description=feature,
             db_path=db_path,
-            output_callback=output_callback if show_activity else None,
+            on_output=output_callback if show_activity else None,
+            show_activity=show_activity,
             planner_model=resolved_planner,
             executor_model=resolved_executor,
             plan_path=str(executed_path),
