@@ -466,6 +466,8 @@ orchestrator watch ./plans/ --telegram
 6. On blocker: `feature-x.md` → `feature-x_paused.md` (queue halts)
 7. After manual resume: `feature-x_paused.md` → `feature-x_done.md` or `feature-x_failed.md`
 
+**Note on restart behavior:** If the watcher is stopped while a session is paused, and you manually resume the session (`orchestrator resume <session_id>`), the `*_paused.md` file will not be automatically renamed to `*_done.md` or `*_failed.md`. The file remains as `*_paused.md` (safely ignored) and can be renamed manually if desired.
+
 ### `chat` - Direct chat with Claude
 
 ```bash

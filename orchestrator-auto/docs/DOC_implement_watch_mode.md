@@ -119,6 +119,13 @@ After **any** terminal rename (`*_done.md`, `*_failed.md`, `*_paused.md`):
 - **Fallback**: Log warning, add to in-memory `currently_processing` set
 - **Effect**: File won't be re-attempted until watcher restart
 
+### Watcher Restart While Paused
+- **Scenario**: Watcher stops while session is paused, user manually resumes session
+- **Effect**: `*_paused.md` file is NOT automatically renamed to `*_done.md` or `*_failed.md`
+- **Why**: `paused_session_id` and `paused_plan_path` are in-memory state, lost on restart
+- **Safety**: File remains as `*_paused.md` (ignored by watcher), can be renamed manually
+- **Future enhancement**: Startup reconciliation scan could detect orphaned paused files
+
 ### Converted File Collisions
 - Append counter: `_converted.md` → `_converted_2.md` → `_converted_3.md`
 - Maximum attempts: 100 (fail if all exist)
