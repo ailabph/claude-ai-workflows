@@ -2348,5 +2348,141 @@ def check(verbose: bool):
     sys.exit(0 if all_passed else 1)
 
 
+@cli.command()
+@click.argument('input_file', type=click.Path(exists=True))
+@click.option('--output', '-o', type=click.Path(), help='Output file path (default: stdout)')
+@click.option('--in-place', '-i', is_flag=True, help='Modify input file in place (creates .bak backup)')
+@click.option('--no-backup', is_flag=True, help='Skip backup creation when using --in-place')
+@click.option('--model', '-m', default='sonnet', help='Model: opus, sonnet, haiku (default: sonnet)')
+@click.option('--max-milestones', default=5, type=int, help='Maximum milestones to create (default: 5)')
+@click.option('--validate-only', is_flag=True, help='Only check if file is orchestrator-compatible')
+@click.option('--dry-run', is_flag=True, help='Preview conversion without writing')
+def convert(
+    input_file: str,
+    output: Optional[str],
+    in_place: bool,
+    no_backup: bool,
+    model: str,
+    max_milestones: int,
+    validate_only: bool,
+    dry_run: bool,
+):
+    """Convert a markdown plan to orchestrator-compatible format.
+
+    Uses AI to restructure regular markdown plans into the orchestrator format
+    with properly formatted milestone headers (### Milestone N: Name).
+
+    \b
+    Examples:
+      orchestrator convert plan.md                    # Output to stdout
+      orchestrator convert plan.md -o converted.md   # Output to file
+      orchestrator convert plan.md --in-place        # Modify in place (with backup)
+      orchestrator convert plan.md --validate-only   # Check if already valid
+      orchestrator convert plan.md --dry-run         # Preview without writing
+    """
+    from .convert import (
+        convert_plan,
+        validate_plan_content,
+        ConversionError,
+    )
+    from .config import resolve_model
+
+    input_path = Path(input_file)
+
+    # Check mutually exclusive options
+    if output and in_place:
+        raise click.UsageError("Cannot use both --output and --in-place")
+
+    # Read input file
+    try:
+        content = input_path.read_text()
+    except Exception as e:
+        click.secho(f"Error reading file: {e}", fg="red")
+        sys.exit(1)
+
+    # Pre-validate
+    is_valid, details = validate_plan_content(content)
+
+    if validate_only:
+        # Validation-only mode
+        if is_valid:
+            click.secho(f"✓ Valid orchestrator plan", fg="green")
+            click.echo(f"  Milestones: {details['milestones']}")
+            for i, name in enumerate(details['milestone_names'], 1):
+                click.echo(f"    {i}. {name}")
+            sys.exit(0)
+        else:
+            click.secho(f"✗ Not a valid orchestrator plan", fg="red")
+            click.echo(f"  Error: {details['error']}")
+            sys.exit(1)
+
+    # If already valid, inform user and skip conversion (unless output/in-place specified)
+    if is_valid and not output and not in_place and not dry_run:
+        click.secho(f"✓ File is already orchestrator-compatible", fg="green")
+        click.echo(f"  Milestones: {details['milestones']}")
+        click.echo(f"  Use --output or --in-place to force re-conversion")
+        sys.exit(0)
+
+    # Resolve model alias
+    resolved_model = resolve_model(model)
+
+    # Perform conversion
+    click.echo(f"Converting plan using {click.style(model, fg='cyan')}...")
+
+    try:
+        converted, metadata = convert_plan(
+            content=content,
+            model=resolved_model,
+            max_milestones=max_milestones,
+        )
+    except ConversionError as e:
+        click.secho(f"✗ Conversion failed: {e}", fg="red")
+        sys.exit(2)
+    except Exception as e:
+        click.secho(f"✗ Unexpected error: {e}", fg="red")
+        sys.exit(1)
+
+    # Show result info
+    click.secho(f"✓ Converted to {metadata['milestones']} milestones", fg="green")
+    if metadata.get('retry_used'):
+        click.secho("  (required retry with enhanced prompt)", fg="yellow")
+    if metadata.get('feature'):
+        click.echo(f"  Feature: {metadata['feature']}")
+    for i, name in enumerate(metadata['milestone_names'], 1):
+        click.echo(f"    {i}. {name}")
+
+    # Handle output
+    if dry_run:
+        click.echo()
+        click.secho("--- DRY RUN (preview) ---", fg="yellow", bold=True)
+        click.echo(converted)
+        click.secho("--- END PREVIEW ---", fg="yellow", bold=True)
+        sys.exit(0)
+
+    if in_place:
+        # Create backup unless disabled
+        if not no_backup:
+            backup_path = input_path.with_suffix(input_path.suffix + '.bak')
+            backup_path.write_text(content)
+            click.echo(f"  Backup: {backup_path}")
+
+        # Write to original file
+        input_path.write_text(converted)
+        click.echo(f"  Updated: {input_path}")
+
+    elif output:
+        # Write to specified output file
+        output_path = Path(output)
+        output_path.write_text(converted)
+        click.echo(f"  Saved to: {output_path}")
+
+    else:
+        # Output to stdout
+        click.echo()
+        click.echo(converted)
+
+    sys.exit(0)
+
+
 if __name__ == '__main__':
     cli()

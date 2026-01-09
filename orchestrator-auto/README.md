@@ -78,6 +78,12 @@ orchestrator export <session-id> -o report.md
 # Health check (dependencies, permissions, auth, API connection)
 orchestrator check
 orchestrator check -v  # verbose output
+
+# Convert a regular plan to orchestrator format
+orchestrator convert plan.md                    # Output to stdout
+orchestrator convert plan.md -o converted.md   # Output to file
+orchestrator convert plan.md --in-place        # Modify in place (with backup)
+orchestrator convert plan.md --validate-only   # Check if already valid
 ```
 
 ---
@@ -306,6 +312,57 @@ Exit code: 0 if all checks pass, 1 if any fail.
 4. API Connection
    Testing connection via Claude Agent SDK...
    ✓ Connection successful (OAuth)
+```
+
+### `convert` - Convert plan to orchestrator format
+
+```bash
+orchestrator convert <input.md> [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `-o, --output` | Output file path (default: stdout) |
+| `-i, --in-place` | Modify input file in place (creates .bak backup) |
+| `--no-backup` | Skip backup creation when using --in-place |
+| `-m, --model` | Model: opus, sonnet, haiku (default: sonnet) |
+| `--max-milestones` | Maximum milestones to create (default: 5) |
+| `--validate-only` | Only check if file is orchestrator-compatible |
+| `--dry-run` | Preview conversion without writing |
+
+Uses AI to convert regular markdown plans into orchestrator-compatible format with properly formatted milestone headers (`### Milestone N: Name`).
+
+**Exit codes:**
+- 0: Success (conversion completed or file already valid)
+- 1: Error (file not found, read error)
+- 2: Conversion validation failed after retry
+
+**Examples:**
+
+```bash
+# Check if a plan is already orchestrator-compatible
+orchestrator convert plan.md --validate-only
+
+# Convert and output to stdout
+orchestrator convert plan.md
+
+# Convert and save to new file
+orchestrator convert plan.md -o converted_plan.md
+
+# Convert in place (creates plan.md.bak backup)
+orchestrator convert plan.md --in-place
+
+# Convert in place without backup
+orchestrator convert plan.md --in-place --no-backup
+
+# Preview conversion without writing
+orchestrator convert plan.md --dry-run
+
+# Use a different model
+orchestrator convert plan.md -m opus
+
+# Limit to 3 milestones
+orchestrator convert plan.md --max-milestones 3
 ```
 
 ### `telegram test` - Test Telegram configuration
@@ -679,6 +736,10 @@ pytest tests/ --cov=orchestrator_auto
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
 - [ ] **Post Feedback** - User feedback at milestones/completion
+- [x] **Plan Conversion** - Convert regular markdown plans into orchestrator-compatible format (`orchestrator convert plan.md`)
+- [ ] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
+- [ ] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
+- [ ] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
 - [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
 - [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
 - [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
