@@ -706,21 +706,6 @@ class TestCompleteCommand:
 class TestStartWithPlanAutoFeature:
     """Test auto-extraction of feature from plan file."""
 
-    @pytest.fixture
-    def runner(self):
-        """Create a Click CLI runner."""
-        return CliRunner()
-
-    @pytest.fixture
-    def temp_db(self):
-        """Create a temporary database for testing."""
-        import tempfile
-        fd, path = tempfile.mkstemp(suffix=".sqlite")
-        os.close(fd)
-        db.init_db(path)
-        yield path
-        os.unlink(path)
-
     def test_start_plan_without_feature_extracts_from_h1(self, runner, temp_db, tmp_path):
         """Feature auto-extracted from plan H1 header."""
         plan_file = tmp_path / "test_plan.md"
@@ -733,6 +718,7 @@ Tasks here
         with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
             mock_instance = MagicMock()
             mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
             mock_instance.start.return_value = None
             mock_instance.get_status.return_value = {
                 'session_id': 'test123',
@@ -769,6 +755,7 @@ Tasks here
         with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
             mock_instance = MagicMock()
             mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
             mock_instance.start.return_value = None
             mock_instance.get_status.return_value = {
                 'session_id': 'test123',
@@ -798,6 +785,7 @@ Tasks here
         with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
             mock_instance = MagicMock()
             mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
             mock_instance.start.return_value = None
             mock_instance.get_status.return_value = {
                 'session_id': 'test123',
@@ -830,6 +818,7 @@ Tasks here
         with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
             mock_instance = MagicMock()
             mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
             mock_instance.start.return_value = None
             mock_instance.get_status.return_value = {
                 'session_id': 'test123',
@@ -863,6 +852,7 @@ Tasks here
         with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
             mock_instance = MagicMock()
             mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
             mock_instance.start.return_value = None
             mock_instance.get_status.return_value = {
                 'session_id': 'test123',
