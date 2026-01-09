@@ -871,3 +871,159 @@ Tasks here
         assert result.exit_code == 0
         assert 'Auto Test Feature' in result.output
         assert '(from plan)' in result.output
+
+
+class TestRenamePlanDone:
+    """Test _rename_plan_done helper function."""
+
+    def test_renames_plan_file(self, tmp_path):
+        """Plan file renamed to _done.md suffix."""
+        from orchestrator_auto.cli import _rename_plan_done
+
+        plan_file = tmp_path / "my-feature.md"
+        plan_file.write_text("# Test plan")
+
+        success, result = _rename_plan_done(str(plan_file))
+
+        assert success is True
+        assert result == str(tmp_path / "my-feature_done.md")
+        assert not plan_file.exists()
+        assert (tmp_path / "my-feature_done.md").exists()
+
+    def test_skips_already_done_suffix(self, tmp_path):
+        """Files already ending in _done are skipped."""
+        from orchestrator_auto.cli import _rename_plan_done
+
+        plan_file = tmp_path / "my-feature_done.md"
+        plan_file.write_text("# Test plan")
+
+        success, result = _rename_plan_done(str(plan_file))
+
+        assert success is True
+        assert "Already renamed" in result
+        assert plan_file.exists()
+
+    def test_skips_if_target_exists(self, tmp_path):
+        """Does not overwrite existing _done.md file."""
+        from orchestrator_auto.cli import _rename_plan_done
+
+        plan_file = tmp_path / "my-feature.md"
+        plan_file.write_text("# Test plan")
+        done_file = tmp_path / "my-feature_done.md"
+        done_file.write_text("# Existing done file")
+
+        success, result = _rename_plan_done(str(plan_file))
+
+        assert success is False
+        assert "Target already exists" in result
+        assert plan_file.exists()  # Original still exists
+        assert done_file.read_text() == "# Existing done file"  # Not overwritten
+
+    def test_handles_missing_plan_file(self, tmp_path):
+        """Gracefully handles nonexistent plan file."""
+        from orchestrator_auto.cli import _rename_plan_done
+
+        plan_file = tmp_path / "nonexistent.md"
+
+        success, result = _rename_plan_done(str(plan_file))
+
+        assert success is False
+        assert "Plan file not found" in result
+
+
+class TestPlanCompletionRename:
+    """Test plan rename on workflow completion."""
+
+    def test_renames_plan_on_completion(self, runner, temp_db, tmp_path):
+        """Plan file renamed to _done.md on successful completion."""
+        plan_file = tmp_path / "test-plan.md"
+        plan_file.write_text("""# Test Feature
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
+            mock_instance.start.return_value = None
+            mock_instance.state.phase = Phase.COMPLETED
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'Plan renamed' in result.output
+        assert not plan_file.exists()
+        assert (tmp_path / "test-plan_done.md").exists()
+
+    def test_no_rename_flag_skips_rename(self, runner, temp_db, tmp_path):
+        """--no-rename flag prevents renaming."""
+        plan_file = tmp_path / "test-plan.md"
+        plan_file.write_text("""# Test Feature
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
+            mock_instance.start.return_value = None
+            mock_instance.state.phase = Phase.COMPLETED
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '--no-rename',
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'Plan renamed' not in result.output
+        assert plan_file.exists()  # Original still exists
+        assert not (tmp_path / "test-plan_done.md").exists()
+
+    def test_no_rename_without_plan_flag(self, runner, temp_db):
+        """No rename attempted when started without --plan."""
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.session_id = "test123"
+            mock_instance.start.return_value = None
+            mock_instance.state.phase = Phase.COMPLETED
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '-f', 'Test feature',
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'Plan renamed' not in result.output

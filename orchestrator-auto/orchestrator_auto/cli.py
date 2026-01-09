@@ -184,6 +184,36 @@ def _do_smart_auto_commit(
     return success, msg
 
 
+def _rename_plan_done(plan_path: str) -> tuple:
+    """
+    Rename completed plan file to *_done.md suffix.
+
+    Args:
+        plan_path: Path to the plan file
+
+    Returns:
+        Tuple of (success, message)
+    """
+    path = Path(plan_path)
+    if not path.exists():
+        return False, f"Plan file not found: {plan_path}"
+
+    # Already has _done suffix
+    if path.stem.endswith("_done"):
+        return True, f"Already renamed: {plan_path}"
+
+    # Build new name: my-feature.md -> my-feature_done.md
+    new_name = f"{path.stem}_done{path.suffix}"
+    new_path = path.parent / new_name
+
+    # Don't overwrite existing
+    if new_path.exists():
+        return False, f"Target already exists: {new_path}"
+
+    path.rename(new_path)
+    return True, str(new_path)
+
+
 def _create_telegram_notifier(cli_enabled: Optional[bool] = None):
     """
     Create Telegram notifier from config if available.
@@ -272,6 +302,7 @@ def _handle_queue_mode(
     telegram: Optional[bool],
     smart_commit: Optional[bool] = None,
     auto_commit_model: Optional[str] = None,
+    no_rename: bool = False,
 ) -> None:
     """
     Handle --queue mode: validate, create/resume queue, run queue.
@@ -305,6 +336,7 @@ def _handle_queue_mode(
             telegram=telegram,
             smart_commit=smart_commit,
             auto_commit_model=auto_commit_model,
+            no_rename=no_rename,
         )
         return
 
@@ -352,6 +384,7 @@ def _handle_queue_mode(
                 telegram=telegram,
                 smart_commit=smart_commit,
                 auto_commit_model=auto_commit_model,
+                no_rename=no_rename,
             )
             return
         else:
@@ -422,6 +455,7 @@ def _handle_queue_mode(
         telegram=telegram,
         smart_commit=smart_commit,
         auto_commit_model=auto_commit_model,
+        no_rename=no_rename,
     )
 
 
@@ -570,6 +604,15 @@ def _reconcile_queue_head(
                         head["feature_description"]
                     )
 
+                # Rename plan file on completion
+                plan_path = head.get("plan_path")
+                if plan_path and not no_rename:
+                    success, result = _rename_plan_done(plan_path)
+                    if success:
+                        click.secho(f"  ✓ Plan renamed: {result}", fg="green")
+                    else:
+                        click.secho(f"  ⚠ Could not rename plan: {result}", fg="yellow")
+
                 continue  # Check next item
 
             if session_phase == Phase.PAUSED or session_status == Status.PAUSED:
@@ -619,6 +662,7 @@ def _run_queue(
     telegram: Optional[bool],
     smart_commit: Optional[bool] = None,
     auto_commit_model: Optional[str] = None,
+    no_rename: bool = False,
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
@@ -774,6 +818,14 @@ def _run_queue(
                     else:
                         click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
 
+                # Rename plan file on completion
+                if plan_path and not no_rename:
+                    success, result = _rename_plan_done(plan_path)
+                    if success:
+                        click.secho(f"✓ Plan renamed: {result}", fg="green")
+                    else:
+                        click.secho(f"⚠ Could not rename plan: {result}", fg="yellow")
+
             elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
                 # Mark queue item as paused - queue halts
                 db.update_queue_item(item_id, db_path, status="paused")
@@ -906,6 +958,7 @@ def cli():
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
 @click.option('--auto-commit-model', help='Model for smart commit messages (default: executor model). Aliases: opus, sonnet, haiku')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
+@click.option('--no-rename', is_flag=True, default=False, help='Do not rename plan file to *_done.md on completion')
 def start(
     feature: Optional[str],
     db_path: Optional[str],
@@ -920,6 +973,7 @@ def start(
     smart_commit: Optional[bool],
     auto_commit_model: Optional[str],
     telegram: Optional[bool],
+    no_rename: bool,
 ):
     """Start a new workflow session or queue."""
     global _current_orchestrator
@@ -959,6 +1013,7 @@ def start(
             auto_commit=auto_commit,
             telegram=telegram,
             smart_commit=smart_commit,
+            no_rename=no_rename,
         )
         return
 
@@ -1032,6 +1087,14 @@ def start(
                 click.echo(f"  {msg.split(chr(10))[0]}")  # First line of output
             else:
                 click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
+
+        # Rename plan file on completion (if imported via --plan)
+        if orch.state.phase == Phase.COMPLETED and plan and not no_rename:
+            success, result = _rename_plan_done(plan)
+            if success:
+                click.secho(f"✓ Plan renamed: {result}", fg="green")
+            else:
+                click.secho(f"⚠ Could not rename plan: {result}", fg="yellow")
 
     except KeyboardInterrupt:
         # Handled by signal handler

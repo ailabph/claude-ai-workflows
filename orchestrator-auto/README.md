@@ -13,11 +13,14 @@ orchestrator start -f "Add user authentication with JWT"
 # Start with custom models (cost savings)
 orchestrator start -f "My feature" -pm sonnet -em haiku
 
-# Start with existing plan (feature auto-extracted from plan)
+# Start with existing plan (feature auto-extracted, renamed to *_done.md on completion)
 orchestrator start --plan docs/plan.md
 
 # Start with plan and explicit feature override
 orchestrator start --plan docs/plan.md -f "My feature"
+
+# Start with plan but skip auto-rename on completion
+orchestrator start --plan docs/plan.md --no-rename
 
 # Start with auto-commit on completion
 orchestrator start -f "My feature" --auto-commit
@@ -159,6 +162,7 @@ orchestrator start -f "Feature description" [options]
 | `--auto-commit-model` | Model for AI commit messages (default: executor model) |
 | `--telegram` | Enable Telegram notifications |
 | `--no-telegram` | Disable Telegram notifications |
+| `--no-rename` | Do not rename plan file to `*_done.md` on completion |
 | `--no-activity` | Disable activity indicator |
 | `-d, --db-path` | Custom database path |
 
@@ -740,7 +744,7 @@ pytest tests/ --cov=orchestrator_auto
 - [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
 - [ ] **Post Feedback** - User feedback at milestones/completion
 - [x] **Plan Conversion** - Convert regular markdown plans into orchestrator-compatible format (`orchestrator convert plan.md`)
-- [ ] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
+- [x] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
 - [x] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
 - [ ] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
 - [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
