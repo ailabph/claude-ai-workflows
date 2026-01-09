@@ -13,8 +13,11 @@ orchestrator start -f "Add user authentication with JWT"
 # Start with custom models (cost savings)
 orchestrator start -f "My feature" -pm sonnet -em haiku
 
-# Start with existing plan (skip discovery/planning)
-orchestrator start -f "My feature" --plan docs/plan.md
+# Start with existing plan (feature auto-extracted from plan)
+orchestrator start --plan docs/plan.md
+
+# Start with plan and explicit feature override
+orchestrator start --plan docs/plan.md -f "My feature"
 
 # Start with auto-commit on completion
 orchestrator start -f "My feature" --auto-commit
@@ -144,7 +147,7 @@ orchestrator start -f "Feature description" [options]
 
 | Option | Description |
 |--------|-------------|
-| `-f, --feature` | Feature description (required unless `--queue` or `--plan` provided) |
+| `-f, --feature` | Feature description (auto-extracted from `--plan` if not provided) |
 | `-p, --plan` | Path to existing plan file |
 | `--queue` | Queue mode: run multiple plans sequentially |
 | `--queue-reset` | Reset existing queue for this project |
@@ -738,7 +741,7 @@ pytest tests/ --cov=orchestrator_auto
 - [ ] **Post Feedback** - User feedback at milestones/completion
 - [x] **Plan Conversion** - Convert regular markdown plans into orchestrator-compatible format (`orchestrator convert plan.md`)
 - [ ] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
-- [ ] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
+- [x] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
 - [ ] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
 - [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
 - [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command

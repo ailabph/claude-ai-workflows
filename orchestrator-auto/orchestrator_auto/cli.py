@@ -893,7 +893,7 @@ def cli():
 
 
 @cli.command()
-@click.option('--feature', '-f', required=False, help='Feature description (required unless --queue or --plan is provided)')
+@click.option('--feature', '-f', required=False, help='Feature description (auto-extracted from --plan if not provided)')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--plan', '-p', type=click.Path(exists=True), help='Path to existing plan file (skips discovery/planning)')
 @click.option('--queue', is_flag=True, help='Queue mode: run multiple plans sequentially')
@@ -936,6 +936,14 @@ def start(
 
     # In queue mode, feature is optional (each plan has its own feature)
     # In non-queue mode, feature is required unless --plan is provided
+    feature_auto_extracted = False
+    if plan and not feature:
+        # Auto-extract feature from plan file
+        feature = extract_feature_from_plan(plan)
+        feature_auto_extracted = True
+        if not feature:
+            raise click.UsageError(f"Could not extract feature from plan: {plan}")
+
     if not queue and not plan and not feature:
         raise click.UsageError("--feature/-f is required unless --queue or --plan is provided.")
 
@@ -966,7 +974,10 @@ def start(
 
     try:
         click.secho("Starting new workflow session...", fg="cyan", bold=True)
-        click.echo(f"Feature: {feature}")
+        if feature_auto_extracted:
+            click.echo(f"Feature: {feature} (from plan)")
+        else:
+            click.echo(f"Feature: {feature}")
         click.echo(f"Models: Planner={get_model_display_name(resolved_planner)} | Executor={get_model_display_name(resolved_executor)}")
         display_auth_info()
         if telegram_notifier:

@@ -701,3 +701,183 @@ class TestCompleteCommand:
         # Verify no unresolved blockers remain
         blockers = db.get_unresolved_blockers(session_id, temp_db)
         assert len(blockers) == 0
+
+
+class TestStartWithPlanAutoFeature:
+    """Test auto-extraction of feature from plan file."""
+
+    @pytest.fixture
+    def runner(self):
+        """Create a Click CLI runner."""
+        return CliRunner()
+
+    @pytest.fixture
+    def temp_db(self):
+        """Create a temporary database for testing."""
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".sqlite")
+        os.close(fd)
+        db.init_db(path)
+        yield path
+        os.unlink(path)
+
+    def test_start_plan_without_feature_extracts_from_h1(self, runner, temp_db, tmp_path):
+        """Feature auto-extracted from plan H1 header."""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text("""# My Awesome Feature
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.start.return_value = None
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-d', temp_db,
+            ])
+
+        # Should succeed without -f flag
+        assert result.exit_code == 0
+        assert 'My Awesome Feature' in result.output
+        assert '(from plan)' in result.output
+
+    def test_start_plan_without_feature_extracts_from_yaml(self, runner, temp_db, tmp_path):
+        """Feature auto-extracted from YAML frontmatter."""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text("""---
+feature: YAML Extracted Feature
+---
+
+# Implementation Plan
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.start.return_value = None
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'YAML Extracted Feature' in result.output
+        assert '(from plan)' in result.output
+
+    def test_start_plan_without_feature_falls_back_to_filename(self, runner, temp_db, tmp_path):
+        """Feature falls back to filename when no headers present."""
+        plan_file = tmp_path / "user-authentication-flow.md"
+        plan_file.write_text("""### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.start.return_value = None
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        # Filename converted: user-authentication-flow -> user authentication flow
+        assert 'user authentication flow' in result.output
+        assert '(from plan)' in result.output
+
+    def test_start_plan_with_explicit_feature_overrides(self, runner, temp_db, tmp_path):
+        """Explicit -f takes priority over extraction."""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text("""# Feature From Plan
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.start.return_value = None
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-f', 'Explicit Override Feature',
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'Explicit Override Feature' in result.output
+        # Should NOT show "(from plan)" since it was explicit
+        assert '(from plan)' not in result.output
+
+    def test_start_plan_shows_from_plan_indicator(self, runner, temp_db, tmp_path):
+        """Output shows '(from plan)' when auto-extracted."""
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text("""# Implementation Plan: Auto Test Feature
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        with patch('orchestrator_auto.cli.Orchestrator') as mock_orch:
+            mock_instance = MagicMock()
+            mock_orch.return_value = mock_instance
+            mock_instance.start.return_value = None
+            mock_instance.get_status.return_value = {
+                'session_id': 'test123',
+                'phase': Phase.COMPLETED,
+                'status': Status.COMPLETED,
+                'current_milestone': 0,
+                'total_milestones': 0,
+            }
+
+            result = runner.invoke(cli, [
+                'start',
+                '--plan', str(plan_file),
+                '-d', temp_db,
+            ])
+
+        assert result.exit_code == 0
+        assert 'Auto Test Feature' in result.output
+        assert '(from plan)' in result.output
