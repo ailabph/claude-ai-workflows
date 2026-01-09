@@ -8,6 +8,7 @@ from pathlib import Path
 import sys
 import tempfile
 import os
+import signal
 from unittest.mock import Mock, patch, MagicMock
 
 # Add parent directory to path for imports
@@ -1027,3 +1028,477 @@ Tasks here
 
         assert result.exit_code == 0
         assert 'Plan renamed' not in result.output
+
+
+# =============================================================================
+# Watch Mode Tests
+# =============================================================================
+
+from orchestrator_auto.cli import (
+    _is_watch_candidate,
+    _get_pending_plans,
+    _find_available_converted_path,
+    _rename_to_terminal,
+    WatchResult,
+)
+
+
+class TestWatchCandidateSelection:
+    """Tests for _is_watch_candidate helper."""
+
+    def test_accepts_plain_md_file(self):
+        """Plain .md files are candidates."""
+        assert _is_watch_candidate(Path("feature.md")) is True
+
+    def test_accepts_nested_path(self):
+        """Files with parent directories are candidates."""
+        assert _is_watch_candidate(Path("/some/path/feature.md")) is True
+
+    def test_rejects_quarantined_file(self):
+        """Files starting with _orchestrator-skip are rejected."""
+        assert _is_watch_candidate(Path("_orchestrator-skip__feature.md")) is False
+        assert _is_watch_candidate(Path("_orchestrator-skip_invalid.md")) is False
+
+    def test_rejects_done_file(self):
+        """Files ending with _done are rejected."""
+        assert _is_watch_candidate(Path("feature_done.md")) is False
+
+    def test_rejects_failed_file(self):
+        """Files ending with _failed are rejected."""
+        assert _is_watch_candidate(Path("feature_failed.md")) is False
+
+    def test_rejects_paused_file(self):
+        """Files ending with _paused are rejected."""
+        assert _is_watch_candidate(Path("feature_paused.md")) is False
+
+    def test_rejects_non_md_file(self):
+        """Non-.md files are rejected."""
+        assert _is_watch_candidate(Path("feature.txt")) is False
+        assert _is_watch_candidate(Path("feature.py")) is False
+        assert _is_watch_candidate(Path("feature")) is False
+
+    def test_accepts_md_uppercase(self):
+        """Case-insensitive extension matching."""
+        assert _is_watch_candidate(Path("feature.MD")) is True
+        assert _is_watch_candidate(Path("feature.Md")) is True
+
+    def test_done_in_middle_is_valid(self):
+        """'done' not at end of stem is valid."""
+        assert _is_watch_candidate(Path("done-feature.md")) is True
+        assert _is_watch_candidate(Path("feature-done-v2.md")) is True
+
+
+class TestGetPendingPlans:
+    """Tests for _get_pending_plans helper."""
+
+    def test_sorts_by_mtime_then_filename(self, tmp_path):
+        """Files sorted by mtime ascending, then filename ascending."""
+        import time
+
+        # Create files with controlled timestamps
+        file_c = tmp_path / "c_feature.md"
+        file_c.write_text("# C")
+        time.sleep(0.1)
+
+        file_a = tmp_path / "a_feature.md"
+        file_a.write_text("# A")
+        time.sleep(0.1)
+
+        file_b = tmp_path / "b_feature.md"
+        file_b.write_text("# B")
+
+        result = _get_pending_plans(tmp_path)
+
+        # Should be sorted by mtime (oldest first)
+        assert result[0].name == "c_feature.md"
+        assert result[1].name == "a_feature.md"
+        assert result[2].name == "b_feature.md"
+
+    def test_excludes_terminal_files(self, tmp_path):
+        """Terminal state files are excluded."""
+        (tmp_path / "valid.md").write_text("# Valid")
+        (tmp_path / "feature_done.md").write_text("# Done")
+        (tmp_path / "feature_failed.md").write_text("# Failed")
+        (tmp_path / "feature_paused.md").write_text("# Paused")
+        (tmp_path / "_orchestrator-skip__old.md").write_text("# Skipped")
+
+        result = _get_pending_plans(tmp_path)
+
+        assert len(result) == 1
+        assert result[0].name == "valid.md"
+
+    def test_empty_directory(self, tmp_path):
+        """Empty directory returns empty list."""
+        result = _get_pending_plans(tmp_path)
+        assert result == []
+
+    def test_no_md_files(self, tmp_path):
+        """Directory with no .md files returns empty list."""
+        (tmp_path / "readme.txt").write_text("text")
+        (tmp_path / "script.py").write_text("# py")
+
+        result = _get_pending_plans(tmp_path)
+        assert result == []
+
+
+class TestFindAvailableConvertedPath:
+    """Tests for _find_available_converted_path helper."""
+
+    def test_first_path_available(self, tmp_path):
+        """Returns <stem>_converted.md when available."""
+        original = tmp_path / "feature.md"
+        original.write_text("# Feature")
+
+        result = _find_available_converted_path(original)
+
+        assert result.name == "feature_converted.md"
+        assert result.parent == tmp_path
+
+    def test_collision_handling(self, tmp_path):
+        """Returns _converted_2.md when _converted.md exists."""
+        original = tmp_path / "feature.md"
+        original.write_text("# Feature")
+        (tmp_path / "feature_converted.md").write_text("# Existing")
+
+        result = _find_available_converted_path(original)
+
+        assert result.name == "feature_converted_2.md"
+
+    def test_multiple_collisions(self, tmp_path):
+        """Handles multiple collisions correctly."""
+        original = tmp_path / "feature.md"
+        original.write_text("# Feature")
+        (tmp_path / "feature_converted.md").write_text("# 1")
+        (tmp_path / "feature_converted_2.md").write_text("# 2")
+        (tmp_path / "feature_converted_3.md").write_text("# 3")
+
+        result = _find_available_converted_path(original)
+
+        assert result.name == "feature_converted_4.md"
+
+    def test_max_collisions_raises_error(self, tmp_path):
+        """Raises error after 100 collision attempts."""
+        original = tmp_path / "feature.md"
+        original.write_text("# Feature")
+
+        # Create all possible collision files
+        (tmp_path / "feature_converted.md").write_text("# 1")
+        for i in range(2, 101):
+            (tmp_path / f"feature_converted_{i}.md").write_text(f"# {i}")
+
+        with pytest.raises(RuntimeError, match="Too many converted files"):
+            _find_available_converted_path(original)
+
+
+class TestRenameToTerminal:
+    """Tests for _rename_to_terminal helper."""
+
+    def test_renames_to_done(self, tmp_path):
+        """Successfully renames to _done suffix."""
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Test")
+
+        success, new_path = _rename_to_terminal(plan, '_done')
+
+        assert success is True
+        assert Path(new_path).name == "feature_done.md"
+        assert not plan.exists()
+        assert Path(new_path).exists()
+
+    def test_renames_to_failed(self, tmp_path):
+        """Successfully renames to _failed suffix."""
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Test")
+
+        success, new_path = _rename_to_terminal(plan, '_failed')
+
+        assert success is True
+        assert Path(new_path).name == "feature_failed.md"
+
+    def test_renames_to_paused(self, tmp_path):
+        """Successfully renames to _paused suffix."""
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Test")
+
+        success, new_path = _rename_to_terminal(plan, '_paused')
+
+        assert success is True
+        assert Path(new_path).name == "feature_paused.md"
+
+    def test_updates_db_on_rename(self, tmp_path, temp_db):
+        """Session plan_path is updated in database."""
+        # Create a session
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Test")
+
+        success, new_path = _rename_to_terminal(plan, '_done', session_id, temp_db)
+
+        assert success is True
+
+        # Verify DB was updated
+        session = db.get_session(session_id, temp_db)
+        assert session['plan_path'] == new_path
+
+    def test_handles_nonexistent_file(self, tmp_path):
+        """Returns error for nonexistent file."""
+        plan = tmp_path / "nonexistent.md"
+
+        success, error = _rename_to_terminal(plan, '_done')
+
+        assert success is False
+        assert "No such file" in error or "cannot find" in error.lower() or "not found" in error.lower() or "FileNotFoundError" in error or "does not exist" in error.lower()
+
+
+class TestWatchResult:
+    """Tests for WatchResult dataclass."""
+
+    def test_completed_result(self):
+        """WatchResult for completed status."""
+        result = WatchResult(
+            status='completed',
+            session_id='abc123',
+            executed_path=Path('/tmp/feature.md'),
+        )
+
+        assert result.status == 'completed'
+        assert result.session_id == 'abc123'
+        assert result.executed_path == Path('/tmp/feature.md')
+        assert result.error is None
+
+    def test_failed_result_with_error(self):
+        """WatchResult for failed status with error."""
+        result = WatchResult(
+            status='failed',
+            session_id='abc123',
+            error='Workflow failed',
+        )
+
+        assert result.status == 'failed'
+        assert result.error == 'Workflow failed'
+
+    def test_skipped_result(self):
+        """WatchResult for skipped status."""
+        result = WatchResult(
+            status='skipped',
+            error='Invalid plan format',
+        )
+
+        assert result.status == 'skipped'
+        assert result.session_id is None
+        assert result.executed_path is None
+
+
+class TestWatchCommand:
+    """Tests for the watch CLI command."""
+
+    def test_help_shows_options(self, runner):
+        """Help output shows all expected options."""
+        result = runner.invoke(cli, ['watch', '--help'])
+
+        assert result.exit_code == 0
+        assert '--poll-interval' in result.output
+        assert '--convert' in result.output
+        assert '--no-convert' in result.output
+        assert '--db-path' in result.output
+        assert '--planner-model' in result.output
+        assert '--executor-model' in result.output
+        assert '--auto-commit' in result.output
+        assert '--telegram' in result.output
+        assert 'PLANS_DIR' in result.output
+
+    def test_requires_directory(self, runner):
+        """Watch command requires a directory argument."""
+        result = runner.invoke(cli, ['watch'])
+
+        assert result.exit_code != 0
+        assert 'Missing argument' in result.output or 'PLANS_DIR' in result.output
+
+    def test_validates_directory_exists(self, runner):
+        """Watch command validates that directory exists."""
+        result = runner.invoke(cli, ['watch', '/nonexistent/path'])
+
+        assert result.exit_code != 0
+        # Click validates that the path exists
+
+    def test_accepts_valid_directory(self, runner, tmp_path):
+        """Watch command accepts valid directory (immediate ctrl+c)."""
+        # Note: This test uses a mock to avoid actually running the watch loop
+        with patch('orchestrator_auto.cli.db.init_db'):
+            with patch('orchestrator_auto.cli.signal.signal') as mock_signal:
+                # Simulate immediate shutdown
+                def call_handler(*args):
+                    # When signal.signal is called with SIGINT, call the handler immediately
+                    if len(args) >= 2 and args[0] == signal.SIGINT:
+                        # Store the handler
+                        call_handler.handler = args[1]
+                    return signal.SIG_DFL
+
+                mock_signal.side_effect = call_handler
+
+                with patch('orchestrator_auto.cli._get_pending_plans', return_value=[]):
+                    with patch('orchestrator_auto.cli.time.sleep', side_effect=KeyboardInterrupt):
+                        result = runner.invoke(cli, ['watch', str(tmp_path)])
+
+        # Command should handle the interrupt gracefully
+        assert 'Watch mode stopped' in result.output or 'Watch Mode' in result.output
+
+
+# Import the quarantine function for testing
+from orchestrator_auto.cli import _quarantine_and_convert
+
+
+class TestQuarantineAndConvert:
+    """Tests for _quarantine_and_convert helper."""
+
+    def test_quarantines_without_conversion_when_disabled(self, tmp_path):
+        """When auto_convert=False, just quarantine the file."""
+        plan = tmp_path / "invalid.md"
+        plan.write_text("# No milestones here")
+
+        result = _quarantine_and_convert(plan, auto_convert=False)
+
+        assert result is None
+        assert not plan.exists()
+        quarantine = tmp_path / "_orchestrator-skip__invalid.md"
+        assert quarantine.exists()
+
+    def test_creates_converted_file_on_success(self, tmp_path):
+        """On successful conversion, creates converted file and quarantines original."""
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Feature\n\nStep 1: Do this\nStep 2: Do that")
+
+        # Mock the convert_plan to return valid content
+        with patch('orchestrator_auto.convert.convert_plan') as mock_convert:
+            mock_convert.return_value = (
+                "# Feature\n\n### Milestone 1: Setup\nDo this\n### Milestone 2: Build\nDo that",
+                {"milestones": 2, "milestone_names": ["Setup", "Build"]},
+            )
+
+            result = _quarantine_and_convert(plan, auto_convert=True)
+
+        assert result is not None
+        assert result.name == "feature_converted.md"
+        assert result.exists()
+        # Original should be quarantined
+        quarantine = tmp_path / "_orchestrator-skip__feature.md"
+        assert quarantine.exists()
+        assert not plan.exists()
+
+    def test_handles_conversion_failure(self, tmp_path):
+        """ConversionError results in quarantine only, no converted file."""
+        from orchestrator_auto.convert import ConversionError
+
+        plan = tmp_path / "invalid.md"
+        plan.write_text("# Not convertible")
+
+        with patch('orchestrator_auto.convert.convert_plan') as mock_convert:
+            mock_convert.side_effect = ConversionError("Cannot convert")
+
+            result = _quarantine_and_convert(plan, auto_convert=True)
+
+        assert result is None
+        assert not plan.exists()
+        quarantine = tmp_path / "_orchestrator-skip__invalid.md"
+        assert quarantine.exists()
+        # No converted file should exist
+        converted = tmp_path / "invalid_converted.md"
+        assert not converted.exists()
+
+    def test_handles_collision_on_converted_path(self, tmp_path):
+        """When _converted.md exists, uses _converted_2.md."""
+        plan = tmp_path / "feature.md"
+        plan.write_text("# Feature\n\nTasks here")
+        # Pre-create the collision file
+        (tmp_path / "feature_converted.md").write_text("# Already exists")
+
+        with patch('orchestrator_auto.convert.convert_plan') as mock_convert:
+            mock_convert.return_value = (
+                "# Feature\n\n### Milestone 1: Setup\nDo this",
+                {"milestones": 1, "milestone_names": ["Setup"]},
+            )
+
+            result = _quarantine_and_convert(plan, auto_convert=True)
+
+        assert result is not None
+        assert result.name == "feature_converted_2.md"
+        assert result.exists()
+
+
+class TestPostResumeReconciliation:
+    """Tests for post-resume reconciliation behavior in watch mode."""
+
+    def test_renames_paused_to_done_after_completed_resume(self, tmp_path, temp_db):
+        """When a paused session completes after resume, rename to _done."""
+        # Create a session
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        # Update to paused state
+        db.update_session(session_id, {'phase': Phase.PAUSED, 'status': Status.PAUSED}, temp_db)
+
+        # Create the paused plan file
+        paused_plan = tmp_path / "feature_paused.md"
+        paused_plan.write_text("# Test Plan\n### Milestone 1: Test")
+        db.update_session(session_id, {'plan_path': str(paused_plan)}, temp_db)
+
+        # Simulate resume completing
+        db.update_session(
+            session_id,
+            {'phase': Phase.COMPLETED, 'status': Status.COMPLETED},
+            temp_db
+        )
+
+        # Now rename to done (as watch mode would do)
+        success, new_path = _rename_to_terminal(paused_plan, '_done', session_id, temp_db)
+
+        assert success
+        assert Path(new_path).name == "feature_paused_done.md"  # Note: adds to existing stem
+        assert Path(new_path).exists()
+        # Verify DB was updated
+        session = db.get_session(session_id, temp_db)
+        assert session['plan_path'] == new_path
+
+    def test_renames_paused_to_failed_after_failed_resume(self, tmp_path, temp_db):
+        """When a paused session fails after resume, rename to _failed."""
+        # Create a session
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        db.update_session(session_id, {'phase': Phase.PAUSED, 'status': Status.PAUSED}, temp_db)
+
+        # Create the paused plan file
+        paused_plan = tmp_path / "feature_paused.md"
+        paused_plan.write_text("# Test Plan\n### Milestone 1: Test")
+        db.update_session(session_id, {'plan_path': str(paused_plan)}, temp_db)
+
+        # Simulate resume failing
+        db.update_session(
+            session_id,
+            {'phase': Phase.COMPLETED, 'status': Status.FAILED},
+            temp_db
+        )
+
+        # Rename to failed
+        success, new_path = _rename_to_terminal(paused_plan, '_failed', session_id, temp_db)
+
+        assert success
+        assert Path(new_path).name == "feature_paused_failed.md"
+        assert Path(new_path).exists()
+
+    def test_session_still_active_not_renamed(self, tmp_path, temp_db):
+        """When session is still active (execution), don't rename yet."""
+        # Create a session in execution phase
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        db.update_session(
+            session_id,
+            {'phase': Phase.EXECUTION, 'status': Status.ACTIVE},
+            temp_db
+        )
+
+        # Session is still running - verify it's not in a terminal state
+        session = db.get_session(session_id, temp_db)
+        assert session['phase'] == Phase.EXECUTION
+        assert session['status'] == Status.ACTIVE
+
+        # In watch mode, we would check:
+        # if session.get('phase') != Phase.PAUSED:
+        #     # then check for terminal state
+        # This test verifies the state is as expected for the check

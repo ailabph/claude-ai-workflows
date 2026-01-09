@@ -49,6 +49,11 @@ orchestrator telegram test
 # Listen for Telegram blocker replies (Phase 2)
 orchestrator telegram listen
 
+# Watch mode: monitor directory for new plan files
+orchestrator watch ./plans/
+orchestrator watch ./plans/ --poll-interval 5
+orchestrator watch ./plans/ --auto-commit
+
 # Direct chat with Claude (no orchestration)
 orchestrator chat
 orchestrator chat -m opus --no-tools
@@ -407,6 +412,60 @@ orchestrator telegram listen [--poll-interval N] [--once] [--verbose]
 
 Listens for Telegram replies to blocker notifications. When you reply to a blocker message in Telegram, the listener resolves the blocker and prepares the session for resume.
 
+### `watch` - Watch Directory for Plans
+
+```bash
+orchestrator watch PLANS_DIR [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `PLANS_DIR` | Directory to watch (required) |
+| `--poll-interval` | Poll interval in seconds (default: 2) |
+| `--convert/--no-convert` | Auto-convert invalid plans (default: enabled) |
+| `--auto-commit` | Auto-commit on completion |
+| `--smart-commit` | Use AI-generated commit messages |
+| `--telegram` | Enable Telegram notifications |
+| `-pm, --planner-model` | Model for planner agent |
+| `-em, --executor-model` | Model for executor agent |
+| `--show-activity` | Show streaming activity indicator (default) |
+
+Monitor a directory for new `.md` plan files. Plans are processed oldest-first (by modification time), auto-converted to orchestrator format if needed, and renamed to terminal state on completion.
+
+**File naming conventions:**
+- `_orchestrator-skip__*` - Quarantined originals (ignored)
+- `*_done.md` - Completed successfully
+- `*_failed.md` - Failed execution
+- `*_paused.md` - Paused on blocker (queue halted until resumed)
+
+**Examples:**
+
+```bash
+# Watch a directory with defaults
+orchestrator watch ./plans/
+
+# Watch with longer poll interval
+orchestrator watch ./plans/ --poll-interval 5
+
+# Watch without auto-conversion (quarantine invalid plans)
+orchestrator watch ./plans/ --no-convert
+
+# Watch with auto-commit on completion
+orchestrator watch ./plans/ --auto-commit
+
+# Watch with Telegram notifications
+orchestrator watch ./plans/ --telegram
+```
+
+**Workflow:**
+1. Drop a plan file (e.g., `feature-x.md`) into the watched directory
+2. Watcher validates and auto-converts if needed
+3. Orchestrator executes the plan
+4. On completion: `feature-x.md` → `feature-x_done.md`
+5. On failure: `feature-x.md` → `feature-x_failed.md`
+6. On blocker: `feature-x.md` → `feature-x_paused.md` (queue halts)
+7. After manual resume: `feature-x_paused.md` → `feature-x_done.md` or `feature-x_failed.md`
+
 ### `chat` - Direct chat with Claude
 
 ```bash
@@ -746,7 +805,7 @@ pytest tests/ --cov=orchestrator_auto
 - [x] **Plan Conversion** - Convert regular markdown plans into orchestrator-compatible format (`orchestrator convert plan.md`)
 - [x] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
 - [x] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
-- [ ] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
+- [x] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
 - [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
 - [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
 - [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
@@ -783,6 +842,20 @@ pytest tests/ --cov=orchestrator_auto
 ---
 
 ## Changelog
+
+### v0.10.0 - Watch Mode
+
+- **Watch Mode** - Monitor a directory for new plan files (`orchestrator watch ./plans/`)
+- **Automatic processing** - Plans processed oldest-first (by mtime), one at a time
+- **Auto-conversion** - Invalid plans converted to orchestrator format (with quarantine of originals)
+- **Terminal state renaming** - Files renamed to `*_done.md`, `*_failed.md`, or `*_paused.md` on completion
+- **Pause handling** - Queue halts on blocker; resumes after `orchestrator resume <id> --answer`
+- **Post-resume reconciliation** - Paused files renamed to final terminal state after external resume
+- **CLI: `--poll-interval`** - Configure poll interval (default: 2 seconds)
+- **CLI: `--convert/--no-convert`** - Toggle auto-conversion (default: enabled)
+- **CLI: `--auto-commit`** - Auto-commit on completion
+- **CLI: `--telegram`** - Enable Telegram notifications
+- **File conventions** - `_orchestrator-skip__*` (quarantined), `*_done.md`, `*_failed.md`, `*_paused.md`
 
 ### v0.9.1 - Bug Fixes
 

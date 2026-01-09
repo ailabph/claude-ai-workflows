@@ -2558,5 +2558,539 @@ def convert(
     sys.exit(0)
 
 
+# =============================================================================
+# Watch Mode - Directory monitoring for plan files
+# =============================================================================
+
+from dataclasses import dataclass
+from typing import List
+import time
+
+
+@dataclass
+class WatchResult:
+    """Result of processing a plan file in watch mode."""
+    status: str  # 'completed', 'failed', 'paused', 'skipped', 'conversion_failed'
+    session_id: Optional[str] = None
+    executed_path: Optional[Path] = None  # The file that was actually executed (may differ if converted)
+    error: Optional[str] = None
+
+
+def _is_watch_candidate(path: Path) -> bool:
+    """
+    Check if file should be considered for processing in watch mode.
+
+    A file is a candidate if:
+    - It has .md extension
+    - It does not start with _orchestrator-skip (quarantined)
+    - It does not end with _done (completed)
+    - It does not end with _failed (failed execution)
+    - It does not end with _paused (paused on blocker)
+
+    Args:
+        path: Path to check
+
+    Returns:
+        True if file should be processed, False otherwise
+    """
+    name = path.name
+    stem = path.stem
+
+    # Must be .md file
+    if path.suffix.lower() != '.md':
+        return False
+
+    # Skip quarantined files
+    if name.startswith('_orchestrator-skip'):
+        return False
+
+    # Skip terminal states
+    if stem.endswith('_done') or stem.endswith('_failed') or stem.endswith('_paused'):
+        return False
+
+    return True
+
+
+def _get_pending_plans(plans_dir: Path) -> List[Path]:
+    """
+    Get candidate plans sorted by mtime ascending, then filename ascending.
+
+    This provides deterministic oldest-first processing order.
+
+    Args:
+        plans_dir: Directory to scan for .md files
+
+    Returns:
+        List of Path objects sorted by (mtime, filename)
+    """
+    candidates = [p for p in plans_dir.glob('*.md') if _is_watch_candidate(p)]
+    return sorted(candidates, key=lambda p: (p.stat().st_mtime, p.name))
+
+
+def _find_available_converted_path(original: Path) -> Path:
+    """
+    Find available path for converted file with collision handling.
+
+    Tries <stem>_converted.md first, then <stem>_converted_2.md, etc.
+    Raises RuntimeError if all 100 attempts fail.
+
+    Args:
+        original: Original plan file path
+
+    Returns:
+        Available path for converted file
+    """
+    base = original.parent / f"{original.stem}_converted.md"
+    if not base.exists():
+        return base
+
+    for i in range(2, 101):
+        candidate = original.parent / f"{original.stem}_converted_{i}.md"
+        if not candidate.exists():
+            return candidate
+
+    raise RuntimeError(f"Too many converted files for {original.name}")
+
+
+def _rename_to_terminal(
+    plan_path: Path,
+    suffix: str,
+    session_id: Optional[str] = None,
+    db_path: Optional[str] = None,
+) -> tuple:
+    """
+    Rename plan file to terminal state and update DB.
+
+    Args:
+        plan_path: Path to the plan file
+        suffix: Terminal suffix ('_done', '_failed', '_paused')
+        session_id: Optional session ID to update in DB
+        db_path: Optional database path
+
+    Returns:
+        Tuple of (success, new_path_or_error_message)
+    """
+    # Build new filename: feature.md -> feature_done.md
+    new_name = f"{plan_path.stem}{suffix}{plan_path.suffix}"
+    new_path = plan_path.parent / new_name
+
+    try:
+        plan_path.rename(new_path)
+
+        # Update DB so resume/export find the file
+        if session_id:
+            db.update_session(session_id, {'plan_path': str(new_path)}, db_path)
+
+        return True, str(new_path)
+    except OSError as e:
+        return False, str(e)
+
+
+@cli.command()
+@click.argument('plans_dir', type=click.Path(exists=True, file_okay=False))
+@click.option('--poll-interval', default=2, type=int, help='Poll interval in seconds (default: 2)')
+@click.option('--convert/--no-convert', 'auto_convert', default=True, help='Auto-convert invalid plans (default: enabled)')
+@click.option('--db-path', '-d', help='Custom database path')
+@click.option('--planner-model', '-pm', help='Model for planner agent')
+@click.option('--executor-model', '-em', help='Model for executor agent')
+@click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit on completion')
+@click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI commit messages')
+@click.option('--telegram/--no-telegram', default=None, help='Enable Telegram notifications')
+@click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator')
+def watch(
+    plans_dir: str,
+    poll_interval: int,
+    auto_convert: bool,
+    db_path: Optional[str],
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    auto_commit: bool,
+    smart_commit: Optional[bool],
+    telegram: Optional[bool],
+    show_activity: bool,
+):
+    """Watch a directory for new plan files and execute them.
+
+    Monitors PLANS_DIR for new .md files, processes them oldest-first,
+    auto-converts if needed, and renames to terminal state on completion.
+
+    File naming conventions:
+    - _orchestrator-skip__* : Quarantined (ignored)
+    - *_done.md : Completed successfully
+    - *_failed.md : Failed execution
+    - *_paused.md : Paused on blocker (queue halted)
+
+    Examples:
+        orchestrator watch ./plans/
+        orchestrator watch ./plans/ --poll-interval 5
+        orchestrator watch ./plans/ --no-convert
+        orchestrator watch ./plans/ --auto-commit
+    """
+    plans_path = Path(plans_dir).resolve()
+
+    # Initialize database
+    db.init_db(db_path)
+
+    click.echo()
+    click.secho("👁️  Watch Mode", fg="cyan", bold=True)
+    click.echo()
+    click.echo(f"  Directory: {plans_path}")
+    click.echo(f"  Poll interval: {poll_interval}s")
+    click.echo(f"  Auto-convert: {'enabled' if auto_convert else 'disabled'}")
+    if auto_commit:
+        click.echo(f"  Auto-commit: enabled")
+    click.echo()
+    click.secho("Press Ctrl+C to stop", fg="yellow")
+    click.echo()
+
+    # State tracking
+    currently_processing: set = set()  # Fallback for rename failures
+    paused_session_id: Optional[str] = None
+    paused_plan_path: Optional[Path] = None
+    running = True
+
+    def handle_shutdown(signum, frame):
+        nonlocal running
+        running = False
+        click.echo()
+        click.secho("✓ Watch mode stopping...", fg="yellow")
+
+    # Setup signal handlers
+    original_sigint = signal.signal(signal.SIGINT, handle_shutdown)
+    original_sigterm = signal.signal(signal.SIGTERM, handle_shutdown)
+
+    try:
+        while running:
+            # If halted on pause, check for external resume
+            if paused_session_id:
+                session = db.get_session(paused_session_id, db_path)
+
+                if session and session.get('phase') != Phase.PAUSED:
+                    # Session was resumed externally - do post-resume reconciliation
+                    final_phase = session.get('phase')
+
+                    # Check for terminal phases only
+                    if final_phase in (Phase.COMPLETED,):
+                        if paused_plan_path and paused_plan_path.exists():
+                            success, new_path = _rename_to_terminal(
+                                paused_plan_path, '_done', paused_session_id, db_path
+                            )
+                            if success:
+                                click.secho(f"✓ Resumed session completed: {Path(new_path).name}", fg="green")
+                            else:
+                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
+
+                        # Clear from currently_processing if it was there
+                        if paused_plan_path:
+                            currently_processing.discard(paused_plan_path.name)
+
+                        # Clear pause state and continue queue
+                        paused_session_id = None
+                        paused_plan_path = None
+
+                    elif session.get('status') == Status.FAILED or final_phase == Phase.COMPLETED:
+                        # Failed or completed with failed status
+                        if paused_plan_path and paused_plan_path.exists():
+                            success, new_path = _rename_to_terminal(
+                                paused_plan_path, '_failed', paused_session_id, db_path
+                            )
+                            if success:
+                                click.secho(f"✗ Resumed session failed: {Path(new_path).name}", fg="red")
+                            else:
+                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
+
+                        if paused_plan_path:
+                            currently_processing.discard(paused_plan_path.name)
+
+                        paused_session_id = None
+                        paused_plan_path = None
+
+                    else:
+                        # Still in progress (discovery/planning/execution) - keep waiting
+                        time.sleep(poll_interval)
+                        continue
+                else:
+                    # Still paused - keep polling
+                    time.sleep(poll_interval)
+                    continue
+
+            # Get oldest pending plan
+            pending = _get_pending_plans(plans_path)
+            pending = [p for p in pending if p.name not in currently_processing]
+
+            if not pending:
+                time.sleep(poll_interval)
+                continue
+
+            plan_path = pending[0]
+            click.echo(f"📄 Found: {plan_path.name}")
+
+            # Process the plan
+            result = _process_watch_file(
+                plan_path=plan_path,
+                auto_convert=auto_convert,
+                db_path=db_path,
+                planner_model=planner_model,
+                executor_model=executor_model,
+                auto_commit=auto_commit,
+                smart_commit=smart_commit,
+                telegram=telegram,
+                show_activity=show_activity,
+            )
+
+            # Use executed_path for rename (may differ from plan_path if converted)
+            target_path = result.executed_path or plan_path
+
+            # Handle result
+            if result.status == 'completed':
+                success, new_path = _rename_to_terminal(target_path, '_done', result.session_id, db_path)
+                if success:
+                    click.secho(f"✓ Completed: {Path(new_path).name}", fg="green")
+                else:
+                    click.secho(f"⚠ Complete but could not rename: {new_path}", fg="yellow")
+                    currently_processing.add(target_path.name)
+
+            elif result.status == 'failed':
+                success, new_path = _rename_to_terminal(target_path, '_failed', result.session_id, db_path)
+                if success:
+                    click.secho(f"✗ Failed: {Path(new_path).name}", fg="red")
+                    if result.error:
+                        click.echo(f"  Error: {result.error}")
+                else:
+                    click.secho(f"⚠ Failed but could not rename: {new_path}", fg="yellow")
+                    currently_processing.add(target_path.name)
+
+            elif result.status == 'paused':
+                success, new_path = _rename_to_terminal(target_path, '_paused', result.session_id, db_path)
+                paused_session_id = result.session_id
+                paused_plan_path = Path(new_path) if success else target_path
+
+                if not success:
+                    currently_processing.add(target_path.name)
+
+                click.echo()
+                click.secho("⏸️  Session paused (blocker)", fg="yellow", bold=True)
+                click.echo(f"  Resume with: orchestrator resume {result.session_id} --answer \"your response\"")
+                click.echo()
+
+            elif result.status == 'conversion_failed':
+                # Already quarantined in _process_watch_file
+                click.secho(f"⚠ Conversion failed (quarantined): {plan_path.name}", fg="yellow")
+
+            elif result.status == 'skipped':
+                click.secho(f"⚠ Skipped: {plan_path.name}", fg="yellow")
+                if result.error:
+                    click.echo(f"  Reason: {result.error}")
+
+            time.sleep(poll_interval)
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Restore signal handlers
+        signal.signal(signal.SIGINT, original_sigint)
+        signal.signal(signal.SIGTERM, original_sigterm)
+        click.echo()
+        click.secho("✓ Watch mode stopped", fg="green")
+
+
+def _quarantine_and_convert(plan_path: Path, auto_convert: bool) -> Optional[Path]:
+    """
+    Quarantine invalid plan and create converted copy if enabled.
+
+    Args:
+        plan_path: Path to the invalid plan
+        auto_convert: Whether to attempt conversion
+
+    Returns:
+        Path to converted file, or None if conversion failed/disabled
+    """
+    from .convert import convert_plan, validate_plan_content, ConversionError
+
+    content = plan_path.read_text()
+
+    if not auto_convert:
+        # Just quarantine, no conversion
+        quarantine_path = plan_path.parent / f"_orchestrator-skip__{plan_path.name}"
+        plan_path.rename(quarantine_path)
+        return None
+
+    try:
+        converted_content, metadata = convert_plan(content)
+    except ConversionError:
+        # Conversion failed - quarantine original, no converted file
+        quarantine_path = plan_path.parent / f"_orchestrator-skip__{plan_path.name}"
+        plan_path.rename(quarantine_path)
+        return None
+    except Exception:
+        # Unexpected error - quarantine original
+        quarantine_path = plan_path.parent / f"_orchestrator-skip__{plan_path.name}"
+        plan_path.rename(quarantine_path)
+        return None
+
+    # Find available converted path
+    converted_path = _find_available_converted_path(plan_path)
+
+    # Write converted content
+    converted_path.write_text(converted_content)
+
+    # Quarantine original
+    quarantine_path = plan_path.parent / f"_orchestrator-skip__{plan_path.name}"
+    plan_path.rename(quarantine_path)
+
+    return converted_path
+
+
+def _process_watch_file(
+    plan_path: Path,
+    auto_convert: bool,
+    db_path: Optional[str],
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    auto_commit: bool,
+    smart_commit: Optional[bool],
+    telegram: Optional[bool],
+    show_activity: bool,
+) -> WatchResult:
+    """
+    Process a single plan file in watch mode.
+
+    Validates the plan, converts if needed, and runs the orchestrator.
+
+    Args:
+        plan_path: Path to the plan file
+        auto_convert: Whether to auto-convert invalid plans
+        db_path: Database path
+        planner_model: Model for planner
+        executor_model: Model for executor
+        auto_commit: Auto-commit on completion
+        smart_commit: Use AI commit messages
+        telegram: Enable Telegram notifications
+        show_activity: Show streaming activity
+
+    Returns:
+        WatchResult with status and details
+    """
+    from .convert import validate_plan_content
+    from .parser import parse_plan_file
+
+    # Validate the plan
+    content = plan_path.read_text()
+    is_valid, details = validate_plan_content(content)
+
+    executed_path = plan_path
+
+    if not is_valid:
+        click.echo(f"  Plan needs conversion: {details.get('error', 'No milestones found')}")
+
+        if auto_convert:
+            converted_path = _quarantine_and_convert(plan_path, auto_convert)
+            if converted_path:
+                click.secho(f"  ✓ Converted: {converted_path.name}", fg="green")
+                executed_path = converted_path
+            else:
+                return WatchResult(
+                    status='conversion_failed',
+                    error="Could not convert plan to valid format",
+                )
+        else:
+            # Quarantine without conversion
+            _quarantine_and_convert(plan_path, auto_convert=False)
+            return WatchResult(
+                status='skipped',
+                error="Plan invalid and --no-convert specified",
+            )
+
+    # Parse plan for feature extraction
+    parse_result = parse_plan_file(str(executed_path))
+    if not parse_result.get('valid'):
+        return WatchResult(
+            status='skipped',
+            error=f"Parse error: {parse_result.get('error')}",
+        )
+
+    feature = parse_result.get('feature') or executed_path.stem
+
+    # Resolve models
+    resolved_planner = get_planner_model(planner_model)
+    resolved_executor = get_executor_model(executor_model)
+
+    # Create Telegram notifier if enabled
+    telegram_notifier = _create_telegram_notifier(telegram)
+
+    # Create and run orchestrator
+    try:
+        orch = Orchestrator(
+            feature_description=feature,
+            db_path=db_path,
+            output_callback=output_callback if show_activity else None,
+            planner_model=resolved_planner,
+            executor_model=resolved_executor,
+            plan_path=str(executed_path),
+            telegram_notifier=telegram_notifier,
+        )
+
+        orch.start()
+
+        # Check final state
+        final_status = orch.get_status()
+        final_phase = final_status.get('phase')
+        final_state = final_status.get('status')
+
+        if final_phase == Phase.COMPLETED and final_state == Status.COMPLETED:
+            # Handle auto-commit
+            if auto_commit:
+                click.echo()
+                click.secho("Creating commit...", fg="cyan")
+                milestones = db.get_milestones(orch.session_id, db_path)
+                success, msg = _do_smart_auto_commit(
+                    feature_description=feature,
+                    milestones=milestones,
+                    smart_commit_flag=smart_commit,
+                    executor_model=resolved_executor,
+                )
+                if success:
+                    click.secho(f"✓ {msg}", fg="green")
+                else:
+                    click.secho(f"⚠ Commit: {msg}", fg="yellow")
+
+            return WatchResult(
+                status='completed',
+                session_id=orch.session_id,
+                executed_path=executed_path,
+            )
+
+        elif final_phase == Phase.PAUSED or final_state == Status.PAUSED:
+            return WatchResult(
+                status='paused',
+                session_id=orch.session_id,
+                executed_path=executed_path,
+            )
+
+        elif final_state == Status.FAILED:
+            return WatchResult(
+                status='failed',
+                session_id=orch.session_id,
+                executed_path=executed_path,
+                error="Workflow failed",
+            )
+
+        else:
+            # Unexpected state
+            return WatchResult(
+                status='failed',
+                session_id=orch.session_id,
+                executed_path=executed_path,
+                error=f"Unexpected state: {final_phase}/{final_state}",
+            )
+
+    except Exception as e:
+        return WatchResult(
+            status='failed',
+            executed_path=executed_path,
+            error=str(e),
+        )
+
+
 if __name__ == '__main__':
     cli()
