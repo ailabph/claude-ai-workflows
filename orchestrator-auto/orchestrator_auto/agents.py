@@ -89,7 +89,7 @@ class BaseAgent:
                 tools=self.allowed_tools,
                 model=self.model,
                 cwd=self.cwd,
-                permission_mode="acceptEdits",  # Auto-approve file operations
+                permission_mode="bypassPermissions",  # Auto-approve all operations including Bash
             )
         return self._options
 
