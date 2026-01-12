@@ -295,8 +295,7 @@ class Orchestrator:
                 self._output("\n=== Workflow Complete ===\n")
 
         except KeyboardInterrupt:
-            # User cancelled - don't mark as failed, just re-raise
-            self._logger.info("Workflow interrupted by user (KeyboardInterrupt)")
+            # User cancelled - don't mark as failed or log to file, just re-raise
             raise
         except OrchestratorError:
             # Already a typed error (e.g., from _handle_fatal_error), re-raise

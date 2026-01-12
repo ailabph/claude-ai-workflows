@@ -6,7 +6,6 @@ queue/watch mode where multiple sessions run in one process.
 """
 
 import logging
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
@@ -15,7 +14,7 @@ from typing import Optional, Tuple
 DEFAULT_LOG_DIR = Path.home() / ".claude_orchestrator" / "logs"
 
 
-class LazyFileHandler(logging.FileHandler):
+class LazyFileHandler(logging.Handler):
     """
     A FileHandler that delays file creation until the first log record.
 
@@ -40,6 +39,7 @@ class LazyFileHandler(logging.FileHandler):
         # Initialize without opening the file
         logging.Handler.__init__(self)
         self.stream = None
+        self.terminator = "\n"  # Same as StreamHandler default
 
     def emit(self, record):
         """
