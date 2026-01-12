@@ -1058,13 +1058,29 @@ The orchestrator will save the file for you.
 
         # Transition to FAILED state (sets phase=completed, status=failed)
         try:
-            self.state_machine.transition(
+            success, _, transition_error = self.state_machine.transition(
                 self.session_id,
                 TransitionEvent.FAILED.value
             )
+            if not success:
+                # Transition returned failure (e.g., invalid state) - fallback to direct DB update
+                self._logger.warning(f"State transition to FAILED returned failure: {transition_error}")
+                db.update_session(
+                    self.session_id,
+                    {"phase": "completed", "status": "failed"},
+                    self.db_path
+                )
         except Exception as transition_error:
-            # Log but don't mask the original error
+            # Exception during transition - fallback to direct DB update
             self._logger.error(f"Failed to transition to FAILED state: {transition_error}")
+            try:
+                db.update_session(
+                    self.session_id,
+                    {"phase": "completed", "status": "failed"},
+                    self.db_path
+                )
+            except Exception as db_update_error:
+                self._logger.error(f"Fallback DB update also failed: {db_update_error}")
 
         # Persist error details to session_errors table
         stack_trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))

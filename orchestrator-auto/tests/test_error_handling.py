@@ -48,7 +48,9 @@ class TestLoggingConfig:
         assert result == expected
 
     def test_create_session_logger_creates_file(self, tmp_path):
-        """Test that create_session_logger creates a log file."""
+        """Test that create_session_logger creates a log file on first write."""
+        from orchestrator_auto.logging_config import LazyFileHandler
+
         logger, log_path = create_session_logger(
             "test123",
             debug=False,
@@ -61,14 +63,23 @@ class TestLoggingConfig:
             assert "test123" in log_path
             assert Path(log_path).parent == tmp_path
 
-            # Logger should have a file handler
+            # Logger should have a lazy file handler
             assert len(logger.handlers) == 1
-            assert isinstance(logger.handlers[0], logging.FileHandler)
+            assert isinstance(logger.handlers[0], LazyFileHandler)
+
+            # File should NOT exist yet (lazy creation)
+            assert not Path(log_path).exists()
+
+            # Write to logger - file should be created
+            logger.error("Test error")
+            assert Path(log_path).exists()
         finally:
             teardown_session_logger(logger)
 
     def test_create_session_logger_debug_mode(self, tmp_path):
         """Test that debug mode adds console handler."""
+        from orchestrator_auto.logging_config import LazyFileHandler
+
         logger, log_path = create_session_logger(
             "test456",
             debug=True,
@@ -78,9 +89,11 @@ class TestLoggingConfig:
         try:
             # Should have both file and console handlers
             assert len(logger.handlers) == 2
-            handler_types = [type(h) for h in logger.handlers]
-            assert logging.FileHandler in handler_types
-            assert logging.StreamHandler in handler_types
+            # Check using isinstance for LazyFileHandler (subclass of FileHandler)
+            has_file_handler = any(isinstance(h, LazyFileHandler) for h in logger.handlers)
+            has_stream_handler = any(isinstance(h, logging.StreamHandler) and not isinstance(h, LazyFileHandler) for h in logger.handlers)
+            assert has_file_handler
+            assert has_stream_handler
         finally:
             teardown_session_logger(logger)
 

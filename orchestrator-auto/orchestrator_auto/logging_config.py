@@ -6,12 +6,81 @@ queue/watch mode where multiple sessions run in one process.
 """
 
 import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Tuple
 
 # Default log directory
 DEFAULT_LOG_DIR = Path.home() / ".claude_orchestrator" / "logs"
+
+
+class LazyFileHandler(logging.FileHandler):
+    """
+    A FileHandler that delays file creation until the first log record.
+
+    This prevents creating empty log files for successful sessions.
+    The file is only created when emit() is called for the first time.
+    """
+
+    def __init__(self, filename: str, mode: str = "a", encoding: str = None, delay: bool = True):
+        """
+        Initialize the handler with delayed file creation.
+
+        Args:
+            filename: Path to the log file
+            mode: File open mode
+            encoding: File encoding
+            delay: Always True for lazy creation (parameter kept for compatibility)
+        """
+        self._filename = filename
+        self._mode = mode
+        self._encoding = encoding
+        self._file_created = False
+        # Initialize without opening the file
+        logging.Handler.__init__(self)
+        self.stream = None
+
+    def emit(self, record):
+        """
+        Emit a record, creating the file on first write.
+        """
+        if not self._file_created:
+            # Create parent directory if needed
+            Path(self._filename).parent.mkdir(parents=True, exist_ok=True)
+            # Now open the file
+            self.stream = open(self._filename, self._mode, encoding=self._encoding)
+            self._file_created = True
+
+        if self.stream:
+            try:
+                msg = self.format(record)
+                self.stream.write(msg + self.terminator)
+                self.stream.flush()
+            except Exception:
+                self.handleError(record)
+
+    def close(self):
+        """
+        Close the handler and file stream.
+        """
+        self.acquire()
+        try:
+            if self.stream:
+                try:
+                    self.stream.flush()
+                    self.stream.close()
+                except Exception:
+                    pass
+                self.stream = None
+        finally:
+            self.release()
+        logging.Handler.close(self)
+
+    @property
+    def baseFilename(self):
+        """Return the filename for compatibility with FileHandler interface."""
+        return self._filename
 
 
 def get_log_dir(custom_dir: Optional[str] = None) -> Path:
@@ -45,6 +114,9 @@ def create_session_logger(
     This avoids handler accumulation in queue/watch mode where multiple
     sessions run in one process.
 
+    The file handler uses lazy creation - the log file is only created
+    when the first error is logged, avoiding empty files for successful sessions.
+
     Args:
         session_id: The session ID (used in logger name and file name)
         debug: If True, also add a console handler for immediate output
@@ -57,8 +129,13 @@ def create_session_logger(
     logger_name = f"orchestrator.{session_id}"
     logger = logging.getLogger(logger_name)
 
-    # Clear any existing handlers (safety for reused session IDs)
-    logger.handlers.clear()
+    # Properly close and remove any existing handlers (prevents file descriptor leak)
+    for handler in logger.handlers[:]:
+        try:
+            handler.close()
+        except Exception:
+            pass
+        logger.removeHandler(handler)
 
     # Set level based on debug flag
     logger.setLevel(logging.DEBUG if debug else logging.INFO)
@@ -78,8 +155,8 @@ def create_session_logger(
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    # Add file handler
-    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    # Add lazy file handler (only creates file on first write)
+    file_handler = LazyFileHandler(log_path, encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)  # Capture everything to file
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
@@ -125,6 +202,7 @@ def get_null_logger() -> logging.Logger:
         Logger with NullHandler
     """
     logger = logging.getLogger("orchestrator.null")
+    logger.propagate = False  # Prevent bubbling to root logger
     if not logger.handlers:
         logger.addHandler(logging.NullHandler())
     return logger
