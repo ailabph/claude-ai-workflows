@@ -5,12 +5,15 @@ Coordinates Planner and Executor agents through discovery, planning,
 and execution phases with automatic milestone approval and blocker handling.
 """
 
+import traceback
 from typing import Optional, Dict, Any, Callable, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .telegram import TelegramNotifier
 
 from . import db
+from .exceptions import OrchestratorError, AgentError
+from .logging_config import create_session_logger, teardown_session_logger, get_null_logger
 from .auth import detect_auth
 from .config import get_project_identity
 from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
@@ -54,6 +57,7 @@ class Orchestrator:
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
         telegram_notifier: Optional["TelegramNotifier"] = None,
+        debug: bool = False,
     ):
         """
         Initialize orchestrator.
@@ -68,11 +72,13 @@ class Orchestrator:
             planner_model: Model for planner agent (optional, uses default if not specified)
             executor_model: Model for executor agent (optional, uses default if not specified)
             telegram_notifier: Optional TelegramNotifier for sending notifications
+            debug: If True, enable debug logging with console output
         """
         self.db_path = db_path
         self.on_output = on_output or print
         self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
+        self._debug = debug
 
         # Model configuration
         self.planner_model = planner_model
@@ -125,6 +131,17 @@ class Orchestrator:
                 self.state = self.state_machine.get_state(self.session_id)
         else:
             raise ValueError("Must provide either feature_description or session_id")
+
+        # Initialize session logger (after session_id is available)
+        # Each session gets its own logger to support queue/watch mode
+        try:
+            self._logger, self._log_path = create_session_logger(
+                self.session_id, debug=self._debug
+            )
+        except Exception:
+            # Fallback to null logger if logging setup fails
+            self._logger = get_null_logger()
+            self._log_path = None
 
         # Agents (created on demand)
         self.planner: Optional[PlannerAgent] = None
@@ -277,6 +294,16 @@ class Orchestrator:
             if self.state.phase == "completed":
                 self._output("\n=== Workflow Complete ===\n")
 
+        except KeyboardInterrupt:
+            # User cancelled - don't mark as failed, just re-raise
+            self._logger.info("Workflow interrupted by user (KeyboardInterrupt)")
+            raise
+        except OrchestratorError:
+            # Already a typed error (e.g., from _handle_fatal_error), re-raise
+            raise
+        except Exception as e:
+            # Unexpected error - handle and wrap
+            self._handle_fatal_error(e)
         finally:
             # Cleanup
             self._cleanup()
@@ -1006,6 +1033,63 @@ The orchestrator will save the file for you.
         if not success:
             raise RuntimeError(f"Failed to pause: {error}")
 
+    def _handle_fatal_error(self, error: Exception) -> None:
+        """
+        Handle fatal error: mark session failed, log to DB and file.
+
+        This ensures session row is marked failed even if queue mode
+        only catches at CLI level. Without this, the session row would
+        remain "active" causing misleading `orchestrator list` output
+        and incorrect stuck session detection.
+
+        Args:
+            error: The exception that caused the failure
+
+        Raises:
+            AgentError: Always raises with session context for CLI boundary
+        """
+        # Log full stack trace to file
+        self._logger.exception("Orchestration failed")
+
+        # Get current state for context
+        session = db.get_session(self.session_id, self.db_path)
+        current_phase = session.get("phase") if session else "unknown"
+        current_milestone = session.get("current_milestone") if session else None
+
+        # Transition to FAILED state (sets phase=completed, status=failed)
+        try:
+            self.state_machine.transition(
+                self.session_id,
+                TransitionEvent.FAILED.value
+            )
+        except Exception as transition_error:
+            # Log but don't mask the original error
+            self._logger.error(f"Failed to transition to FAILED state: {transition_error}")
+
+        # Persist error details to session_errors table
+        stack_trace = "".join(traceback.format_exception(type(error), error, error.__traceback__))
+        try:
+            db.log_session_error(
+                session_id=self.session_id,
+                error_type=type(error).__name__,
+                error_message=str(error),
+                stack_trace=stack_trace,
+                phase=current_phase,
+                milestone_number=current_milestone,
+                log_file_path=self._log_path,
+                db_path=self.db_path
+            )
+        except Exception as db_error:
+            # Log but don't mask the original error
+            self._logger.error(f"Failed to persist error to database: {db_error}")
+
+        # Wrap and re-raise as typed exception for CLI boundary
+        raise AgentError(
+            str(error),
+            session_id=self.session_id,
+            log_path=self._log_path
+        ) from error
+
     def _cleanup(self) -> None:
         """Cleanup resources."""
         if self.planner:
@@ -1014,6 +1098,9 @@ The orchestrator will save the file for you.
             self.executor.close()
         if self.telegram_notifier:
             self.telegram_notifier.close()
+        # Teardown session logger (prevents handler accumulation in queue/watch mode)
+        if hasattr(self, '_logger') and self._logger:
+            teardown_session_logger(self._logger)
 
     def get_status(self) -> Dict[str, Any]:
         """

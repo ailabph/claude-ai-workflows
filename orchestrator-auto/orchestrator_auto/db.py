@@ -233,6 +233,27 @@ def init_db(db_path: Optional[str] = None) -> None:
             ON queue_items(session_id)
         """)
 
+        # Session errors table (for error tracking and debugging)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_errors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                error_type TEXT NOT NULL,
+                error_message TEXT NOT NULL,
+                stack_trace TEXT,
+                phase TEXT,
+                milestone_number INTEGER,
+                log_file_path TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_session_errors_session_id
+            ON session_errors(session_id)
+        """)
+
         conn.commit()
 
 
@@ -983,3 +1004,101 @@ def clear_active_queue(
         """, (project_id,))
 
         return cursor.rowcount
+
+
+# ============================================================================
+# Session Errors
+# ============================================================================
+
+def log_session_error(
+    session_id: str,
+    error_type: str,
+    error_message: str,
+    stack_trace: Optional[str] = None,
+    phase: Optional[str] = None,
+    milestone_number: Optional[int] = None,
+    log_file_path: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Log an error for a session.
+
+    Args:
+        session_id: Session where the error occurred
+        error_type: Exception class name (e.g., "AgentError")
+        error_message: Error message string
+        stack_trace: Full stack trace (optional)
+        phase: Phase when error occurred (optional)
+        milestone_number: Current milestone when error occurred (optional)
+        log_file_path: Path to the error log file (optional)
+        db_path: Custom database path
+
+    Returns:
+        The error record ID
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO session_errors (
+                session_id, error_type, error_message, stack_trace,
+                phase, milestone_number, log_file_path
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, error_type, error_message, stack_trace,
+              phase, milestone_number, log_file_path))
+
+        return cursor.lastrowid
+
+
+def get_session_errors(
+    session_id: str,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get all errors for a session, ordered by most recent first.
+
+    Args:
+        session_id: Session ID to query
+        db_path: Custom database path
+
+    Returns:
+        List of error dicts
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM session_errors
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+        """, (session_id,))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_latest_session_error(
+    session_id: str,
+    db_path: Optional[str] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Get the most recent error for a session.
+
+    Args:
+        session_id: Session ID to query
+        db_path: Custom database path
+
+    Returns:
+        Error dict or None if no errors
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM session_errors
+            WHERE session_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+        """, (session_id,))
+
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return None

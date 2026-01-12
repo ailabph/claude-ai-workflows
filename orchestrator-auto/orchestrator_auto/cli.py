@@ -16,6 +16,7 @@ from . import git
 from . import __version__
 from .engine import Orchestrator
 from .state import Phase, Status
+from .exceptions import OrchestratorError
 from .parser import extract_feature_from_plan, parse_plan_file
 from .auth import detect_auth, format_auth_display
 from .config import (
@@ -73,6 +74,82 @@ def format_status(status: str) -> str:
     }
     color = colors.get(status, "white")
     return click.style(status.upper(), fg=color, bold=True)
+
+
+def _handle_orchestrator_error(
+    e: OrchestratorError,
+    debug: bool = False,
+    db_path: Optional[str] = None
+) -> None:
+    """
+    Handle OrchestratorError with user-friendly output.
+
+    Displays error message, log file path, and conditional retry guidance
+    based on whether a plan_path exists for the session.
+    """
+    import traceback as tb
+
+    click.echo()
+    click.secho(f"Error: {e}", fg="red", bold=True)
+    click.echo()
+
+    if e.session_id:
+        click.echo(f"Session: {e.session_id} (status: failed)")
+
+    if e.log_path:
+        click.echo(f"Log file: {e.log_path}")
+
+    click.echo()
+
+    # Conditional retry guidance based on plan_path
+    if e.session_id:
+        try:
+            session = db.get_session(e.session_id, db_path)
+            if session and session.get("plan_path"):
+                click.echo("To retry with the same plan:")
+                click.secho(f"  orchestrator start --plan {session['plan_path']}", fg="cyan")
+            elif session and session.get("feature_description"):
+                click.echo("To retry with the same feature:")
+                # Escape quotes in feature description
+                feature = session["feature_description"].replace('"', '\\"')
+                click.secho(f'  orchestrator start -f "{feature}"', fg="cyan")
+            else:
+                click.echo("To start a new session:")
+                click.secho('  orchestrator start -f "your feature"', fg="cyan")
+        except Exception:
+            # If we can't get session info, just show generic guidance
+            click.echo("To start a new session:")
+            click.secho('  orchestrator start -f "your feature"', fg="cyan")
+
+    click.echo()
+    click.echo("Use --debug flag for full stack trace.")
+
+    if debug and e.__cause__:
+        click.echo()
+        click.secho("Stack trace:", fg="yellow")
+        tb.print_exception(type(e.__cause__), e.__cause__, e.__cause__.__traceback__)
+
+
+def _handle_unexpected_error(e: Exception, debug: bool = False) -> None:
+    """
+    Handle unexpected errors with user-friendly output.
+
+    For errors that are not OrchestratorError (i.e., not handled at engine level).
+    """
+    import traceback as tb
+
+    click.echo()
+    click.secho(f"Unexpected error: {e}", fg="red", bold=True)
+    click.echo()
+    click.echo("This may be a bug. Please report at:")
+    click.secho("  https://github.com/anthropics/claude-code/issues", fg="cyan")
+    click.echo()
+    click.echo("Use --debug flag for full stack trace.")
+
+    if debug:
+        click.echo()
+        click.secho("Stack trace:", fg="yellow")
+        tb.print_exception(type(e), e, e.__traceback__)
 
 
 def display_auth_info() -> None:
@@ -959,6 +1036,7 @@ def cli():
 @click.option('--auto-commit-model', help='Model for smart commit messages (default: executor model). Aliases: opus, sonnet, haiku')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--no-rename', is_flag=True, default=False, help='Do not rename plan file to *_done.md on completion')
+@click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 def start(
     feature: Optional[str],
     db_path: Optional[str],
@@ -974,6 +1052,7 @@ def start(
     auto_commit_model: Optional[str],
     telegram: Optional[bool],
     no_rename: bool,
+    debug: bool,
 ):
     """Start a new workflow session or queue."""
     global _current_orchestrator
@@ -1054,6 +1133,7 @@ def start(
             planner_model=resolved_planner,
             executor_model=resolved_executor,
             telegram_notifier=telegram_notifier,
+            debug=debug,
         )
         _current_orchestrator = orch
 
@@ -1099,8 +1179,11 @@ def start(
     except KeyboardInterrupt:
         # Handled by signal handler
         pass
+    except OrchestratorError as e:
+        _handle_orchestrator_error(e, debug=debug, db_path=db_path)
+        sys.exit(1)
     except Exception as e:
-        click.secho(f"✗ Error: {e}", fg="red", bold=True)
+        _handle_unexpected_error(e, debug=debug)
         sys.exit(1)
     finally:
         if _current_orchestrator:
@@ -1118,7 +1201,8 @@ def start(
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
 @click.option('--auto-commit-model', default=None, help='Model for AI commit messages (default: executor model)')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str]):
+@click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str], debug: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -1180,6 +1264,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
             on_output=output_callback,
             show_activity=show_activity,
             telegram_notifier=telegram_notifier,
+            debug=debug,
         )
         _current_orchestrator = orch
 
@@ -1304,6 +1389,50 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
     except KeyboardInterrupt:
         # Handled by signal handler
         pass
+    except OrchestratorError as e:
+        # Check if this was a queue session that errored
+        try:
+            queue_item = db.get_queue_item_by_session_id(session_id, db_path)
+            if queue_item:
+                # Mark queue item as failed
+                db.update_queue_item(
+                    queue_item["id"],
+                    db_path,
+                    status="failed",
+                    error_message=str(e),
+                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                click.echo()
+                click.secho("Queue item marked as failed", fg="red")
+
+                # Attempt to continue queue (fail-forward)
+                if telegram_notifier:
+                    telegram_notifier.notify_queue_item_failed(
+                        queue_item["position"] + 1,
+                        queue_item["feature_description"],
+                        str(e)
+                    )
+
+                click.echo()
+                click.secho("Attempting to continue queue (fail-forward)...", fg="yellow")
+
+                _run_queue(
+                    project_id=queue_item["project_id"],
+                    db_path=db_path,
+                    show_activity=show_activity,
+                    planner_model=None,
+                    executor_model=None,
+                    auto_commit=auto_commit,
+                    telegram=telegram,
+                    smart_commit=smart_commit,
+                    auto_commit_model=auto_commit_model,
+                )
+        except Exception:
+            # If we can't handle queue continuation, just show the original error
+            pass
+
+        _handle_orchestrator_error(e, debug=debug, db_path=db_path)
+        sys.exit(1)
     except Exception as e:
         # Check if this was a queue session that errored
         try:
@@ -1346,7 +1475,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
             # If we can't handle queue continuation, just show the original error
             pass
 
-        click.secho(f"✗ Error: {e}", fg="red", bold=True)
+        _handle_unexpected_error(e, debug=debug)
         sys.exit(1)
     finally:
         if _current_orchestrator:
@@ -1740,6 +1869,34 @@ def status(session_id: str, db_path: Optional[str]):
                 click.echo(f"  Question: {blocker['question']}")
                 created = datetime.fromisoformat(blocker['created_at']).strftime('%Y-%m-%d %H:%M:%S')
                 click.echo(f"  Created: {created}")
+                click.echo()
+
+        # Error details for failed sessions
+        if session['status'] == Status.FAILED:
+            latest_error = db.get_latest_session_error(session_id, db_path)
+            if latest_error:
+                click.secho("ERROR DETAILS:", fg="red", bold=True)
+                click.echo()
+                click.echo(f"  Type: {latest_error['error_type']}")
+                click.echo(f"  Message: {latest_error['error_message']}")
+                if latest_error.get('phase'):
+                    click.echo(f"  Phase: {latest_error['phase']}")
+                if latest_error.get('milestone_number'):
+                    click.echo(f"  Milestone: {latest_error['milestone_number']}")
+                if latest_error.get('log_file_path'):
+                    click.echo(f"  Log file: {latest_error['log_file_path']}")
+                error_created = datetime.fromisoformat(latest_error['created_at']).strftime('%Y-%m-%d %H:%M:%S')
+                click.echo(f"  Time: {error_created}")
+                click.echo()
+
+                # Retry guidance
+                if session.get("plan_path"):
+                    click.echo("To retry with the same plan:")
+                    click.secho(f"  orchestrator start --plan {session['plan_path']}", fg="cyan")
+                elif session.get("feature_description"):
+                    click.echo("To retry with the same feature:")
+                    feature = session["feature_description"].replace('"', '\\"')
+                    click.secho(f'  orchestrator start -f "{feature}"', fg="cyan")
                 click.echo()
 
         # Message count

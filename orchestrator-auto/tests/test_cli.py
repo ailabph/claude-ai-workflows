@@ -136,7 +136,8 @@ class TestStartCommand:
 
         # Verify error handling
         assert result.exit_code != 0
-        assert 'Error' in result.output
+        # New error format uses "Unexpected error" for non-OrchestratorError exceptions
+        assert 'error' in result.output.lower()
 
     @patch('orchestrator_auto.cli.Orchestrator')
     def test_start_with_plan(self, mock_orch_class, runner, temp_db, tmp_path):
