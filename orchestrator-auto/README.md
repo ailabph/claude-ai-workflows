@@ -169,6 +169,7 @@ orchestrator start -f "Feature description" [options]
 | `--no-telegram` | Disable Telegram notifications |
 | `--no-rename` | Do not rename plan file to `*_done.md` on completion |
 | `--no-activity` | Disable activity indicator |
+| `--debug` | Enable debug mode (full stack trace on error) |
 | `-d, --db-path` | Custom database path |
 
 #### Queue Mode
@@ -216,6 +217,7 @@ orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 | `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
 | `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
 | `--auto-commit-model` | Model for AI commit messages (default: executor model) |
+| `--debug` | Enable debug mode (full stack trace on error) |
 
 ### `reset` - Reset orphaned session
 
@@ -775,7 +777,9 @@ orchestrator-auto/
 │   ├── telegram.py          # Telegram notifications
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
-│   └── db.py                # Database ops
+│   ├── db.py                # Database ops
+│   ├── logging_config.py    # Per-session logging
+│   └── exceptions.py        # Custom exception hierarchy
 ├── tests/
 └── README.md
 ```
@@ -796,6 +800,22 @@ pytest tests/ --cov=orchestrator_auto
 | Session not found | Run `orchestrator list` to find valid IDs |
 | Database locked | Close other orchestrator instances |
 | Agent timeout | Check internet/API key |
+| Workflow error | Check log file at `~/.claude_orchestrator/logs/error_<session_id>_*.log` |
+
+### Error Handling
+
+When a workflow fails, the orchestrator:
+1. Logs full stack trace to `~/.claude_orchestrator/logs/error_<session_id>_<timestamp>.log`
+2. Marks the session as failed with error context
+3. Shows user-friendly message with log file path
+
+Use `--debug` flag for immediate stack trace output:
+```bash
+orchestrator start -f "My feature" --debug
+orchestrator resume <session-id> --debug
+```
+
+Use `orchestrator status <session-id>` to view error details for failed sessions.
 
 ---
 
@@ -844,6 +864,17 @@ pytest tests/ --cov=orchestrator_auto
 ---
 
 ## Changelog
+
+### v0.10.1 - Error Handling & Logging
+
+- **Graceful error handling** - User-friendly error messages with log file paths
+- **Per-session logging** - Stack traces logged to `~/.claude_orchestrator/logs/error_<session_id>_<timestamp>.log`
+- **Lazy file creation** - Log files only created when errors occur (no empty files)
+- **CLI: `--debug`** - Flag for immediate stack trace output on `start` and `resume` commands
+- **CLI: `status`** - Shows error details (type, message, log path) for failed sessions
+- **Custom exceptions** - `OrchestratorError`, `AgentError`, `SessionStateError`, `PlanParseError` with session context
+- **DB: `session_errors` table** - Persist error details for debugging and retry guidance
+- **New modules** - `logging_config.py` (per-session loggers), `exceptions.py` (exception hierarchy)
 
 ### v0.10.0 - Watch Mode
 
