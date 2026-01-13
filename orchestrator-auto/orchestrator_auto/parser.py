@@ -138,8 +138,8 @@ def parse_plan_file(plan_path: str) -> Dict[str, Any]:
     content = path.read_text()
 
     # Extract milestones using regex
-    # Pattern: ### Milestone N: Name
-    milestone_pattern = r'###\s*Milestone\s*(\d+):\s*(.+)'
+    # Pattern: ## Milestone N: Name or ### Milestone N: Name
+    milestone_pattern = r'#{2,3}\s*Milestone\s*(\d+):\s*(.+)'
     matches = re.findall(milestone_pattern, content, re.IGNORECASE)
 
     if not matches:

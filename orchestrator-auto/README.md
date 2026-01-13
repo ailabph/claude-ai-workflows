@@ -344,7 +344,7 @@ orchestrator convert <input.md> [options]
 | `--validate-only` | Only check if file is orchestrator-compatible |
 | `--dry-run` | Preview conversion without writing |
 
-Uses AI to convert regular markdown plans into orchestrator-compatible format with properly formatted milestone headers (`### Milestone N: Name`).
+Uses AI to convert regular markdown plans into orchestrator-compatible format with properly formatted milestone headers (`## Milestone N: Name` or `### Milestone N: Name`).
 
 **Exit codes:**
 - 0: Success (conversion completed or file already valid)
