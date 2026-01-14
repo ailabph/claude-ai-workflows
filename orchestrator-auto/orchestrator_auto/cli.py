@@ -380,6 +380,7 @@ def _handle_queue_mode(
     smart_commit: Optional[bool] = None,
     auto_commit_model: Optional[str] = None,
     no_rename: bool = False,
+    mcp_config_path: Optional[str] = None,
 ) -> None:
     """
     Handle --queue mode: validate, create/resume queue, run queue.
@@ -414,6 +415,7 @@ def _handle_queue_mode(
             smart_commit=smart_commit,
             auto_commit_model=auto_commit_model,
             no_rename=no_rename,
+            mcp_config_path=mcp_config_path,
         )
         return
 
@@ -462,6 +464,7 @@ def _handle_queue_mode(
                 smart_commit=smart_commit,
                 auto_commit_model=auto_commit_model,
                 no_rename=no_rename,
+                mcp_config_path=mcp_config_path,
             )
             return
         else:
@@ -533,6 +536,7 @@ def _handle_queue_mode(
         smart_commit=smart_commit,
         auto_commit_model=auto_commit_model,
         no_rename=no_rename,
+        mcp_config_path=mcp_config_path,
     )
 
 
@@ -740,6 +744,7 @@ def _run_queue(
     smart_commit: Optional[bool] = None,
     auto_commit_model: Optional[str] = None,
     no_rename: bool = False,
+    mcp_config_path: Optional[str] = None,
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
@@ -842,6 +847,7 @@ def _run_queue(
                 planner_model=resolved_planner,
                 executor_model=resolved_executor,
                 telegram_notifier=telegram_notifier,
+                mcp_config_path=mcp_config_path,
             )
             _current_orchestrator = orch
 
@@ -1036,6 +1042,7 @@ def cli():
 @click.option('--auto-commit-model', help='Model for smart commit messages (default: executor model). Aliases: opus, sonnet, haiku')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--no-rename', is_flag=True, default=False, help='Do not rename plan file to *_done.md on completion')
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (.mcp.json)')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 def start(
     feature: Optional[str],
@@ -1052,6 +1059,7 @@ def start(
     auto_commit_model: Optional[str],
     telegram: Optional[bool],
     no_rename: bool,
+    mcp_config: Optional[str],
     debug: bool,
 ):
     """Start a new workflow session or queue."""
@@ -1093,6 +1101,7 @@ def start(
             telegram=telegram,
             smart_commit=smart_commit,
             no_rename=no_rename,
+            mcp_config_path=mcp_config,
         )
         return
 
@@ -1134,6 +1143,7 @@ def start(
             executor_model=resolved_executor,
             telegram_notifier=telegram_notifier,
             debug=debug,
+            mcp_config_path=mcp_config,
         )
         _current_orchestrator = orch
 
@@ -1201,8 +1211,9 @@ def start(
 @click.option('--auto-commit/--no-auto-commit', default=False, help='Auto-commit changes on workflow completion (default: disabled)')
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
 @click.option('--auto-commit-model', default=None, help='Model for AI commit messages (default: executor model)')
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (session-only override, not persisted)')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str], debug: bool):
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str], mcp_config: Optional[str], debug: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -1265,6 +1276,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
             show_activity=show_activity,
             telegram_notifier=telegram_notifier,
             debug=debug,
+            mcp_config_path=mcp_config,
         )
         _current_orchestrator = orch
 
@@ -1343,6 +1355,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     telegram=telegram,
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
+                    mcp_config_path=mcp_config,
                 )
 
             elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
@@ -1381,6 +1394,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     telegram=telegram,
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
+                    mcp_config_path=mcp_config,
                 )
         else:
             # Not part of a queue - just complete normally
@@ -1426,6 +1440,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     telegram=telegram,
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
+                    mcp_config_path=mcp_config,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error
@@ -1470,6 +1485,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     telegram=telegram,
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
+                    mcp_config_path=mcp_config,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error
@@ -1488,7 +1504,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 @click.argument('answer')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
-def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool]):
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (session-only override, not persisted)')
+def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool], mcp_config: Optional[str]):
     """Respond to a blocker and continue workflow."""
     try:
         click.secho(f"Responding to session: {session_id}", fg="cyan", bold=True)
@@ -1519,7 +1536,7 @@ def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Opti
 
         # Resume with answer (will call resume command internally)
         ctx = click.get_current_context()
-        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram)
+        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram, mcp_config=mcp_config)
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
@@ -2887,6 +2904,7 @@ def _rename_to_terminal(
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI commit messages')
 @click.option('--telegram/--no-telegram', default=None, help='Enable Telegram notifications')
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator')
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file for all watched sessions')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -2898,6 +2916,7 @@ def watch(
     smart_commit: Optional[bool],
     telegram: Optional[bool],
     show_activity: bool,
+    mcp_config: Optional[str],
 ):
     """Watch a directory for new plan files and execute them.
 
@@ -3219,6 +3238,7 @@ def _process_watch_file(
             executor_model=resolved_executor,
             plan_path=str(executed_path),
             telegram_notifier=telegram_notifier,
+            mcp_config_path=mcp_config,
         )
 
         orch.start()

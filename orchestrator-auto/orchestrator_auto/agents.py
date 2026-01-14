@@ -6,7 +6,7 @@ with appropriate system prompts and tool permissions.
 """
 
 import asyncio
-from typing import Optional, Dict, Any, List, Callable
+from typing import Optional, Dict, Any, List, Callable, Union
 from pathlib import Path
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
@@ -29,6 +29,33 @@ DEFAULT_TOOLS = [
     "Grep",
 ]
 
+# MCP configuration types (matches Claude SDK)
+McpServerConfig = Dict[str, Any]  # {"command": str, "args": list, "env": dict}
+McpServersConfig = Dict[str, McpServerConfig]  # {"playwright": {...}, "figma": {...}}
+
+
+def build_allowed_tools(
+    base_tools: Optional[List[str]] = None,
+    mcp_tools: Optional[List[str]] = None,
+) -> List[str]:
+    """
+    Build the allowed tools list by combining base tools with MCP tools.
+
+    This helper ensures clean import boundaries - engine.py doesn't need
+    to import DEFAULT_TOOLS directly.
+
+    Args:
+        base_tools: Base tool list (default: DEFAULT_TOOLS)
+        mcp_tools: Additional MCP tool patterns to add
+
+    Returns:
+        Combined list of allowed tools
+    """
+    tools = list(base_tools or DEFAULT_TOOLS)
+    if mcp_tools:
+        tools.extend(mcp_tools)
+    return tools
+
 
 class BaseAgent:
     """Base class for orchestrator agents."""
@@ -41,6 +68,7 @@ class BaseAgent:
         session_id: str = "default",
         hooks: Optional[Dict[str, Any]] = None,
         cwd: Optional[Path] = None,
+        mcp_servers: Optional[Union[McpServersConfig, str]] = None,
     ):
         """
         Initialize the agent.
@@ -52,6 +80,7 @@ class BaseAgent:
             session_id: Session ID for the agent
             hooks: Optional hooks configuration
             cwd: Working directory for agent (default: current directory)
+            mcp_servers: MCP server configuration dict or path to .mcp.json file
         """
         self.system_prompt = system_prompt
         self.allowed_tools = allowed_tools or DEFAULT_TOOLS
@@ -59,6 +88,7 @@ class BaseAgent:
         self.session_id = session_id
         self.hooks = hooks
         self.cwd = cwd or Path.cwd()
+        self.mcp_servers = mcp_servers
         self._options: Optional[ClaudeAgentOptions] = None
 
         # Client for conversation continuity
@@ -84,13 +114,19 @@ class BaseAgent:
     def _get_options(self) -> ClaudeAgentOptions:
         """Get or create agent options."""
         if self._options is None:
-            self._options = ClaudeAgentOptions(
-                system_prompt=self.system_prompt,
-                tools=self.allowed_tools,
-                model=self.model,
-                cwd=self.cwd,
-                permission_mode="bypassPermissions",  # Auto-approve all operations including Bash
-            )
+            options_kwargs = {
+                "system_prompt": self.system_prompt,
+                "tools": self.allowed_tools,
+                "model": self.model,
+                "cwd": self.cwd,
+                "permission_mode": "bypassPermissions",  # Auto-approve all operations including Bash
+            }
+
+            # Add MCP servers if configured
+            if self.mcp_servers:
+                options_kwargs["mcp_servers"] = self.mcp_servers
+
+            self._options = ClaudeAgentOptions(**options_kwargs)
         return self._options
 
     async def _get_client(self) -> ClaudeSDKClient:
@@ -204,6 +240,7 @@ class PlannerAgent(BaseAgent):
         self,
         model: str = "claude-opus-4-5-20251101",  # Use Opus for strategic planning
         session_id: str = "planner",
+        mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         **kwargs
     ):
         """
@@ -212,12 +249,14 @@ class PlannerAgent(BaseAgent):
         Args:
             model: Claude model to use (default: Opus for planning)
             session_id: Session ID for the agent
+            mcp_servers: MCP server configuration dict or path to .mcp.json file
             **kwargs: Additional arguments for BaseAgent
         """
         super().__init__(
             system_prompt=PLANNER_SYSTEM_PROMPT,
             model=model,
             session_id=session_id,
+            mcp_servers=mcp_servers,
             **kwargs
         )
 
@@ -260,6 +299,7 @@ class ExecutorAgent(BaseAgent):
         self,
         model: str = "claude-sonnet-4-5-20250929",  # Use Sonnet for implementation
         session_id: str = "executor",
+        mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         **kwargs
     ):
         """
@@ -268,12 +308,14 @@ class ExecutorAgent(BaseAgent):
         Args:
             model: Claude model to use (default: Sonnet for execution)
             session_id: Session ID for the agent
+            mcp_servers: MCP server configuration dict or path to .mcp.json file
             **kwargs: Additional arguments for BaseAgent
         """
         super().__init__(
             system_prompt=EXECUTOR_SYSTEM_PROMPT,
             model=model,
             session_id=session_id,
+            mcp_servers=mcp_servers,
             **kwargs
         )
 
@@ -307,6 +349,8 @@ def create_planner_agent(
     session_id: str = "planner",
     hooks: Optional[Dict[str, Any]] = None,
     cwd: Optional[Path] = None,
+    mcp_servers: Optional[Union[McpServersConfig, str]] = None,
+    allowed_tools: Optional[List[str]] = None,
 ) -> PlannerAgent:
     """
     Factory function to create a Planner agent.
@@ -316,6 +360,8 @@ def create_planner_agent(
         session_id: Session ID for the agent
         hooks: Optional hooks configuration
         cwd: Working directory
+        mcp_servers: MCP server configuration dict or path to .mcp.json file
+        allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
 
     Returns:
         PlannerAgent instance
@@ -327,6 +373,10 @@ def create_planner_agent(
         kwargs["hooks"] = hooks
     if cwd:
         kwargs["cwd"] = cwd
+    if mcp_servers:
+        kwargs["mcp_servers"] = mcp_servers
+    if allowed_tools:
+        kwargs["allowed_tools"] = allowed_tools
 
     return PlannerAgent(**kwargs)
 
@@ -336,6 +386,8 @@ def create_executor_agent(
     session_id: str = "executor",
     hooks: Optional[Dict[str, Any]] = None,
     cwd: Optional[Path] = None,
+    mcp_servers: Optional[Union[McpServersConfig, str]] = None,
+    allowed_tools: Optional[List[str]] = None,
 ) -> ExecutorAgent:
     """
     Factory function to create an Executor agent.
@@ -345,6 +397,8 @@ def create_executor_agent(
         session_id: Session ID for the agent
         hooks: Optional hooks configuration
         cwd: Working directory
+        mcp_servers: MCP server configuration dict or path to .mcp.json file
+        allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
 
     Returns:
         ExecutorAgent instance
@@ -356,6 +410,10 @@ def create_executor_agent(
         kwargs["hooks"] = hooks
     if cwd:
         kwargs["cwd"] = cwd
+    if mcp_servers:
+        kwargs["mcp_servers"] = mcp_servers
+    if allowed_tools:
+        kwargs["allowed_tools"] = allowed_tools
 
     return ExecutorAgent(**kwargs)
 

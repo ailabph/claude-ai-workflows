@@ -425,3 +425,259 @@ class TestAutoCommitModelConfig:
         """Test ultimate fallback to default executor model."""
         result = config.get_auto_commit_model(None, None)
         assert result == config.DEFAULT_EXECUTOR_MODEL
+
+
+# ============================================================================
+# MCP Configuration Tests
+# ============================================================================
+
+
+class TestExpandEnvVars:
+    """Test environment variable expansion in MCP config."""
+
+    def test_expand_env_vars_substitutes_variables(self, monkeypatch):
+        """Should expand ${VAR} syntax in config."""
+        monkeypatch.setenv("MY_TOKEN", "secret123")
+
+        obj = {"env": {"TOKEN": "${MY_TOKEN}"}}
+        expanded = config.expand_env_vars(obj)
+
+        assert expanded["env"]["TOKEN"] == "secret123"
+
+    def test_expand_env_vars_leaves_unset_unchanged(self):
+        """Should leave ${VAR} unchanged if not set."""
+        obj = {"env": {"TOKEN": "${UNDEFINED_VAR_XYZ}"}}
+        expanded = config.expand_env_vars(obj)
+
+        assert expanded["env"]["TOKEN"] == "${UNDEFINED_VAR_XYZ}"
+
+    def test_expand_env_vars_nested_dict(self, monkeypatch):
+        """Should expand in nested dicts."""
+        monkeypatch.setenv("NESTED_VAL", "deep_value")
+
+        obj = {
+            "level1": {
+                "level2": {
+                    "key": "${NESTED_VAL}"
+                }
+            }
+        }
+        expanded = config.expand_env_vars(obj)
+
+        assert expanded["level1"]["level2"]["key"] == "deep_value"
+
+    def test_expand_env_vars_list(self, monkeypatch):
+        """Should expand in lists."""
+        monkeypatch.setenv("LIST_VAL", "item_value")
+
+        obj = {"items": ["${LIST_VAL}", "static"]}
+        expanded = config.expand_env_vars(obj)
+
+        assert expanded["items"][0] == "item_value"
+        assert expanded["items"][1] == "static"
+
+    def test_expand_env_vars_passthrough_non_string(self):
+        """Should pass through non-string values."""
+        obj = {"number": 42, "bool": True, "none": None}
+        expanded = config.expand_env_vars(obj)
+
+        assert expanded["number"] == 42
+        assert expanded["bool"] is True
+        assert expanded["none"] is None
+
+
+class TestLoadMcpConfigRaw:
+    """Test raw MCP config loading (no env expansion)."""
+
+    def test_load_mcp_config_raw_explicit_path(self, tmp_path):
+        """Load MCP config from explicit path."""
+        import json
+
+        config_file = tmp_path / "test-mcp.json"
+        mcp_config = {
+            "mcpServers": {
+                "playwright": {"command": "npx", "args": ["@playwright/mcp"]}
+            }
+        }
+        config_file.write_text(json.dumps(mcp_config))
+
+        servers, planner_cfg, executor_cfg = config.load_mcp_config_raw(
+            mcp_config_path=str(config_file)
+        )
+
+        assert servers == {"playwright": {"command": "npx", "args": ["@playwright/mcp"]}}
+        assert planner_cfg == {}
+        assert executor_cfg == {}
+
+    def test_load_mcp_config_raw_preserves_env_vars(self, tmp_path):
+        """Raw config should preserve ${VAR} syntax."""
+        import json
+
+        config_file = tmp_path / ".mcp.json"
+        mcp_config = {
+            "mcpServers": {
+                "figma": {
+                    "command": "npx",
+                    "env": {"FIGMA_TOKEN": "${FIGMA_ACCESS_TOKEN}"}
+                }
+            }
+        }
+        config_file.write_text(json.dumps(mcp_config))
+
+        servers, _, _ = config.load_mcp_config_raw(
+            mcp_config_path=str(config_file)
+        )
+
+        # Should NOT expand env vars
+        assert servers["figma"]["env"]["FIGMA_TOKEN"] == "${FIGMA_ACCESS_TOKEN}"
+
+    def test_load_mcp_config_raw_with_orchestrator_section(self, tmp_path):
+        """Load MCP config with orchestrator section."""
+        import json
+
+        config_file = tmp_path / ".mcp.json"
+        mcp_config = {
+            "mcpServers": {
+                "playwright": {"command": "npx"},
+                "figma": {"command": "figma-mcp"}
+            },
+            "orchestrator": {
+                "planner": {"mcpServers": ["figma"]},
+                "executor": {"mcpServers": ["playwright"]}
+            }
+        }
+        config_file.write_text(json.dumps(mcp_config))
+
+        servers, planner_cfg, executor_cfg = config.load_mcp_config_raw(
+            mcp_config_path=str(config_file)
+        )
+
+        assert servers == {
+            "playwright": {"command": "npx"},
+            "figma": {"command": "figma-mcp"}
+        }
+        assert planner_cfg == {"mcpServers": ["figma"]}
+        assert executor_cfg == {"mcpServers": ["playwright"]}
+
+    def test_load_mcp_config_raw_file_not_found(self):
+        """Should raise FileNotFoundError for missing explicit path."""
+        with pytest.raises(FileNotFoundError):
+            config.load_mcp_config_raw(mcp_config_path="/nonexistent/path.json")
+
+    def test_load_mcp_config_raw_no_config(self, tmp_path, monkeypatch):
+        """Should return None when no config found."""
+        # Isolate from user's global ~/.mcp.json
+        # Use *args to handle classmethod binding robustly
+        monkeypatch.setattr(Path, "home", lambda *_: tmp_path / "fake_home")
+
+        # No .mcp.json exists in project or fake home
+        servers, planner_cfg, executor_cfg = config.load_mcp_config_raw(
+            project_root=tmp_path
+        )
+
+        assert servers is None
+        assert planner_cfg is None
+        assert executor_cfg is None
+
+
+class TestLoadMcpConfig:
+    """Test MCP config loading with env expansion."""
+
+    def test_load_mcp_config_expands_env_vars(self, tmp_path, monkeypatch):
+        """Should expand env vars when loading config."""
+        import json
+
+        monkeypatch.setenv("FIGMA_TOKEN", "fig_123")
+
+        config_file = tmp_path / ".mcp.json"
+        mcp_config = {
+            "mcpServers": {
+                "figma": {
+                    "command": "npx",
+                    "env": {"FIGMA_ACCESS_TOKEN": "${FIGMA_TOKEN}"}
+                }
+            }
+        }
+        config_file.write_text(json.dumps(mcp_config))
+
+        servers, _, _ = config.load_mcp_config(
+            mcp_config_path=str(config_file)
+        )
+
+        assert servers["figma"]["env"]["FIGMA_ACCESS_TOKEN"] == "fig_123"
+
+
+class TestFilterMcpServers:
+    """Test MCP server filtering."""
+
+    def test_filter_mcp_servers_all(self):
+        """None filter returns all servers."""
+        servers = {"a": {}, "b": {}, "c": {}}
+        filtered = config.filter_mcp_servers(servers, None)
+
+        assert filtered == servers
+
+    def test_filter_mcp_servers_subset(self):
+        """Filter to subset of servers."""
+        servers = {"playwright": {}, "figma": {}, "github": {}}
+        filtered = config.filter_mcp_servers(servers, ["playwright", "figma"])
+
+        assert filtered == {"playwright": {}, "figma": {}}
+        assert "github" not in filtered
+
+    def test_filter_mcp_servers_missing(self):
+        """Missing servers are silently skipped."""
+        servers = {"playwright": {}}
+        filtered = config.filter_mcp_servers(servers, ["playwright", "nonexistent"])
+
+        assert filtered == {"playwright": {}}
+
+
+class TestGetAgentMcpConfig:
+    """Test agent-specific MCP config extraction."""
+
+    def test_get_agent_mcp_config_filters_servers(self):
+        """Should filter servers based on agent config."""
+        mcp_servers = {
+            "playwright": {"command": "npx"},
+            "figma": {"command": "figma-mcp"},
+            "github": {"command": "gh-mcp"}
+        }
+        agent_config = {"mcpServers": ["playwright"]}
+
+        filtered_servers, tools = config.get_agent_mcp_config(
+            mcp_servers, agent_config
+        )
+
+        assert filtered_servers == {"playwright": {"command": "npx"}}
+        assert "mcp__playwright__*" in tools
+
+    def test_get_agent_mcp_config_explicit_tools(self):
+        """Should use explicit tools if specified."""
+        mcp_servers = {"playwright": {"command": "npx"}}
+        agent_config = {
+            "mcpServers": ["playwright"],
+            "tools": ["mcp__playwright__browser_navigate", "mcp__playwright__browser_click"]
+        }
+
+        filtered_servers, tools = config.get_agent_mcp_config(
+            mcp_servers, agent_config
+        )
+
+        assert tools == [
+            "mcp__playwright__browser_navigate",
+            "mcp__playwright__browser_click"
+        ]
+
+    def test_get_agent_mcp_config_all_servers(self):
+        """No filter means all servers."""
+        mcp_servers = {"a": {}, "b": {}}
+        agent_config = {}  # No mcpServers filter
+
+        filtered_servers, tools = config.get_agent_mcp_config(
+            mcp_servers, agent_config
+        )
+
+        assert filtered_servers == {"a": {}, "b": {}}
+        assert "mcp__a__*" in tools
+        assert "mcp__b__*" in tools

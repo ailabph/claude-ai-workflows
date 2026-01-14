@@ -129,6 +129,14 @@ def init_db(db_path: Optional[str] = None) -> None:
             except sqlite3.OperationalError:
                 pass  # Column already exists
 
+        # Add mcp_config_json column if it doesn't exist (for MCP tool support)
+        try:
+            cursor.execute("""
+                ALTER TABLE sessions ADD COLUMN mcp_config_json TEXT
+            """)
+        except sqlite3.OperationalError:
+            pass  # Column already exists
+
         # Messages table
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS messages (
@@ -273,6 +281,7 @@ def create_session(
     project_id: Optional[str] = None,
     project_remote: Optional[str] = None,
     auth_info: Optional[Dict[str, Any]] = None,
+    mcp_config: Optional[Dict[str, Any]] = None,
     db_path: Optional[str] = None
 ) -> str:
     """
@@ -285,8 +294,10 @@ def create_session(
         project_id: Project identifier (repo root path)
         project_remote: Git remote URL (optional)
         auth_info: Authentication info dict from AuthInfo.to_db_dict()
+        mcp_config: MCP configuration dict (raw, with ${VAR} preserved)
         db_path: Custom database path
     """
+    import json
 
     session_id = str(uuid.uuid4())[:8]  # Short ID for CLI convenience
     now = _sqlite_timestamp()
@@ -296,18 +307,23 @@ def create_session(
     auth_signals = auth_info.get("auth_signals") if auth_info else None
     auth_detected_at = auth_info.get("auth_detected_at") if auth_info else None
 
+    # Serialize MCP config to JSON
+    mcp_config_json = json.dumps(mcp_config) if mcp_config else None
+
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO sessions (
                 id, feature_description, planner_model, executor_model,
                 heartbeat_at, project_id, project_remote,
-                auth_source, auth_signals, auth_detected_at
+                auth_source, auth_signals, auth_detected_at,
+                mcp_config_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (session_id, feature_description, planner_model, executor_model,
               now, project_id, project_remote,
-              auth_source, auth_signals, auth_detected_at))
+              auth_source, auth_signals, auth_detected_at,
+              mcp_config_json))
 
     return session_id
 
@@ -327,6 +343,35 @@ def get_session(
         row = cursor.fetchone()
         if row:
             return dict(row)
+        return None
+
+
+def get_session_mcp_config(
+    session_id: str,
+    db_path: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Get MCP configuration from a session.
+
+    Args:
+        session_id: Session identifier
+        db_path: Optional database path
+
+    Returns:
+        MCP config dict or None if not set
+    """
+    import json
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT mcp_config_json FROM sessions WHERE id = ?",
+            (session_id,)
+        )
+
+        result = cursor.fetchone()
+        if result and result[0]:
+            return json.loads(result[0])
         return None
 
 

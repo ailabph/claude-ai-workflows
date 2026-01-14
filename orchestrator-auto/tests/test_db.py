@@ -985,3 +985,156 @@ class TestQueueItemCRUD:
         """Test that clear_active_queue returns 0 when no items to clear."""
         count = db.clear_active_queue("/project/a", temp_db)
         assert count == 0
+
+
+# ============================================================================
+# MCP Configuration Persistence Tests
+# ============================================================================
+
+
+class TestMcpConfigPersistence:
+    """Test MCP configuration persistence in sessions."""
+
+    def test_create_session_without_mcp_config(self, temp_db):
+        """Test creating session without MCP config stores NULL."""
+        session_id = db.create_session(
+            feature_description="Test feature",
+            db_path=temp_db
+        )
+
+        mcp_config = db.get_session_mcp_config(session_id, temp_db)
+        assert mcp_config is None
+
+    def test_create_session_with_mcp_config(self, temp_db):
+        """Test creating session with MCP config stores JSON.
+
+        Note: Engine persists config as {"servers": ..., "planner": ..., "executor": ...}
+        which is the transformed format, not the raw .mcp.json format.
+        """
+        # Use the format engine.py actually persists (see engine.py:291-295)
+        mcp_config = {
+            "servers": {
+                "playwright": {
+                    "command": "npx",
+                    "args": ["@anthropic/mcp-server-playwright"]
+                }
+            },
+            "planner": {},
+            "executor": {},
+        }
+
+        session_id = db.create_session(
+            feature_description="Test feature",
+            mcp_config=mcp_config,
+            db_path=temp_db
+        )
+
+        retrieved = db.get_session_mcp_config(session_id, temp_db)
+
+        assert retrieved is not None
+        assert "servers" in retrieved
+        assert "playwright" in retrieved["servers"]
+        assert retrieved["servers"]["playwright"]["command"] == "npx"
+
+    def test_create_session_with_complex_mcp_config(self, temp_db):
+        """Test creating session with multiple MCP servers and per-agent config.
+
+        Note: Engine persists config as {"servers": ..., "planner": ..., "executor": ...}
+        which is the transformed format from load_mcp_config_raw().
+        """
+        # Use the format engine.py actually persists (see engine.py:291-295)
+        mcp_config = {
+            "servers": {
+                "playwright": {
+                    "command": "npx",
+                    "args": ["@anthropic/mcp-server-playwright"],
+                    "env": {
+                        "PLAYWRIGHT_HEADLESS": "true"
+                    }
+                },
+                "figma": {
+                    "command": "figma-mcp",
+                    "args": [],
+                    "env": {
+                        "FIGMA_ACCESS_TOKEN": "${FIGMA_TOKEN}"
+                    }
+                }
+            },
+            "planner": {
+                "mcpServers": ["figma"]
+            },
+            "executor": {
+                "mcpServers": ["playwright"]
+            },
+        }
+
+        session_id = db.create_session(
+            feature_description="Test feature",
+            mcp_config=mcp_config,
+            db_path=temp_db
+        )
+
+        retrieved = db.get_session_mcp_config(session_id, temp_db)
+
+        assert retrieved is not None
+        assert len(retrieved["servers"]) == 2
+        assert "playwright" in retrieved["servers"]
+        assert "figma" in retrieved["servers"]
+        assert retrieved["planner"]["mcpServers"] == ["figma"]
+        assert retrieved["executor"]["mcpServers"] == ["playwright"]
+        # Verify env vars are stored raw (not expanded)
+        assert retrieved["servers"]["figma"]["env"]["FIGMA_ACCESS_TOKEN"] == "${FIGMA_TOKEN}"
+
+    def test_get_session_mcp_config_nonexistent_session(self, temp_db):
+        """Test get_session_mcp_config returns None for nonexistent session."""
+        mcp_config = db.get_session_mcp_config("nonexistent", temp_db)
+        assert mcp_config is None
+
+    def test_mcp_config_column_exists(self, temp_db):
+        """Test that mcp_config_json column exists in sessions table."""
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("PRAGMA table_info(sessions)")
+            columns = {row[1] for row in cursor.fetchall()}
+
+        assert "mcp_config_json" in columns
+
+    def test_create_session_with_empty_mcp_config(self, temp_db):
+        """Test creating session with empty MCP config dict."""
+        # Engine format with empty servers
+        mcp_config = {"servers": {}, "planner": None, "executor": None}
+
+        session_id = db.create_session(
+            feature_description="Test feature",
+            mcp_config=mcp_config,
+            db_path=temp_db
+        )
+
+        retrieved = db.get_session_mcp_config(session_id, temp_db)
+
+        assert retrieved is not None
+        assert retrieved["servers"] == {}
+
+    def test_mcp_config_persists_across_reconnection(self, temp_db):
+        """Test that MCP config persists after closing and reopening connection."""
+        # Engine format
+        mcp_config = {
+            "servers": {
+                "test-server": {"command": "test-cmd"}
+            },
+            "planner": {},
+            "executor": {},
+        }
+
+        session_id = db.create_session(
+            feature_description="Test feature",
+            mcp_config=mcp_config,
+            db_path=temp_db
+        )
+
+        # Close connection explicitly (context manager handles it)
+        # Then retrieve again - simulating a resume scenario
+        retrieved = db.get_session_mcp_config(session_id, temp_db)
+
+        assert retrieved is not None
+        assert retrieved["servers"]["test-server"]["command"] == "test-cmd"

@@ -20,6 +20,7 @@ from orchestrator_auto.agents import (
     create_planner_agent,
     create_executor_agent,
     DEFAULT_TOOLS,
+    build_allowed_tools,
 )
 from orchestrator_auto.prompts import (
     PLANNER_SYSTEM_PROMPT,
@@ -296,3 +297,122 @@ class TestRecoveryWithDatabase:
         assert len(state["approved_milestones"]) == 1
         assert len(state["pending_milestones"]) >= 1
         assert state["message_count"] == 2
+
+
+# ============================================================================
+# MCP Configuration Tests
+# ============================================================================
+
+
+class TestBuildAllowedTools:
+    """Test build_allowed_tools helper function."""
+
+    def test_build_allowed_tools_defaults_to_default_tools(self):
+        """build_allowed_tools should use DEFAULT_TOOLS when no base provided."""
+        tools = build_allowed_tools()
+        assert tools == list(DEFAULT_TOOLS)
+
+    def test_build_allowed_tools_combines_lists(self):
+        """build_allowed_tools should combine base and MCP tools."""
+        tools = build_allowed_tools(mcp_tools=["mcp__playwright__*"])
+
+        # Should have all default tools plus MCP tool
+        assert "Read" in tools
+        assert "Write" in tools
+        assert "mcp__playwright__*" in tools
+
+    def test_build_allowed_tools_custom_base(self):
+        """build_allowed_tools should use custom base tools."""
+        tools = build_allowed_tools(
+            base_tools=["Read", "Write"],
+            mcp_tools=["mcp__figma__*"]
+        )
+
+        assert tools == ["Read", "Write", "mcp__figma__*"]
+
+    def test_build_allowed_tools_no_mcp(self):
+        """build_allowed_tools should work without MCP tools."""
+        tools = build_allowed_tools(base_tools=["Read"])
+        assert tools == ["Read"]
+
+    def test_build_allowed_tools_multiple_mcp(self):
+        """build_allowed_tools should handle multiple MCP tools."""
+        tools = build_allowed_tools(
+            mcp_tools=["mcp__playwright__*", "mcp__figma__*"]
+        )
+
+        assert "mcp__playwright__*" in tools
+        assert "mcp__figma__*" in tools
+
+
+class TestAgentMcpConfiguration:
+    """Test MCP configuration in agents."""
+
+    def test_base_agent_accepts_mcp_servers(self):
+        """BaseAgent should accept mcp_servers parameter."""
+        mcp_config = {
+            "playwright": {
+                "command": "npx",
+                "args": ["@anthropic/mcp-server-playwright"]
+            }
+        }
+        agent = BaseAgent(
+            system_prompt="Test",
+            mcp_servers=mcp_config,
+        )
+
+        assert agent.mcp_servers == mcp_config
+
+    def test_planner_agent_accepts_mcp_servers(self):
+        """PlannerAgent should accept mcp_servers parameter."""
+        mcp_config = {"figma": {"command": "figma-mcp"}}
+        agent = PlannerAgent(mcp_servers=mcp_config)
+
+        assert agent.mcp_servers == mcp_config
+
+    def test_executor_agent_accepts_mcp_servers(self):
+        """ExecutorAgent should accept mcp_servers parameter."""
+        mcp_config = {"playwright": {"command": "npx"}}
+        agent = ExecutorAgent(mcp_servers=mcp_config)
+
+        assert agent.mcp_servers == mcp_config
+
+    def test_create_planner_agent_with_mcp(self):
+        """create_planner_agent should accept MCP config."""
+        mcp_config = {"figma": {"command": "figma-mcp"}}
+        agent = create_planner_agent(mcp_servers=mcp_config)
+
+        assert agent.mcp_servers == mcp_config
+
+    def test_create_executor_agent_with_mcp(self):
+        """create_executor_agent should accept MCP config."""
+        mcp_config = {"playwright": {"command": "npx"}}
+        agent = create_executor_agent(mcp_servers=mcp_config)
+
+        assert agent.mcp_servers == mcp_config
+
+    def test_factory_with_allowed_tools(self):
+        """Factory functions should accept allowed_tools."""
+        custom_tools = ["Read", "Write", "mcp__playwright__*"]
+        agent = create_executor_agent(allowed_tools=custom_tools)
+
+        assert agent.allowed_tools == custom_tools
+
+    def test_agent_options_include_mcp_servers(self):
+        """Agent options should include mcp_servers when configured."""
+        mcp_config = {"playwright": {"command": "npx"}}
+        agent = ExecutorAgent(mcp_servers=mcp_config)
+
+        options = agent._get_options()
+
+        # The options should have mcp_servers set
+        assert options.mcp_servers == mcp_config
+
+    def test_agent_options_no_mcp_when_not_configured(self):
+        """Agent options should not have mcp_servers when not configured."""
+        agent = ExecutorAgent()
+
+        options = agent._get_options()
+
+        # mcp_servers should be empty or None when not configured
+        assert not options.mcp_servers  # Empty dict {} or None are both falsy

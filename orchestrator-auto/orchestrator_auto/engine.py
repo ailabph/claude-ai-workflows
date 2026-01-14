@@ -15,8 +15,20 @@ from . import db
 from .exceptions import OrchestratorError, AgentError
 from .logging_config import create_session_logger, teardown_session_logger, get_null_logger
 from .auth import detect_auth
-from .config import get_project_identity
-from .agents import create_planner_agent, create_executor_agent, PlannerAgent, ExecutorAgent
+from .config import (
+    get_project_identity,
+    find_repo_root,
+    load_mcp_config_raw,
+    expand_env_vars,
+    get_agent_mcp_config,
+)
+from .agents import (
+    create_planner_agent,
+    create_executor_agent,
+    PlannerAgent,
+    ExecutorAgent,
+    build_allowed_tools,
+)
 from .state import StateMachine, WorkflowState, TransitionEvent
 from .parser import (
     parse_planner_response,
@@ -58,6 +70,7 @@ class Orchestrator:
         executor_model: Optional[str] = None,
         telegram_notifier: Optional["TelegramNotifier"] = None,
         debug: bool = False,
+        mcp_config_path: Optional[str] = None,
     ):
         """
         Initialize orchestrator.
@@ -73,6 +86,7 @@ class Orchestrator:
             executor_model: Model for executor agent (optional, uses default if not specified)
             telegram_notifier: Optional TelegramNotifier for sending notifications
             debug: If True, enable debug logging with console output
+            mcp_config_path: Optional path to MCP configuration file (.mcp.json)
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -86,6 +100,12 @@ class Orchestrator:
 
         # Telegram notifications
         self.telegram_notifier = telegram_notifier
+
+        # MCP configuration
+        self.mcp_servers = None
+        self.planner_mcp_config = None
+        self.executor_mcp_config = None
+        self._mcp_config_for_db = None  # Store raw config for DB persistence
 
         # Initialize database
         db.init_db(db_path)
@@ -107,7 +127,18 @@ class Orchestrator:
                 if not self.executor_model and session_data.get("executor_model"):
                     self.executor_model = session_data["executor_model"]
 
+            # Load MCP config from DB first (for resume)
+            self._load_mcp_from_db(session_id)
+
+            # If explicit MCP path provided, it overrides DB config
+            if mcp_config_path:
+                self._load_mcp_from_file(mcp_config_path)
+
         elif feature_description:
+            # Load MCP config from file for new session
+            if mcp_config_path or not session_id:
+                self._load_mcp_from_file(mcp_config_path)
+
             if plan_path:
                 # Start with existing plan (skip discovery/planning)
                 self._start_with_plan(feature_description, plan_path)
@@ -126,6 +157,7 @@ class Orchestrator:
                     project_id=project_id,
                     project_remote=project_remote,
                     auth_info=auth_info.to_db_dict(),
+                    mcp_config=self._mcp_config_for_db,
                     db_path=db_path
                 )
                 self.state = self.state_machine.get_state(self.session_id)
@@ -189,6 +221,7 @@ class Orchestrator:
             project_id=project_id,
             project_remote=project_remote,
             auth_info=auth_info.to_db_dict(),
+            mcp_config=self._mcp_config_for_db,
             db_path=self.db_path
         )
 
@@ -228,6 +261,78 @@ class Orchestrator:
             db_path=self.db_path
         )
 
+    def _load_mcp_from_db(self, session_id: str) -> None:
+        """Load MCP configuration from database session."""
+        try:
+            mcp_config = db.get_session_mcp_config(session_id, self.db_path)
+            if mcp_config:
+                # Expand env vars at runtime (raw config stored in DB)
+                mcp_config = expand_env_vars(mcp_config)
+                self._apply_mcp_config(mcp_config)
+                if self._debug:
+                    self._output(f"  (Loaded MCP config from session)\n")
+        except Exception as e:
+            if self._debug:
+                self._output(f"  (Failed to load MCP from DB: {e})\n")
+
+    def _load_mcp_from_file(self, mcp_config_path: Optional[str]) -> None:
+        """Load MCP configuration from file."""
+        try:
+            project_root = find_repo_root()
+
+            # Load RAW config (${VAR} unexpanded) for DB storage
+            raw_servers, raw_planner_cfg, raw_executor_cfg = load_mcp_config_raw(
+                mcp_config_path=mcp_config_path,
+                project_root=project_root,
+            )
+
+            if raw_servers:
+                # Store RAW config for DB persistence (security)
+                self._mcp_config_for_db = {
+                    "servers": raw_servers,
+                    "planner": raw_planner_cfg,
+                    "executor": raw_executor_cfg,
+                }
+
+                # Expand env vars for runtime use
+                expanded_config = expand_env_vars(self._mcp_config_for_db)
+                self._apply_mcp_config(expanded_config)
+
+        except FileNotFoundError:
+            raise  # Let explicit path errors bubble up
+        except Exception as e:
+            if self._debug:
+                self._output(f"  (MCP config load failed: {e})\n")
+
+    def _apply_mcp_config(self, mcp_config: Dict[str, Any]) -> None:
+        """Apply loaded MCP configuration."""
+        mcp_servers = mcp_config.get("servers", {})
+        planner_cfg = mcp_config.get("planner", {})
+        executor_cfg = mcp_config.get("executor", {})
+
+        if mcp_servers:
+            self.mcp_servers = mcp_servers
+
+            # Get planner MCP config
+            planner_servers, planner_tools = get_agent_mcp_config(
+                mcp_servers, planner_cfg or {}
+            )
+            if planner_servers:
+                self.planner_mcp_config = {
+                    "servers": planner_servers,
+                    "tools": planner_tools,
+                }
+
+            # Get executor MCP config
+            executor_servers, executor_tools = get_agent_mcp_config(
+                mcp_servers, executor_cfg or {}
+            )
+            if executor_servers:
+                self.executor_mcp_config = {
+                    "servers": executor_servers,
+                    "tools": executor_tools,
+                }
+
     def _create_planner(self) -> PlannerAgent:
         """Create or return existing planner agent."""
         if self.planner is None:
@@ -235,6 +340,15 @@ class Orchestrator:
             kwargs = {"session_id": planner_session_id}
             if self.planner_model:
                 kwargs["model"] = self.planner_model
+
+            # Add MCP configuration if available
+            if self.planner_mcp_config:
+                kwargs["mcp_servers"] = self.planner_mcp_config["servers"]
+                # Use helper to build tool list (avoids DEFAULT_TOOLS import)
+                kwargs["allowed_tools"] = build_allowed_tools(
+                    mcp_tools=self.planner_mcp_config["tools"]
+                )
+
             self.planner = create_planner_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(
@@ -252,6 +366,15 @@ class Orchestrator:
             kwargs = {"session_id": executor_session_id}
             if self.executor_model:
                 kwargs["model"] = self.executor_model
+
+            # Add MCP configuration if available
+            if self.executor_mcp_config:
+                kwargs["mcp_servers"] = self.executor_mcp_config["servers"]
+                # Use helper to build tool list (avoids DEFAULT_TOOLS import)
+                kwargs["allowed_tools"] = build_allowed_tools(
+                    mcp_tools=self.executor_mcp_config["tools"]
+                )
+
             self.executor = create_executor_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(

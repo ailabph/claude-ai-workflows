@@ -5,10 +5,12 @@ Handles model aliases, config file loading, and model resolution.
 Supports repo-local config with merge semantics.
 """
 
+import json
 import os
+import re
 import subprocess
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 
 
 # Model aliases mapping to full model IDs (latest versions)
@@ -525,3 +527,176 @@ def get_stuck_sessions_config() -> Dict[str, Any]:
             pass
 
     return result
+
+
+# ============================================================================
+# MCP Configuration
+# ============================================================================
+
+
+def expand_env_vars(obj: Any) -> Any:
+    """
+    Recursively expand environment variables in a config object.
+
+    Supports ${VAR} and $VAR syntax in string values.
+
+    Args:
+        obj: Config object (dict, list, or scalar)
+
+    Returns:
+        Object with environment variables expanded
+    """
+    if isinstance(obj, dict):
+        return {k: expand_env_vars(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [expand_env_vars(item) for item in obj]
+    elif isinstance(obj, str):
+        # Expand ${VAR} syntax
+        pattern = r'\$\{([^}]+)\}'
+
+        def replace(match):
+            var_name = match.group(1)
+            return os.environ.get(var_name, match.group(0))
+
+        expanded = re.sub(pattern, replace, obj)
+        # Also expand $VAR syntax (but not $$)
+        expanded = os.path.expandvars(expanded)
+        return expanded
+    else:
+        return obj
+
+
+def load_mcp_config_raw(
+    mcp_config_path: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """
+    Load MCP configuration from file WITHOUT environment variable expansion.
+
+    Use this when you need to store config in DB (preserves ${VAR} for security).
+    Call expand_env_vars() separately for runtime use.
+
+    Priority:
+    1. Explicit path (--mcp-config flag)
+    2. Project .mcp.json
+    3. Global ~/.mcp.json
+
+    Returns:
+        Tuple of (mcp_servers, planner_config, executor_config)
+        - mcp_servers: Full MCP server definitions (${VAR} preserved)
+        - planner_config: Planner-specific MCP settings
+        - executor_config: Executor-specific MCP settings
+    """
+    config_path = None
+
+    # Priority 1: Explicit path
+    if mcp_config_path:
+        config_path = Path(mcp_config_path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"MCP config not found: {mcp_config_path}")
+
+    # Priority 2: Project .mcp.json
+    if not config_path and project_root:
+        project_mcp = project_root / ".mcp.json"
+        if project_mcp.exists():
+            config_path = project_mcp
+
+    # Priority 3: Global ~/.mcp.json
+    if not config_path:
+        global_mcp = Path.home() / ".mcp.json"
+        if global_mcp.exists():
+            config_path = global_mcp
+
+    if not config_path:
+        return None, None, None
+
+    # Load and parse (NO env var expansion - preserves ${VAR})
+    with open(config_path) as f:
+        config = json.load(f)
+
+    mcp_servers = config.get("mcpServers", {})
+    orchestrator_config = config.get("orchestrator", {})
+    planner_config = orchestrator_config.get("planner", {})
+    executor_config = orchestrator_config.get("executor", {})
+
+    return mcp_servers, planner_config, executor_config
+
+
+def load_mcp_config(
+    mcp_config_path: Optional[str] = None,
+    project_root: Optional[Path] = None,
+) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """
+    Load MCP configuration from file WITH environment variable expansion.
+
+    Convenience wrapper that loads raw config and expands env vars.
+    For DB storage, use load_mcp_config_raw() instead.
+
+    Returns:
+        Tuple of (mcp_servers, planner_config, executor_config) with ${VAR} expanded
+    """
+    raw_servers, planner_cfg, executor_cfg = load_mcp_config_raw(
+        mcp_config_path, project_root
+    )
+
+    if raw_servers:
+        # Expand env vars for runtime use
+        expanded = expand_env_vars({
+            "servers": raw_servers,
+            "planner": planner_cfg,
+            "executor": executor_cfg,
+        })
+        return expanded["servers"], expanded["planner"], expanded["executor"]
+
+    return None, None, None
+
+
+def filter_mcp_servers(
+    mcp_servers: Dict[str, Any],
+    server_names: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Filter MCP servers to only include specified names.
+
+    Args:
+        mcp_servers: Full MCP server configuration
+        server_names: List of server names to include (None = all)
+
+    Returns:
+        Filtered MCP server configuration
+    """
+    if server_names is None:
+        return mcp_servers
+
+    return {
+        name: config
+        for name, config in mcp_servers.items()
+        if name in server_names
+    }
+
+
+def get_agent_mcp_config(
+    mcp_servers: Dict[str, Any],
+    agent_config: Dict[str, Any],
+) -> Tuple[Dict[str, Any], List[str]]:
+    """
+    Get MCP configuration for a specific agent.
+
+    Args:
+        mcp_servers: Full MCP server configuration
+        agent_config: Agent-specific configuration (planner or executor)
+
+    Returns:
+        Tuple of (filtered_mcp_servers, tool_list)
+    """
+    # Filter to agent's allowed servers
+    server_names = agent_config.get("mcpServers")  # List of server names
+    filtered_servers = filter_mcp_servers(mcp_servers, server_names)
+
+    # Get tool list (or generate from servers)
+    tools = agent_config.get("tools", [])
+    if not tools and filtered_servers:
+        # Auto-generate wildcard tools for each server
+        tools = [f"mcp__{name}__*" for name in filtered_servers.keys()]
+
+    return filtered_servers, tools
