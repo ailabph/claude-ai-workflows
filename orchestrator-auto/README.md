@@ -31,6 +31,9 @@ orchestrator start -f "My feature" --auto-commit --smart-commit
 # Disable smart commit (use static messages)
 orchestrator start -f "My feature" --auto-commit --no-smart-commit
 
+# Start with MCP tools (e.g., Playwright browser automation)
+orchestrator start -f "E2E tests" --mcp-config .mcp.json
+
 # Start with Telegram notifications
 orchestrator start -f "My feature" --telegram
 
@@ -167,6 +170,7 @@ orchestrator start -f "Feature description" [options]
 | `--auto-commit-model` | Model for AI commit messages (default: executor model) |
 | `--telegram` | Enable Telegram notifications |
 | `--no-telegram` | Disable Telegram notifications |
+| `--mcp-config` | Path to MCP configuration file (`.mcp.json`) |
 | `--no-rename` | Do not rename plan file to `*_done.md` on completion |
 | `--no-activity` | Disable activity indicator |
 | `--debug` | Enable debug mode (full stack trace on error) |
@@ -217,6 +221,7 @@ orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 | `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
 | `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
 | `--auto-commit-model` | Model for AI commit messages (default: executor model) |
+| `--mcp-config` | Path to MCP configuration file (overrides saved config) |
 | `--debug` | Enable debug mode (full stack trace on error) |
 
 ### `reset` - Reset orphaned session
@@ -428,6 +433,7 @@ orchestrator watch PLANS_DIR [options]
 | `--auto-commit` | Auto-commit on completion |
 | `--smart-commit` | Use AI-generated commit messages |
 | `--telegram` | Enable Telegram notifications |
+| `--mcp-config` | Path to MCP configuration file for all watched sessions |
 | `-pm, --planner-model` | Model for planner agent |
 | `-em, --executor-model` | Model for executor agent |
 | `--show-activity` | Show streaming activity indicator (default) |
@@ -685,6 +691,92 @@ If secrets are detected, the feature falls back to static message generation and
 
 **Priority:** CLI flags > env vars > repo config > global config > default (enabled)
 
+### MCP Tool Support
+
+Enable external tools like Playwright browser automation in executor agents via MCP (Model Context Protocol) server configuration.
+
+**Setup:**
+
+1. Create `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-server-playwright"]
+    }
+  }
+}
+```
+
+2. Install the MCP server:
+
+```bash
+npm install -g @anthropic/mcp-server-playwright
+```
+
+3. Run orchestrator with MCP config:
+
+```bash
+# Explicit path
+orchestrator start -f "E2E tests" --mcp-config .mcp.json
+
+# Auto-discovery (if .mcp.json exists in project root)
+orchestrator start -f "E2E tests"
+```
+
+**Per-Agent Scoping:**
+
+Configure different MCP servers for planner vs executor:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-server-playwright"]
+    },
+    "figma": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-server-figma"],
+      "env": {
+        "FIGMA_ACCESS_TOKEN": "${FIGMA_ACCESS_TOKEN}"
+      }
+    }
+  },
+  "orchestrator": {
+    "planner": {
+      "mcpServers": ["figma"],
+      "tools": ["mcp__figma__*"]
+    },
+    "executor": {
+      "mcpServers": ["playwright"],
+      "tools": ["mcp__playwright__*"]
+    }
+  }
+}
+```
+
+**Environment Variable Expansion:**
+
+Use `${VAR}` syntax in `.mcp.json` for secrets. Variables are expanded at runtime (not stored in database).
+
+**Session Persistence:**
+
+MCP configuration is persisted per-session. On `resume` or `respond`, the saved config is restored automatically. Use `--mcp-config` to override.
+
+**Available MCP Tools (when configured):**
+
+| Tool Pattern | Description |
+|--------------|-------------|
+| `mcp__playwright__browser_navigate` | Navigate to URL |
+| `mcp__playwright__browser_click` | Click element |
+| `mcp__playwright__browser_type` | Type text |
+| `mcp__playwright__browser_snapshot` | Get page accessibility snapshot |
+| `mcp__playwright__browser_close` | Close browser |
+| `mcp__figma__*` | Figma design tools |
+
 ### Auth Source Detection
 
 At startup, orchestrator displays the detected authentication source:
@@ -821,6 +913,7 @@ Use `orchestrator status <session-id>` to view error details for failed sessions
 
 ## TODO
 
+- [x] **MCP Tool Support** - Enable external tools (Playwright, Figma) in executor/planner agents via `.mcp.json` configuration
 - [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
 - [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
 - [ ] **Post Feedback** - User feedback at milestones/completion
@@ -864,6 +957,20 @@ Use `orchestrator status <session-id>` to view error details for failed sessions
 ---
 
 ## Changelog
+
+### v0.11.0 - MCP Tool Support
+
+- **MCP Tool Support** - Enable external tools (Playwright, Figma, etc.) in executor/planner agents
+- **Per-agent scoping** - Configure different MCP servers for planner vs executor via `orchestrator` section
+- **Environment variable expansion** - Support `${VAR}` syntax in `.mcp.json` configs (expanded at runtime, not stored)
+- **Session persistence** - MCP config persisted in database for resume/respond continuity
+- **Auto-discovery** - Automatically loads `.mcp.json` from project root or `~/.mcp.json`
+- **CLI: `--mcp-config`** - Flag on `start`, `resume`, `respond`, and `watch` commands
+- **Queue/watch mode support** - MCP config propagated to all sessions in batch workflows
+- **New config functions** - `load_mcp_config_raw()`, `expand_env_vars()` in `config.py`
+- **New helper** - `build_allowed_tools()` in `agents.py` for clean MCP tool integration
+- **DB: `mcp_config_json` column** - Store raw MCP config per session
+- **Documentation** - Investigation report and solution proposal in `docs/orchestrator-auto/`
 
 ### v0.10.1 - Error Handling & Logging
 
