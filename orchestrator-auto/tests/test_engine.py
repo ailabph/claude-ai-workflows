@@ -566,3 +566,182 @@ No milestones here.
 
         assert orch.state.phase == "execution"
         assert orch.state.total_milestones == 1
+
+
+class TestTruncatedResponseContinuation:
+    """Test auto-continue behavior for truncated responses."""
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    def test_executor_truncated_response_triggers_continuation(self, mock_create_executor, temp_db, tmp_path):
+        """Test that truncated executor response triggers auto-continuation."""
+        # Setup plan file
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock executor: first call returns truncated, second returns valid
+        mock_executor = Mock()
+        call_count = [0]
+
+        def executor_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: truncated response (no valid tag, ends incomplete)
+                return "Let me start working on the setup. I'll create the configuration"
+            else:
+                # Second call (continuation): valid progress report
+                return """
+[PROGRESS_REPORT]
+## Milestone 1: Setup - COMPLETED
+All setup tasks completed.
+[/PROGRESS_REPORT]
+"""
+
+        mock_executor.send_message.side_effect = executor_side_effect
+        mock_create_executor.return_value = mock_executor
+
+        # Create orchestrator with plan (starts in execution phase)
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        # Run executor routing with milestone prompt
+        result = orch._route_to_executor("Execute Milestone 1: Setup")
+
+        # Should have called executor twice (original + continuation)
+        assert mock_executor.send_message.call_count == 2
+
+        # Result should contain the valid progress report
+        assert "[PROGRESS_REPORT]" in result
+
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_planner_truncated_response_triggers_continuation(self, mock_create_planner, temp_db, tmp_path):
+        """Test that truncated planner response triggers auto-continuation."""
+        # Setup plan file
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: first call returns truncated, second returns valid
+        mock_planner = Mock()
+        call_count = [0]
+
+        def planner_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                # First call: truncated response (no valid tag, ends incomplete)
+                return "Looking at the milestone report, I can see that"
+            else:
+                # Second call (continuation): valid approval
+                return "[MILESTONE_APPROVED] Milestone 1 approved. Good work!"
+
+        mock_planner.send_message.side_effect = planner_side_effect
+        mock_create_planner.return_value = mock_planner
+
+        # Create orchestrator with plan (starts in execution phase)
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        # Set current milestone for context
+        orch.state.current_milestone = 1
+
+        # Prepare a mock progress report
+        mock_report = """
+[PROGRESS_REPORT]
+## Milestone 1 - COMPLETED
+Setup tasks done.
+[/PROGRESS_REPORT]
+"""
+
+        # Run planner routing with progress report
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should have called planner twice (original + continuation)
+        assert mock_planner.send_message.call_count == 2
+
+        # Result should be approved
+        assert result_type == "approved"
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    def test_executor_valid_response_no_continuation(self, mock_create_executor, temp_db, tmp_path):
+        """Test that valid executor response does not trigger continuation."""
+        # Setup plan file
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock executor: returns valid response immediately
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = """
+[PROGRESS_REPORT]
+## Milestone 1: Setup - COMPLETED
+All setup tasks completed.
+[/PROGRESS_REPORT]
+"""
+        mock_create_executor.return_value = mock_executor
+
+        # Create orchestrator with plan
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        # Run executor routing
+        result = orch._route_to_executor("Execute Milestone 1: Setup")
+
+        # Should have called executor only once (no continuation needed)
+        assert mock_executor.send_message.call_count == 1
+        assert "[PROGRESS_REPORT]" in result
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    def test_executor_blocked_response_no_continuation(self, mock_create_executor, temp_db, tmp_path):
+        """Test that BLOCKED response does not trigger continuation."""
+        # Setup plan file
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock executor: returns BLOCKED response
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = "[BLOCKED] Cannot proceed: missing credentials"
+        mock_create_executor.return_value = mock_executor
+
+        # Create orchestrator with plan
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+
+        # Run executor routing
+        result = orch._route_to_executor("Execute Milestone 1: Setup")
+
+        # Should have called executor only once (BLOCKED is valid tag)
+        assert mock_executor.send_message.call_count == 1
+        assert "[BLOCKED]" in result

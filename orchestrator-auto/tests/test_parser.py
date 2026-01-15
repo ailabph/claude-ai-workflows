@@ -16,6 +16,7 @@ from orchestrator_auto.parser import (
     extract_milestone_number,
     extract_file_paths,
     is_response_tag_present,
+    is_response_truncated,
     extract_all_tags,
     PLANNER_APPROVED,
     PLANNER_CHANGES_REQUESTED,
@@ -820,3 +821,144 @@ Queue state is persisted in SQLite for crash recovery and for resuming mid-queue
 
         # Should extract just the feature name, not the "Plan:" prefix
         assert result == "Plan: Plan Queue Feature (GO-Ready)"
+
+
+class TestIsResponseTruncated:
+    """Test truncation detection for auto-continue feature."""
+
+    # Tests for responses that should NOT be detected as truncated
+    # (valid response tags present)
+
+    def test_not_truncated_with_progress_report(self):
+        """Response with PROGRESS_REPORT tag is not truncated."""
+        content = """
+        [PROGRESS_REPORT]
+        ## Milestone 1 - COMPLETED
+        All tasks done.
+        [/PROGRESS_REPORT]
+        """
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_blocked(self):
+        """Response with BLOCKED tag is not truncated."""
+        content = "[BLOCKED] Cannot proceed: missing credentials"
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_milestone_approved(self):
+        """Response with MILESTONE_APPROVED tag is not truncated."""
+        content = "[MILESTONE_APPROVED] Milestone 3 approved. Proceed."
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_changes_requested(self):
+        """Response with CHANGES_REQUESTED tag is not truncated."""
+        content = """
+        [CHANGES_REQUESTED] Milestone 2 needs changes:
+        - Fix failing tests
+        - Add error handling
+        """
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_human_input_needed(self):
+        """Response with HUMAN_INPUT_NEEDED tag is not truncated."""
+        content = "[HUMAN_INPUT_NEEDED] Should we use OAuth or JWT?"
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_plan_ready(self):
+        """Response with PLAN_READY tag is not truncated."""
+        content = """
+        [PLAN_READY]
+        Path: docs/plan.md
+        Milestones: 3 total
+        """
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_with_clarification_needed(self):
+        """Response with CLARIFICATION_NEEDED tag is not truncated."""
+        content = "[CLARIFICATION_NEEDED] Which database should I use?"
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_case_insensitive_tag(self):
+        """Tag detection is case insensitive."""
+        content = "[blocked] Cannot proceed"
+        assert not is_response_truncated(content)
+
+    # Tests for responses that SHOULD be detected as truncated
+    # (incomplete responses without valid tags)
+
+    def test_truncated_ends_with_colon(self):
+        """Response ending with colon is truncated."""
+        content = "Let me navigate the second tab to the dashboard:"
+        assert is_response_truncated(content)
+
+    def test_truncated_ends_with_let_me(self):
+        """Response with incomplete 'Let me...' is truncated."""
+        content = "Let me start by reading the configuration"
+        assert is_response_truncated(content)
+
+    def test_truncated_ends_with_ill(self):
+        """Response with incomplete \"I'll...\" is truncated."""
+        content = "I'll implement the authentication logic"
+        assert is_response_truncated(content)
+
+    def test_truncated_ends_with_i_will(self):
+        """Response with incomplete 'I will...' is truncated."""
+        content = "I will create the database schema"
+        assert is_response_truncated(content)
+
+    def test_truncated_ends_with_im_going_to(self):
+        """Response with incomplete \"I'm going to...\" is truncated."""
+        content = "I'm going to update the test file"
+        assert is_response_truncated(content)
+
+    def test_truncated_no_sentence_ending(self):
+        """Response without sentence ending punctuation is truncated."""
+        content = "Working on the implementation of the user interface component"
+        assert is_response_truncated(content)
+
+    def test_truncated_empty_content(self):
+        """Empty content is not considered truncated (special case)."""
+        assert not is_response_truncated("")
+        assert not is_response_truncated(None)
+
+    # Tests for edge cases and complete responses
+
+    def test_not_truncated_complete_sentence_with_period(self):
+        """Complete sentence with period is not truncated."""
+        content = "I've completed the implementation."
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_complete_sentence_with_exclamation(self):
+        """Complete sentence with exclamation is not truncated."""
+        content = "The tests are passing!"
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_complete_sentence_with_question(self):
+        """Complete sentence with question mark is not truncated."""
+        content = "Should I proceed with the next milestone?"
+        assert not is_response_truncated(content)
+
+    def test_not_truncated_ends_with_closing_bracket(self):
+        """Response ending with ] is not truncated."""
+        content = "All tests passing [10/10]"
+        assert not is_response_truncated(content)
+
+    def test_truncated_long_incomplete_response(self):
+        """Long response that is incomplete is truncated."""
+        content = """
+        I've been working on the milestone and made significant progress.
+        The authentication module is now complete and I've added tests.
+
+        Now let me proceed with the next step which involves updating
+        """
+        assert is_response_truncated(content)
+
+    def test_not_truncated_with_tag_despite_incomplete_ending(self):
+        """Valid tag takes precedence over incomplete-looking ending."""
+        # Even though this ends with incomplete text, the BLOCKED tag should
+        # make it not considered truncated
+        content = """
+        [BLOCKED] Cannot proceed
+        I was trying to continue but hit a blocker
+        Let me explain the issue
+        """
+        assert not is_response_truncated(content)

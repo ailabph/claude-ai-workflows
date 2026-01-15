@@ -996,11 +996,12 @@ The orchestrator will save the file for you.
                     self._output("\n⚠ Executor response appears truncated. Requesting continuation...\n")
 
                     # Ask executor to continue and provide the required report
+                    # Keep prompt concise to reduce risk of re-truncation
                     continuation_prompt = (
-                        "Your previous response was cut off before completion. "
-                        "Please continue from where you left off and provide your "
-                        "[PROGRESS_REPORT]...[/PROGRESS_REPORT] when the milestone is complete, "
-                        "or use [BLOCKED] if you cannot proceed."
+                        "Your previous response was cut off. "
+                        "Please provide a brief [PROGRESS_REPORT]...[/PROGRESS_REPORT] summarizing "
+                        "what was completed, or [BLOCKED] if you cannot proceed. "
+                        "Keep your response concise."
                     )
                     continuation = self._send_with_activity(
                         executor, continuation_prompt, "Executor continuing"
@@ -1130,9 +1131,13 @@ The orchestrator will save the file for you.
             # Send feedback to executor and capture response
             # FIX: Return executor's response so main loop can parse it
             # instead of re-sending the milestone prompt (which caused duplicates)
+            if issues:
+                issues_text = "\n".join([f"- {issue}" for issue in issues])
+            else:
+                issues_text = "- No specific issues parsed. Please review the planner's feedback above and address any concerns mentioned."
             feedback = CHANGES_REQUESTED_TEMPLATE.format(
                 milestone_number=self.state.current_milestone,
-                issues="\n".join([f"- {issue}" for issue in issues])
+                issues=issues_text
             )
             executor_response = self._route_to_executor(feedback)
             return ("changes_requested", executor_response)
@@ -1149,10 +1154,12 @@ The orchestrator will save the file for you.
                 self._output("\n⚠ Planner response appears truncated. Requesting continuation...\n")
 
                 # Ask planner to continue and provide the required tag
+                # Keep prompt concise to reduce risk of re-truncation
                 continuation_prompt = (
-                    "Your previous response was cut off before completion. "
-                    "Please continue and provide your final verdict: "
-                    "[MILESTONE_APPROVED], [CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED]."
+                    "Your previous response was cut off. "
+                    "Please provide your verdict briefly: [MILESTONE_APPROVED], "
+                    "[CHANGES_REQUESTED] with a short list of issues, or [HUMAN_INPUT_NEEDED]. "
+                    "Keep your response concise (1-2 sentences max)."
                 )
                 continuation = self._send_with_activity(
                     planner, continuation_prompt, "Planner continuing"
@@ -1172,9 +1179,13 @@ The orchestrator will save the file for you.
                     self._output(f"\n⚠ Planner requested changes:\n")
                     for issue in issues:
                         self._output(f"  - {issue}\n")
+                    if issues:
+                        issues_text = "\n".join([f"- {issue}" for issue in issues])
+                    else:
+                        issues_text = "- No specific issues parsed. Please review the planner's feedback above and address any concerns mentioned."
                     feedback = CHANGES_REQUESTED_TEMPLATE.format(
                         milestone_number=self.state.current_milestone,
-                        issues="\n".join([f"- {issue}" for issue in issues])
+                        issues=issues_text
                     )
                     executor_response = self._route_to_executor(feedback)
                     return ("changes_requested", executor_response)
@@ -1222,6 +1233,22 @@ The orchestrator will save the file for you.
         self._log_message("executor", "assistant", response)
 
         self._output(f"\n→ Executor response: {response[:200]}...\n")
+
+        # Check for truncated response and auto-continue if needed
+        if is_response_truncated(response):
+            self._output("\n⚠ Executor response appears truncated. Requesting continuation...\n")
+
+            continuation_prompt = (
+                "Your previous response was cut off. "
+                "Please provide a brief [PROGRESS_REPORT]...[/PROGRESS_REPORT] summarizing "
+                "what was completed, or [BLOCKED] if you cannot proceed. "
+                "Keep your response concise."
+            )
+            continuation = self._send_with_activity(
+                executor, continuation_prompt, "Executor continuing"
+            )
+            self._log_message("executor", "assistant", continuation)
+            response = continuation
 
         return response
 
