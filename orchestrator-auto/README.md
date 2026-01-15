@@ -995,11 +995,25 @@ Use `orchestrator status <session-id>` to view error details for failed sessions
 
 ## Changelog
 
+### v0.11.2 - Improved Truncation Detection
+
+**Fixes:**
+
+- **Unclosed tag detection** - `[PROGRESS_REPORT]` without closing `[/PROGRESS_REPORT]` is now correctly detected as truncated, triggering auto-continue instead of pausing
+- **Planner auto-continue** - Extended auto-continue support to planner responses (previously executor-only)
+- **Empty issues fallback** - When `[CHANGES_REQUESTED]` has no parsed issues, executor receives helpful fallback message instead of empty feedback
+- **CLI: `--headless` on `respond`** - Added missing `--headless` flag to `respond` command for continuing paused sessions
+
+**Technical:**
+
+- Added 25+ unit tests for truncation detection and continuation flow
+- Refactored `_route_to_executor()` to include truncation handling for consistency with `_route_to_planner()`
+
 ### v0.11.1 - Headless Mode & Auto-Continue
 
 **New Features:**
 
-- **CLI: `--headless`** - Run Playwright MCP browser in headless mode (no browser window). Available on `start`, `resume`, and `watch` commands.
+- **CLI: `--headless`** - Run Playwright MCP browser in headless mode (no browser window). Available on `start`, `resume`, `watch`, and `respond` commands.
 - **Auto-continue on truncated responses** - Automatically detects when planner or executor responses are truncated (e.g., hitting token limits mid-stream) and prompts the agent to continue, preventing unnecessary pauses.
 
 **Technical:**
