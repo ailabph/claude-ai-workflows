@@ -1143,9 +1143,58 @@ The orchestrator will save the file for you.
             return ("blocked", None)
 
         else:
-            # FIX: Create actual blocker when planner response is not recognized
-            # Previously this returned "blocked" without creating a blocker record,
-            # leaving the session in an inconsistent state (trying to resume with no blocker)
+            # FIX: Detect truncated responses and attempt auto-continuation
+            # This handles cases where planner hits token limits mid-response
+            if is_response_truncated(response):
+                self._output("\n⚠ Planner response appears truncated. Requesting continuation...\n")
+
+                # Ask planner to continue and provide the required tag
+                continuation_prompt = (
+                    "Your previous response was cut off before completion. "
+                    "Please continue and provide your final verdict: "
+                    "[MILESTONE_APPROVED], [CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED]."
+                )
+                continuation = self._send_with_activity(
+                    planner, continuation_prompt, "Planner continuing"
+                )
+                self._log_message("planner", "assistant", continuation)
+
+                # Re-parse the continuation response
+                response_type, data = parse_planner_response(continuation)
+
+                if response_type == PLANNER_APPROVED:
+                    milestone_num = data.get("milestone", self.state.current_milestone)
+                    self._output(f"\n✓ Planner approved Milestone {milestone_num} (after continuation)\n")
+                    return ("approved", None)
+
+                elif response_type == PLANNER_CHANGES_REQUESTED:
+                    issues = data.get("issues", [])
+                    self._output(f"\n⚠ Planner requested changes:\n")
+                    for issue in issues:
+                        self._output(f"  - {issue}\n")
+                    feedback = CHANGES_REQUESTED_TEMPLATE.format(
+                        milestone_number=self.state.current_milestone,
+                        issues="\n".join([f"- {issue}" for issue in issues])
+                    )
+                    executor_response = self._route_to_executor(feedback)
+                    return ("changes_requested", executor_response)
+
+                elif response_type == PLANNER_BLOCKED:
+                    question = data.get("question", "Unknown question")
+                    self._handle_blocker("planner", question)
+                    return ("blocked", None)
+
+                # Continuation didn't produce a valid response either
+                self._output("\n⚠ Continuation also unrecognized. Pausing for human review.\n")
+                self._handle_blocker(
+                    "planner",
+                    f"Planner response was truncated and continuation attempt also failed to produce "
+                    f"expected tags. The planner may be stuck or hitting output limits. "
+                    f"Please review the session logs and provide guidance."
+                )
+                return ("blocked", None)
+
+            # Not truncated, just unrecognized format
             self._output("\n⚠ Planner response not recognized. Creating blocker for review.\n")
             self._handle_blocker(
                 "planner",

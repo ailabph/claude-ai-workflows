@@ -1000,7 +1000,7 @@ Use `orchestrator status <session-id>` to view error details for failed sessions
 **New Features:**
 
 - **CLI: `--headless`** - Run Playwright MCP browser in headless mode (no browser window). Available on `start`, `resume`, and `watch` commands.
-- **Auto-continue on truncated responses** - Automatically detects when executor responses are truncated (e.g., hitting token limits mid-stream) and prompts the executor to continue, preventing unnecessary pauses.
+- **Auto-continue on truncated responses** - Automatically detects when planner or executor responses are truncated (e.g., hitting token limits mid-stream) and prompts the agent to continue, preventing unnecessary pauses.
 
 **Technical:**
 
