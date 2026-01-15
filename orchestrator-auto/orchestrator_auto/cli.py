@@ -2600,6 +2600,25 @@ def check(verbose: bool):
     click.echo()
 
     # -------------------------------------------------------------------------
+    # 5. MCP Process Detection
+    # -------------------------------------------------------------------------
+    click.secho("5. MCP Processes", bold=True)
+
+    mcp_processes = _detect_mcp_processes()
+    if mcp_processes:
+        click.secho(f"   ⚠ MCP processes detected: {len(mcp_processes)} running", fg="yellow")
+        for name, _, pid in mcp_processes[:3]:
+            click.echo(f"      • {name} (PID: {pid})")
+        if len(mcp_processes) > 3:
+            click.echo(f"      ... and {len(mcp_processes) - 3} more")
+        click.echo(f"      These may be orphaned. Run: orchestrator cleanup --dry-run")
+        # Note: Don't fail check for this, just warn
+    else:
+        click.echo(f"   {click.style('✓', fg='green')} No MCP server processes detected")
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
     # Summary
     # -------------------------------------------------------------------------
     click.secho("=" * 60, bold=True)
@@ -2611,6 +2630,179 @@ def check(verbose: bool):
     click.echo()
 
     sys.exit(0 if all_passed else 1)
+
+
+# =============================================================================
+# MCP Process Detection & Cleanup
+# =============================================================================
+
+# Default patterns - intentionally conservative (MCP servers only)
+DEFAULT_MCP_PATTERNS = [
+    ("Playwright MCP Server", "mcp-server-playwright"),
+    ("MCP NPX Process", "npx.*@playwright/mcp"),
+]
+
+# Extended patterns - more aggressive, higher risk of false positives
+EXTENDED_MCP_PATTERNS = [
+    ("Playwright Chrome", "ms-playwright/mcp-chrome"),
+    ("Playwright Chromium", "ms-playwright/chromium"),
+]
+
+
+def _detect_mcp_processes(include_extended: bool = False):
+    """
+    Detect running MCP-related processes.
+
+    Args:
+        include_extended: Include browser processes (higher false positive risk)
+
+    Returns:
+        List of (process_name, pattern, pid) tuples
+
+    Note: May include processes from other applications using Playwright.
+    """
+    import subprocess
+    import platform
+
+    if platform.system() == "Windows":
+        return []  # Not supported on Windows yet
+
+    patterns = list(DEFAULT_MCP_PATTERNS)
+    if include_extended:
+        patterns.extend(EXTENDED_MCP_PATTERNS)
+
+    found = []
+    for name, pattern in patterns:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pattern],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                for pid in result.stdout.strip().split('\n'):
+                    if pid:
+                        found.append((name, pattern, pid))
+        except Exception:
+            pass
+
+    return found
+
+
+@cli.command()
+@click.option('--dry-run', is_flag=True, help='Show what would be killed without actually killing')
+@click.option('--force', '-f', is_flag=True, help='Skip confirmation prompt')
+@click.option('--all', 'kill_all', is_flag=True, help='Include browser processes (may affect other Playwright users)')
+@click.option('--pattern', '-p', multiple=True, help='Custom pattern(s) to match (can be specified multiple times)')
+def cleanup(dry_run: bool, force: bool, kill_all: bool, pattern: tuple):
+    """Kill orphaned MCP processes (Playwright MCP servers).
+
+    By default, only kills MCP server processes. Use --all to also kill
+    Playwright browser processes (WARNING: may affect other Playwright users).
+
+    \b
+    ⚠️  WARNING: Pattern matching may kill unrelated processes.
+    Always use --dry-run first to preview what will be killed.
+
+    Examples:
+
+    \b
+        orchestrator cleanup              # Kill MCP servers only (safe)
+        orchestrator cleanup --dry-run    # Preview what would be killed
+        orchestrator cleanup --all        # Also kill browser processes
+        orchestrator cleanup -p "my-mcp"  # Custom pattern
+    """
+    import subprocess
+    import platform
+
+    if platform.system() == "Windows":
+        click.secho("⚠ Windows cleanup not yet supported. Please use Task Manager.", fg="yellow")
+        click.echo("Look for: node.exe (mcp-server), chrome.exe (playwright)")
+        sys.exit(1)
+
+    # Build pattern list
+    if pattern:
+        # User-specified patterns
+        patterns = [("Custom", p) for p in pattern]
+    else:
+        patterns = list(DEFAULT_MCP_PATTERNS)
+        if kill_all:
+            patterns.extend(EXTENDED_MCP_PATTERNS)
+
+    click.secho("🔍 Scanning for MCP processes...\n", fg="cyan")
+
+    if not kill_all and not pattern:
+        click.secho("ℹ  Using conservative patterns (MCP servers only).", fg="blue")
+        click.secho("   Use --all to include browser processes (may affect other users).\n", fg="blue")
+
+    found_processes = []
+
+    for name, pat in patterns:
+        try:
+            result = subprocess.run(
+                ["pgrep", "-f", pat],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                pids = result.stdout.strip().split('\n')
+                for pid in pids:
+                    if pid:
+                        found_processes.append((name, pat, pid))
+        except Exception:
+            pass
+
+    if not found_processes:
+        click.secho("✓ No matching MCP processes found.", fg="green")
+        return
+
+    # Display found processes
+    click.secho(f"Found {len(found_processes)} process(es):\n", fg="yellow")
+    for name, pat, pid in found_processes:
+        # Try to get process command for clarity
+        try:
+            cmd_result = subprocess.run(
+                ["ps", "-p", pid, "-o", "command="],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+            cmd = cmd_result.stdout.strip()[:60] + "..." if len(cmd_result.stdout.strip()) > 60 else cmd_result.stdout.strip()
+        except Exception:
+            cmd = f"(pattern: {pat})"
+        click.echo(f"  • PID {pid}: {cmd}")
+    click.echo()
+
+    # Warning for --all mode
+    if kill_all:
+        click.secho("⚠  WARNING: --all mode may kill Playwright processes from other applications!", fg="yellow", bold=True)
+        click.echo()
+
+    if dry_run:
+        click.secho("Dry run - no processes killed.", fg="cyan")
+        return
+
+    # Confirm unless forced
+    if not force:
+        if not click.confirm("Kill these processes?"):
+            click.echo("Aborted.")
+            return
+
+    # Kill processes
+    killed = 0
+    for name, pat, pid in found_processes:
+        try:
+            subprocess.run(["kill", "-9", pid], capture_output=True, timeout=5)
+            click.secho(f"  ✓ Killed PID {pid}", fg="green")
+            killed += 1
+        except Exception as e:
+            click.secho(f"  ✗ Failed to kill PID {pid}: {e}", fg="red")
+
+    click.echo()
+    click.secho(f"Cleanup complete. Killed {killed}/{len(found_processes)} processes.",
+                fg="green" if killed == len(found_processes) else "yellow")
 
 
 @cli.command()

@@ -946,6 +946,36 @@ orchestrator resume <session-id> --debug
 
 Use `orchestrator status <session-id>` to view error details for failed sessions.
 
+### MCP Process Cleanup
+
+If a session crashes while using Playwright MCP, browser/server processes may be left running.
+
+**Detect potential orphans:**
+```bash
+orchestrator check
+```
+
+**Clean up MCP server processes:**
+```bash
+orchestrator cleanup --dry-run   # Preview first!
+orchestrator cleanup             # Interactive cleanup
+orchestrator cleanup -f          # Force without confirmation
+```
+
+**Include browser processes (use with caution):**
+```bash
+orchestrator cleanup --all --dry-run  # Preview
+orchestrator cleanup --all            # Kill servers + browsers
+```
+
+> **Warning**: The `--all` flag may kill Playwright processes from other applications
+> (e.g., if you're running `npx playwright test` in another terminal). Always preview
+> with `--dry-run` first.
+
+**Common crash cause:** Using `browser_snapshot` on complex pages (dashboards, large tables)
+can exceed the 1MB response buffer limit. The executor is instructed to prefer
+`browser_take_screenshot` for safety.
+
 ---
 
 ## TODO

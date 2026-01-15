@@ -1536,3 +1536,150 @@ class TestPostResumeReconciliation:
         # if session.get('phase') != Phase.PAUSED:
         #     # then check for terminal state
         # This test verifies the state is as expected for the check
+
+
+# =============================================================================
+# MCP Cleanup Tests
+# =============================================================================
+
+
+class TestCleanupCommand:
+    """Test orchestrator cleanup command."""
+
+    def test_cleanup_no_processes(self, runner):
+        """Test cleanup when no orphaned processes exist."""
+        with patch('subprocess.run') as mock_run:
+            # pgrep returns non-zero when no matches found
+            mock_run.return_value = Mock(returncode=1, stdout='')
+            result = runner.invoke(cli, ['cleanup'])
+            assert result.exit_code == 0
+            assert 'No matching MCP processes found' in result.output
+
+    def test_cleanup_dry_run(self, runner):
+        """Test cleanup dry run shows but doesn't kill."""
+        with patch('subprocess.run') as mock_run:
+            # First call is pgrep, returns process
+            # Subsequent calls check process details
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n'),  # pgrep for first pattern
+                Mock(returncode=1, stdout=''),         # pgrep for second pattern
+                Mock(returncode=0, stdout='node mcp-server-playwright'),  # ps -p
+            ]
+            result = runner.invoke(cli, ['cleanup', '--dry-run'])
+            assert result.exit_code == 0
+            assert 'Dry run' in result.output
+            assert 'PID 12345' in result.output
+            # Verify kill was NOT called
+            kill_calls = [c for c in mock_run.call_args_list if 'kill' in str(c)]
+            assert len(kill_calls) == 0
+
+    def test_cleanup_conservative_by_default(self, runner):
+        """Test that cleanup uses conservative patterns by default."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=1, stdout='')
+            result = runner.invoke(cli, ['cleanup'])
+            assert result.exit_code == 0
+            assert 'conservative patterns' in result.output.lower()
+
+    def test_cleanup_all_flag_warning(self, runner):
+        """Test that --all flag shows warning."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n'),  # pgrep pattern 1
+                Mock(returncode=1, stdout=''),         # pgrep pattern 2
+                Mock(returncode=1, stdout=''),         # pgrep pattern 3
+                Mock(returncode=1, stdout=''),         # pgrep pattern 4
+                Mock(returncode=0, stdout='node mcp'),  # ps -p
+            ]
+            result = runner.invoke(cli, ['cleanup', '--all', '--dry-run'])
+            assert result.exit_code == 0
+            assert 'WARNING' in result.output
+            assert 'other applications' in result.output
+
+    def test_cleanup_custom_pattern(self, runner):
+        """Test cleanup with custom pattern."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='99999\n'),  # pgrep custom pattern
+                Mock(returncode=0, stdout='custom-mcp-server'),  # ps -p
+            ]
+            result = runner.invoke(cli, ['cleanup', '-p', 'my-custom-mcp', '--dry-run'])
+            assert result.exit_code == 0
+            assert 'PID 99999' in result.output
+
+    def test_cleanup_force_skips_confirm(self, runner):
+        """Test that --force skips confirmation prompt."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n'),  # pgrep
+                Mock(returncode=1, stdout=''),         # pgrep pattern 2
+                Mock(returncode=0, stdout='node mcp'),  # ps -p
+                Mock(returncode=0, stdout=''),         # kill
+            ]
+            result = runner.invoke(cli, ['cleanup', '--force'])
+            assert result.exit_code == 0
+            assert 'Killed PID 12345' in result.output
+
+    def test_cleanup_abort_on_no_confirm(self, runner):
+        """Test that cleanup aborts when user says no."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n'),  # pgrep
+                Mock(returncode=1, stdout=''),         # pgrep pattern 2
+                Mock(returncode=0, stdout='node mcp'),  # ps -p
+            ]
+            # Simulate user typing 'n' to decline
+            result = runner.invoke(cli, ['cleanup'], input='n\n')
+            assert 'Aborted' in result.output
+
+
+class TestDetectMcpProcesses:
+    """Test the _detect_mcp_processes helper function."""
+
+    def test_detect_no_processes(self):
+        """Test detection returns empty when no processes."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=1, stdout='')
+            result = _detect_mcp_processes()
+            assert result == []
+
+    def test_detect_finds_processes(self):
+        """Test detection finds MCP processes."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n67890\n'),  # First pattern
+                Mock(returncode=1, stdout=''),                 # Second pattern
+            ]
+            result = _detect_mcp_processes()
+            assert len(result) == 2
+            assert result[0][2] == '12345'
+            assert result[1][2] == '67890'
+
+    def test_detect_extended_patterns(self):
+        """Test detection with extended patterns."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('subprocess.run') as mock_run:
+            # 2 default patterns + 2 extended patterns
+            mock_run.side_effect = [
+                Mock(returncode=1, stdout=''),  # Default 1
+                Mock(returncode=1, stdout=''),  # Default 2
+                Mock(returncode=0, stdout='99999\n'),  # Extended 1
+                Mock(returncode=1, stdout=''),  # Extended 2
+            ]
+            result = _detect_mcp_processes(include_extended=True)
+            assert len(result) == 1
+            assert result[0][2] == '99999'
+
+    @patch('platform.system')
+    def test_detect_windows_returns_empty(self, mock_platform):
+        """Test that Windows returns empty list."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        mock_platform.return_value = "Windows"
+        result = _detect_mcp_processes()
+        assert result == []

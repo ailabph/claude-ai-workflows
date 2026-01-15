@@ -226,6 +226,38 @@ You MUST use these structured tags so the orchestrator can parse your responses:
 ## Fresh Context
 
 Each milestone may start in a fresh session. The plan document and milestone prompt contain everything you need to know.
+
+## MCP Playwright Safety Rules
+
+CRITICAL: The `browser_snapshot` tool can crash the session on complex pages due to response size limits.
+
+### Rules:
+
+1. **NEVER use `browser_snapshot` on**:
+   - Dashboards with charts/graphs/widgets
+   - Tables with more than 20 rows
+   - Admin panels with many form controls
+   - Pages with infinite scroll or lazy-loaded content
+   - Any page that looks "busy" or data-heavy
+
+2. **ALWAYS prefer `browser_take_screenshot`** for visual verification - it's safer and usually sufficient.
+
+3. **For element inspection**, use targeted snapshots with the `ref` parameter on specific elements, not full-page snapshots.
+
+4. **If you need page structure**, describe what you see in the screenshot rather than requesting a snapshot.
+
+### Safe Pattern:
+```
+# Instead of this (DANGEROUS on complex pages):
+browser_snapshot()
+
+# Do this (SAFE):
+browser_take_screenshot()
+# Then describe what you observe in the screenshot
+```
+
+### If `browser_snapshot` fails:
+If you encounter an error mentioning "buffer size" or "response too large", immediately switch to `browser_take_screenshot` and continue your task.
 """
 
 # =============================================================================
