@@ -34,6 +34,9 @@ orchestrator start -f "My feature" --auto-commit --no-smart-commit
 # Start with MCP tools (e.g., Playwright browser automation)
 orchestrator start -f "E2E tests" --mcp-config .mcp.json
 
+# Start with Playwright in headless mode (no browser window)
+orchestrator start -f "E2E tests" --mcp-config .mcp.json --headless
+
 # Verify Planner + Executor have Playwright MCP tools
 # Terminal 1: start the local fixture site
 cd orchestrator-auto/fixtures/playwright-test-site
@@ -180,6 +183,7 @@ orchestrator start -f "Feature description" [options]
 | `--telegram` | Enable Telegram notifications |
 | `--no-telegram` | Disable Telegram notifications |
 | `--mcp-config` | Path to MCP configuration file (`.mcp.json`) |
+| `--headless` | Run Playwright MCP browser in headless mode |
 | `--no-rename` | Do not rename plan file to `*_done.md` on completion |
 | `--no-activity` | Disable activity indicator |
 | `--debug` | Enable debug mode (full stack trace on error) |
@@ -231,6 +235,7 @@ orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
 | `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
 | `--auto-commit-model` | Model for AI commit messages (default: executor model) |
 | `--mcp-config` | Path to MCP configuration file (overrides saved config) |
+| `--headless` | Run Playwright MCP browser in headless mode |
 | `--debug` | Enable debug mode (full stack trace on error) |
 
 ### `reset` - Reset orphaned session
@@ -443,6 +448,7 @@ orchestrator watch PLANS_DIR [options]
 | `--smart-commit` | Use AI-generated commit messages |
 | `--telegram` | Enable Telegram notifications |
 | `--mcp-config` | Path to MCP configuration file for all watched sessions |
+| `--headless` | Run Playwright MCP browser in headless mode |
 | `-pm, --planner-model` | Model for planner agent |
 | `-em, --executor-model` | Model for executor agent |
 | `--show-activity` | Show streaming activity indicator (default) |
@@ -988,6 +994,19 @@ Use `orchestrator status <session-id>` to view error details for failed sessions
 ---
 
 ## Changelog
+
+### v0.11.1 - Headless Mode & Auto-Continue
+
+**New Features:**
+
+- **CLI: `--headless`** - Run Playwright MCP browser in headless mode (no browser window). Available on `start`, `resume`, and `watch` commands.
+- **Auto-continue on truncated responses** - Automatically detects when executor responses are truncated (e.g., hitting token limits mid-stream) and prompts the executor to continue, preventing unnecessary pauses.
+
+**Technical:**
+
+- **New function: `inject_headless_mode()`** - Automatically injects `--headless` into Playwright MCP server args
+- **New function: `is_response_truncated()`** - Heuristic detection of incomplete responses (ends with `:`, "Let me...", etc.)
+- **Improved error handling** - Better error messages when continuation also fails
 
 ### v0.11.0 - MCP Tool Support
 
