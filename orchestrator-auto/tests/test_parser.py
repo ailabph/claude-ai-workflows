@@ -962,3 +962,65 @@ class TestIsResponseTruncated:
         Let me explain the issue
         """
         assert not is_response_truncated(content)
+
+    # Tests for unclosed paired tags (opening tag without closing tag)
+
+    def test_truncated_progress_report_without_closing_tag(self):
+        """PROGRESS_REPORT without closing tag IS truncated."""
+        content = """
+        [PROGRESS_REPORT]
+        ## Milestone 1 - Working on implementation
+        I've started the database schema and created the models.
+        Let me continue with the migrations
+        """
+        assert is_response_truncated(content)
+
+    def test_truncated_progress_report_mid_content(self):
+        """PROGRESS_REPORT truncated mid-content IS truncated."""
+        content = """
+        [PROGRESS_REPORT]
+        ## Milestone 2: API Endpoints - IN PROGRESS
+
+        ### Files Created/Modified:
+        - src/api/routes.py (created)
+        - src/api/handlers.py (cre
+        """
+        assert is_response_truncated(content)
+
+    def test_not_truncated_progress_report_with_both_tags(self):
+        """PROGRESS_REPORT with both tags is NOT truncated."""
+        content = """
+        [PROGRESS_REPORT]
+        ## Milestone 1 - COMPLETED
+        All tasks done.
+        [/PROGRESS_REPORT]
+        """
+        assert not is_response_truncated(content)
+
+    def test_truncated_plan_content_without_closing_tag(self):
+        """PLAN_CONTENT without closing tag IS truncated."""
+        content = """
+        [PLAN_READY]
+        Path: docs/plan.md
+        Milestones: 3
+
+        [PLAN_CONTENT]
+        # Implementation Plan
+
+        ## Milestone 1: Setup
+        - Create database schema
+        """
+        assert is_response_truncated(content)
+
+    def test_not_truncated_plan_content_with_both_tags(self):
+        """PLAN_CONTENT with both tags is NOT truncated."""
+        content = """
+        [PLAN_READY]
+        Path: docs/plan.md
+
+        [PLAN_CONTENT]
+        # Plan
+        ## Milestone 1
+        [/PLAN_CONTENT]
+        """
+        assert not is_response_truncated(content)

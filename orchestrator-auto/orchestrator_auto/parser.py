@@ -297,12 +297,25 @@ def is_response_truncated(content: str) -> bool:
     if not content:
         return False
 
-    # If response contains a valid response tag, it's not truncated
-    # (the tag parser will handle it appropriately)
-    valid_tags = ['PROGRESS_REPORT', 'BLOCKED', 'CLARIFICATION_NEEDED',
-                  'MILESTONE_APPROVED', 'CHANGES_REQUESTED', 'HUMAN_INPUT_NEEDED', 'PLAN_READY']
-    for tag in valid_tags:
-        if f'[{tag}]' in content.upper():
+    content_upper = content.upper()
+
+    # Tags that require closing tags - check both open AND close are present
+    paired_tags = ['PROGRESS_REPORT', 'PLAN_CONTENT']
+    for tag in paired_tags:
+        open_tag = f'[{tag}]'
+        close_tag = f'[/{tag}]'
+        if open_tag in content_upper:
+            # Opening tag found - only consider complete if closing tag also present
+            if close_tag not in content_upper:
+                return True  # Truncated: opening without closing
+            # Both present - not truncated
+            return False
+
+    # Tags that don't require closing tags
+    simple_tags = ['BLOCKED', 'CLARIFICATION_NEEDED', 'MILESTONE_APPROVED',
+                   'CHANGES_REQUESTED', 'HUMAN_INPUT_NEEDED', 'PLAN_READY']
+    for tag in simple_tags:
+        if f'[{tag}]' in content_upper:
             return False
 
     content = content.rstrip()
