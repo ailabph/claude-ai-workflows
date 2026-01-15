@@ -1521,7 +1521,8 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (session-only override, not persisted)')
-def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool], mcp_config: Optional[str]):
+@click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
+def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool], mcp_config: Optional[str], headless: bool):
     """Respond to a blocker and continue workflow."""
     try:
         click.secho(f"Responding to session: {session_id}", fg="cyan", bold=True)
@@ -1552,7 +1553,7 @@ def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Opti
 
         # Resume with answer (will call resume command internally)
         ctx = click.get_current_context()
-        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram, mcp_config=mcp_config)
+        ctx.invoke(resume, session_id=session_id, answer=answer, db_path=db_path, telegram=telegram, mcp_config=mcp_config, headless=headless)
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
