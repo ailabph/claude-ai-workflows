@@ -2604,8 +2604,12 @@ def check(verbose: bool):
     # -------------------------------------------------------------------------
     click.secho("5. MCP Processes", bold=True)
 
-    mcp_processes = _detect_mcp_processes()
-    if mcp_processes:
+    mcp_processes, mcp_error = _detect_mcp_processes()
+    if mcp_error == "windows":
+        click.echo(f"   {click.style('○', fg='yellow')} MCP process detection not supported on Windows")
+    elif mcp_error == "pgrep_missing":
+        click.echo(f"   {click.style('○', fg='yellow')} MCP process detection unavailable (pgrep not found)")
+    elif mcp_processes:
         click.secho(f"   ⚠ MCP processes detected: {len(mcp_processes)} running", fg="yellow")
         for name, _, pid in mcp_processes[:3]:
             click.echo(f"      • {name} (PID: {pid})")
@@ -2657,7 +2661,9 @@ def _detect_mcp_processes(include_extended: bool = False):
         include_extended: Include browser processes (higher false positive risk)
 
     Returns:
-        List of (process_name, pattern, pid) tuples
+        Tuple of (processes, error) where:
+        - processes: List of (process_name, pattern, pid) tuples, deduped by PID
+        - error: None if successful, or error string ("windows", "pgrep_missing")
 
     Note: May include processes from other applications using Playwright.
     """
@@ -2665,13 +2671,15 @@ def _detect_mcp_processes(include_extended: bool = False):
     import platform
 
     if platform.system() == "Windows":
-        return []  # Not supported on Windows yet
+        return ([], "windows")
 
     patterns = list(DEFAULT_MCP_PATTERNS)
     if include_extended:
         patterns.extend(EXTENDED_MCP_PATTERNS)
 
     found = []
+    seen_pids = set()  # Dedupe by PID
+
     for name, pattern in patterns:
         try:
             result = subprocess.run(
@@ -2682,12 +2690,88 @@ def _detect_mcp_processes(include_extended: bool = False):
             )
             if result.returncode == 0:
                 for pid in result.stdout.strip().split('\n'):
-                    if pid:
+                    if pid and pid not in seen_pids:
+                        seen_pids.add(pid)
                         found.append((name, pattern, pid))
+        except FileNotFoundError:
+            return ([], "pgrep_missing")
         except Exception:
-            pass
+            pass  # Other errors (timeout, etc.) - continue with other patterns
 
-    return found
+    return (found, None)
+
+
+def _is_process_running(pid: str) -> bool:
+    """Check if a process is still running."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["kill", "-0", pid],
+            capture_output=True,
+            timeout=2
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def _graceful_kill(pid: str, timeout: float = 2.0) -> tuple:
+    """
+    Kill a process gracefully: SIGTERM first, then SIGKILL if needed.
+
+    Args:
+        pid: Process ID to kill
+        timeout: Seconds to wait after SIGTERM before escalating to SIGKILL
+
+    Returns:
+        Tuple of (success: bool, method: str, error: str or None)
+        method is "SIGTERM", "SIGKILL", or None if failed
+    """
+    import subprocess
+    import time
+
+    # Try SIGTERM first (graceful)
+    try:
+        result = subprocess.run(
+            ["kill", pid],  # Default is SIGTERM
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            # Wait briefly for process to exit
+            time.sleep(0.5)
+            if not _is_process_running(pid):
+                return (True, "SIGTERM", None)
+
+            # Process still running, wait a bit more
+            time.sleep(timeout - 0.5)
+            if not _is_process_running(pid):
+                return (True, "SIGTERM", None)
+
+            # Escalate to SIGKILL
+            result = subprocess.run(
+                ["kill", "-9", pid],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return (True, "SIGKILL", None)
+            else:
+                return (False, None, result.stderr.strip() or "kill -9 failed")
+        else:
+            # SIGTERM failed - maybe process already gone or permission denied
+            error = result.stderr.strip()
+            if "No such process" in error:
+                return (True, "already_gone", None)
+            return (False, None, error or "SIGTERM failed")
+    except subprocess.TimeoutExpired:
+        return (False, None, "timeout")
+    except FileNotFoundError:
+        return (False, None, "kill command not found")
+    except Exception as e:
+        return (False, None, str(e))
 
 
 @cli.command()
@@ -2736,7 +2820,10 @@ def cleanup(dry_run: bool, force: bool, kill_all: bool, pattern: tuple):
         click.secho("ℹ  Using conservative patterns (MCP servers only).", fg="blue")
         click.secho("   Use --all to include browser processes (may affect other users).\n", fg="blue")
 
+    # Scan for processes with deduplication
     found_processes = []
+    seen_pids = set()
+    pgrep_available = True
 
     for name, pat in patterns:
         try:
@@ -2749,8 +2836,13 @@ def cleanup(dry_run: bool, force: bool, kill_all: bool, pattern: tuple):
             if result.returncode == 0:
                 pids = result.stdout.strip().split('\n')
                 for pid in pids:
-                    if pid:
+                    if pid and pid not in seen_pids:
+                        seen_pids.add(pid)
                         found_processes.append((name, pat, pid))
+        except FileNotFoundError:
+            click.secho("✗ Error: 'pgrep' command not found.", fg="red")
+            click.echo("  Install procps (Linux) or use 'ps aux | grep' manually.")
+            sys.exit(1)
         except Exception:
             pass
 
@@ -2758,7 +2850,7 @@ def cleanup(dry_run: bool, force: bool, kill_all: bool, pattern: tuple):
         click.secho("✓ No matching MCP processes found.", fg="green")
         return
 
-    # Display found processes
+    # Display found processes (count reflects deduped list)
     click.secho(f"Found {len(found_processes)} process(es):\n", fg="yellow")
     for name, pat, pid in found_processes:
         # Try to get process command for clarity
@@ -2790,15 +2882,20 @@ def cleanup(dry_run: bool, force: bool, kill_all: bool, pattern: tuple):
             click.echo("Aborted.")
             return
 
-    # Kill processes
+    # Kill processes with graceful termination
     killed = 0
     for name, pat, pid in found_processes:
-        try:
-            subprocess.run(["kill", "-9", pid], capture_output=True, timeout=5)
-            click.secho(f"  ✓ Killed PID {pid}", fg="green")
+        success, method, error = _graceful_kill(pid)
+        if success:
+            if method == "already_gone":
+                click.secho(f"  ○ PID {pid} already terminated", fg="yellow")
+            elif method == "SIGKILL":
+                click.secho(f"  ✓ Killed PID {pid} (force)", fg="green")
+            else:
+                click.secho(f"  ✓ Killed PID {pid}", fg="green")
             killed += 1
-        except Exception as e:
-            click.secho(f"  ✗ Failed to kill PID {pid}: {e}", fg="red")
+        else:
+            click.secho(f"  ✗ Failed to kill PID {pid}: {error}", fg="red")
 
     click.echo()
     click.secho(f"Cleanup complete. Killed {killed}/{len(found_processes)} processes.",

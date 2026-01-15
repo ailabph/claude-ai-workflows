@@ -242,7 +242,7 @@ CRITICAL: The `browser_snapshot` tool can crash the session on complex pages due
 
 2. **ALWAYS prefer `browser_take_screenshot`** for visual verification - it's safer and usually sufficient.
 
-3. **For element inspection**, use targeted snapshots with the `ref` parameter on specific elements, not full-page snapshots.
+3. **For element inspection**, if your MCP tool supports it, use targeted snapshots with the `ref` parameter on specific elements instead of full-page snapshots. Otherwise, use screenshots and describe what you observe.
 
 4. **If you need page structure**, describe what you see in the screenshot rather than requesting a snapshot.
 

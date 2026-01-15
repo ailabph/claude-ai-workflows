@@ -1642,8 +1642,9 @@ class TestDetectMcpProcesses:
 
         with patch('subprocess.run') as mock_run:
             mock_run.return_value = Mock(returncode=1, stdout='')
-            result = _detect_mcp_processes()
-            assert result == []
+            processes, error = _detect_mcp_processes()
+            assert processes == []
+            assert error is None
 
     def test_detect_finds_processes(self):
         """Test detection finds MCP processes."""
@@ -1654,10 +1655,11 @@ class TestDetectMcpProcesses:
                 Mock(returncode=0, stdout='12345\n67890\n'),  # First pattern
                 Mock(returncode=1, stdout=''),                 # Second pattern
             ]
-            result = _detect_mcp_processes()
-            assert len(result) == 2
-            assert result[0][2] == '12345'
-            assert result[1][2] == '67890'
+            processes, error = _detect_mcp_processes()
+            assert error is None
+            assert len(processes) == 2
+            assert processes[0][2] == '12345'
+            assert processes[1][2] == '67890'
 
     def test_detect_extended_patterns(self):
         """Test detection with extended patterns."""
@@ -1671,15 +1673,183 @@ class TestDetectMcpProcesses:
                 Mock(returncode=0, stdout='99999\n'),  # Extended 1
                 Mock(returncode=1, stdout=''),  # Extended 2
             ]
-            result = _detect_mcp_processes(include_extended=True)
-            assert len(result) == 1
-            assert result[0][2] == '99999'
+            processes, error = _detect_mcp_processes(include_extended=True)
+            assert error is None
+            assert len(processes) == 1
+            assert processes[0][2] == '99999'
 
     @patch('platform.system')
-    def test_detect_windows_returns_empty(self, mock_platform):
-        """Test that Windows returns empty list."""
+    def test_detect_windows_returns_error(self, mock_platform):
+        """Test that Windows returns error status, not empty list."""
         from orchestrator_auto.cli import _detect_mcp_processes
 
         mock_platform.return_value = "Windows"
-        result = _detect_mcp_processes()
-        assert result == []
+        processes, error = _detect_mcp_processes()
+        assert processes == []
+        assert error == "windows"
+
+    def test_detect_pgrep_missing(self):
+        """Test that missing pgrep returns error status."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.side_effect = FileNotFoundError("pgrep not found")
+            processes, error = _detect_mcp_processes()
+            assert processes == []
+            assert error == "pgrep_missing"
+
+    def test_detect_dedupes_pids(self):
+        """Test that duplicate PIDs are deduped."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('subprocess.run') as mock_run:
+            # Same PID matches both patterns
+            mock_run.side_effect = [
+                Mock(returncode=0, stdout='12345\n'),  # First pattern
+                Mock(returncode=0, stdout='12345\n'),  # Second pattern (same PID)
+            ]
+            processes, error = _detect_mcp_processes()
+            assert error is None
+            assert len(processes) == 1  # Deduped!
+            assert processes[0][2] == '12345'
+
+
+class TestGracefulKill:
+    """Test the _graceful_kill helper function."""
+
+    def test_sigterm_success(self):
+        """Test successful SIGTERM termination."""
+        from orchestrator_auto.cli import _graceful_kill
+
+        with patch('subprocess.run') as mock_run, \
+             patch('orchestrator_auto.cli._is_process_running') as mock_running, \
+             patch('time.sleep'):
+            mock_run.return_value = Mock(returncode=0, stderr='')
+            mock_running.return_value = False  # Process exits after SIGTERM
+
+            success, method, error = _graceful_kill("12345")
+
+            assert success is True
+            assert method == "SIGTERM"
+            assert error is None
+
+    def test_sigkill_escalation(self):
+        """Test escalation to SIGKILL when SIGTERM doesn't work."""
+        from orchestrator_auto.cli import _graceful_kill
+
+        with patch('subprocess.run') as mock_run, \
+             patch('orchestrator_auto.cli._is_process_running') as mock_running, \
+             patch('time.sleep'):
+            mock_run.side_effect = [
+                Mock(returncode=0, stderr=''),  # SIGTERM succeeds but...
+                Mock(returncode=0, stderr=''),  # SIGKILL needed
+            ]
+            mock_running.return_value = True  # Process keeps running
+
+            success, method, error = _graceful_kill("12345")
+
+            assert success is True
+            assert method == "SIGKILL"
+            assert error is None
+
+    def test_process_already_gone(self):
+        """Test handling of already-terminated process."""
+        from orchestrator_auto.cli import _graceful_kill
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=1, stderr='No such process')
+
+            success, method, error = _graceful_kill("12345")
+
+            assert success is True
+            assert method == "already_gone"
+            assert error is None
+
+    def test_permission_denied(self):
+        """Test handling of permission denied error."""
+        from orchestrator_auto.cli import _graceful_kill
+
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = Mock(returncode=1, stderr='Operation not permitted')
+
+            success, method, error = _graceful_kill("12345")
+
+            assert success is False
+            assert method is None
+            assert "Operation not permitted" in error
+
+
+class TestCheckMcpSection:
+    """Test the MCP section of the check command."""
+
+    def test_check_mcp_no_processes(self, runner, temp_db):
+        """Test check command shows no MCP processes."""
+        from orchestrator_auto.cli import _detect_mcp_processes
+
+        with patch('orchestrator_auto.cli._detect_mcp_processes') as mock_detect, \
+             patch('orchestrator_auto.cli.detect_auth') as mock_auth, \
+             patch('subprocess.run'):  # For API connection test
+            mock_detect.return_value = ([], None)
+            mock_auth.return_value = Mock(
+                is_configured=False,
+                signals=[],
+                has_multiple=False
+            )
+
+            result = runner.invoke(cli, ['check'])
+
+            assert '5. MCP Processes' in result.output
+            assert 'No MCP server processes detected' in result.output
+
+    def test_check_mcp_processes_found(self, runner, temp_db):
+        """Test check command shows detected MCP processes."""
+        with patch('orchestrator_auto.cli._detect_mcp_processes') as mock_detect, \
+             patch('orchestrator_auto.cli.detect_auth') as mock_auth:
+            mock_detect.return_value = (
+                [("Playwright MCP Server", "pattern", "12345")],
+                None
+            )
+            mock_auth.return_value = Mock(
+                is_configured=False,
+                signals=[],
+                has_multiple=False
+            )
+
+            result = runner.invoke(cli, ['check'])
+
+            assert '5. MCP Processes' in result.output
+            assert 'MCP processes detected: 1 running' in result.output
+            assert 'PID: 12345' in result.output
+            assert 'orchestrator cleanup --dry-run' in result.output
+
+    def test_check_mcp_windows_not_supported(self, runner, temp_db):
+        """Test check command shows Windows not supported message."""
+        with patch('orchestrator_auto.cli._detect_mcp_processes') as mock_detect, \
+             patch('orchestrator_auto.cli.detect_auth') as mock_auth:
+            mock_detect.return_value = ([], "windows")
+            mock_auth.return_value = Mock(
+                is_configured=False,
+                signals=[],
+                has_multiple=False
+            )
+
+            result = runner.invoke(cli, ['check'])
+
+            assert '5. MCP Processes' in result.output
+            assert 'not supported on Windows' in result.output
+
+    def test_check_mcp_pgrep_missing(self, runner, temp_db):
+        """Test check command shows pgrep missing message."""
+        with patch('orchestrator_auto.cli._detect_mcp_processes') as mock_detect, \
+             patch('orchestrator_auto.cli.detect_auth') as mock_auth:
+            mock_detect.return_value = ([], "pgrep_missing")
+            mock_auth.return_value = Mock(
+                is_configured=False,
+                signals=[],
+                has_multiple=False
+            )
+
+            result = runner.invoke(cli, ['check'])
+
+            assert '5. MCP Processes' in result.output
+            assert 'pgrep not found' in result.output
