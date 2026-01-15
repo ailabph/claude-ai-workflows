@@ -21,6 +21,7 @@ from .config import (
     load_mcp_config_raw,
     expand_env_vars,
     get_agent_mcp_config,
+    inject_headless_mode,
 )
 from .agents import (
     create_planner_agent,
@@ -72,6 +73,7 @@ class Orchestrator:
         telegram_notifier: Optional["TelegramNotifier"] = None,
         debug: bool = False,
         mcp_config_path: Optional[str] = None,
+        headless: bool = False,
     ):
         """
         Initialize orchestrator.
@@ -88,6 +90,7 @@ class Orchestrator:
             telegram_notifier: Optional TelegramNotifier for sending notifications
             debug: If True, enable debug logging with console output
             mcp_config_path: Optional path to MCP configuration file (.mcp.json)
+            headless: If True, run Playwright MCP browser in headless mode
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -107,6 +110,7 @@ class Orchestrator:
         self.planner_mcp_config = None
         self.executor_mcp_config = None
         self._mcp_config_for_db = None  # Store raw config for DB persistence
+        self._headless = headless  # Playwright headless mode
 
         # Initialize database
         db.init_db(db_path)
@@ -310,6 +314,10 @@ class Orchestrator:
         mcp_servers = mcp_config.get("servers", {})
         planner_cfg = mcp_config.get("planner", {})
         executor_cfg = mcp_config.get("executor", {})
+
+        # Inject headless mode for Playwright MCP if enabled
+        if self._headless and mcp_servers:
+            mcp_servers = inject_headless_mode(mcp_servers)
 
         if mcp_servers:
             self.mcp_servers = mcp_servers

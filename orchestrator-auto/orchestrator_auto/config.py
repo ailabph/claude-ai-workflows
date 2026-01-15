@@ -700,3 +700,37 @@ def get_agent_mcp_config(
         tools = [f"mcp__{name}__*" for name in filtered_servers.keys()]
 
     return filtered_servers, tools
+
+
+def inject_headless_mode(mcp_servers: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """
+    Inject --headless flag into Playwright MCP server args.
+
+    Modifies any MCP server that appears to be Playwright-based by
+    adding --headless to its args if not already present.
+
+    Args:
+        mcp_servers: MCP server configuration dict
+
+    Returns:
+        Modified MCP server configuration with headless injected
+    """
+    if not mcp_servers:
+        return mcp_servers
+
+    import copy
+    modified = copy.deepcopy(mcp_servers)
+
+    for name, config in modified.items():
+        # Detect Playwright MCP servers by name or package
+        args = config.get("args", [])
+        is_playwright = (
+            "playwright" in name.lower() or
+            any("playwright" in str(arg).lower() for arg in args)
+        )
+
+        if is_playwright and "--headless" not in args:
+            # Inject --headless after the package name
+            config["args"] = args + ["--headless"]
+
+    return modified

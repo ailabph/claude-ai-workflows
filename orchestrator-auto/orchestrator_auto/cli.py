@@ -381,6 +381,7 @@ def _handle_queue_mode(
     auto_commit_model: Optional[str] = None,
     no_rename: bool = False,
     mcp_config_path: Optional[str] = None,
+    headless: bool = False,
 ) -> None:
     """
     Handle --queue mode: validate, create/resume queue, run queue.
@@ -416,6 +417,7 @@ def _handle_queue_mode(
             auto_commit_model=auto_commit_model,
             no_rename=no_rename,
             mcp_config_path=mcp_config_path,
+            headless=headless,
         )
         return
 
@@ -465,6 +467,7 @@ def _handle_queue_mode(
                 auto_commit_model=auto_commit_model,
                 no_rename=no_rename,
                 mcp_config_path=mcp_config_path,
+                headless=headless,
             )
             return
         else:
@@ -537,6 +540,7 @@ def _handle_queue_mode(
         auto_commit_model=auto_commit_model,
         no_rename=no_rename,
         mcp_config_path=mcp_config_path,
+        headless=headless,
     )
 
 
@@ -745,6 +749,7 @@ def _run_queue(
     auto_commit_model: Optional[str] = None,
     no_rename: bool = False,
     mcp_config_path: Optional[str] = None,
+    headless: bool = False,
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
@@ -848,6 +853,7 @@ def _run_queue(
                 executor_model=resolved_executor,
                 telegram_notifier=telegram_notifier,
                 mcp_config_path=mcp_config_path,
+                headless=headless,
             )
             _current_orchestrator = orch
 
@@ -1043,6 +1049,7 @@ def cli():
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--no-rename', is_flag=True, default=False, help='Do not rename plan file to *_done.md on completion')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (.mcp.json)')
+@click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 def start(
     feature: Optional[str],
@@ -1060,6 +1067,7 @@ def start(
     telegram: Optional[bool],
     no_rename: bool,
     mcp_config: Optional[str],
+    headless: bool,
     debug: bool,
 ):
     """Start a new workflow session or queue."""
@@ -1102,6 +1110,7 @@ def start(
             smart_commit=smart_commit,
             no_rename=no_rename,
             mcp_config_path=mcp_config,
+            headless=headless,
         )
         return
 
@@ -1144,6 +1153,7 @@ def start(
             telegram_notifier=telegram_notifier,
             debug=debug,
             mcp_config_path=mcp_config,
+            headless=headless,
         )
         _current_orchestrator = orch
 
@@ -1212,8 +1222,9 @@ def start(
 @click.option('--smart-commit/--no-smart-commit', default=None, help='Use AI to generate commit messages (default: enabled when auto-commit is on)')
 @click.option('--auto-commit-model', default=None, help='Model for AI commit messages (default: executor model)')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (session-only override, not persisted)')
+@click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
-def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str], mcp_config: Optional[str], debug: bool):
+def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_activity: bool, telegram: Optional[bool], force: bool, auto_commit: bool, smart_commit: Optional[bool], auto_commit_model: Optional[str], mcp_config: Optional[str], headless: bool, debug: bool):
     """Resume an existing session."""
     global _current_orchestrator
 
@@ -1277,6 +1288,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
             telegram_notifier=telegram_notifier,
             debug=debug,
             mcp_config_path=mcp_config,
+            headless=headless,
         )
         _current_orchestrator = orch
 
@@ -1356,6 +1368,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
                     mcp_config_path=mcp_config,
+                    headless=headless,
                 )
 
             elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
@@ -1395,6 +1408,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
                     mcp_config_path=mcp_config,
+                    headless=headless,
                 )
         else:
             # Not part of a queue - just complete normally
@@ -1441,6 +1455,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
                     mcp_config_path=mcp_config,
+                    headless=headless,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error
@@ -1486,6 +1501,7 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
                     smart_commit=smart_commit,
                     auto_commit_model=auto_commit_model,
                     mcp_config_path=mcp_config,
+                    headless=headless,
                 )
         except Exception:
             # If we can't handle queue continuation, just show the original error
@@ -2905,6 +2921,7 @@ def _rename_to_terminal(
 @click.option('--telegram/--no-telegram', default=None, help='Enable Telegram notifications')
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file for all watched sessions')
+@click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -2917,6 +2934,7 @@ def watch(
     telegram: Optional[bool],
     show_activity: bool,
     mcp_config: Optional[str],
+    headless: bool,
 ):
     """Watch a directory for new plan files and execute them.
 
@@ -3239,6 +3257,7 @@ def _process_watch_file(
             plan_path=str(executed_path),
             telegram_notifier=telegram_notifier,
             mcp_config_path=mcp_config,
+            headless=headless,
         )
 
         orch.start()
