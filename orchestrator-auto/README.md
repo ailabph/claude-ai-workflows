@@ -2,9 +2,210 @@
 
 **Automated two-agent workflow orchestration for complex software engineering tasks.**
 
+A planner (Claude Opus) breaks your feature request into milestones. An executor (Claude Sonnet/Haiku) builds each milestone one at a time. You review and approve between milestones.
+
 ---
 
-## Quick Reference
+## Getting Started (5 Minutes)
+
+### 1. Install & Verify
+
+```bash
+cd orchestrator-auto
+conda env create -f environment.yml && conda activate orchestrator-auto
+pip install -e .
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key"  # Or use Claude Pro OAuth token
+orchestrator check  # Verify everything works
+```
+
+### 2. Start Your First Workflow
+
+```bash
+orchestrator start -f "Add email notifications to the user system"
+```
+
+The planner creates a plan with 3-5 milestones. You'll see:
+1. **Planning phase** → Planner proposes milestones
+2. **Approval** → You approve or request changes
+3. **Execution** → Executor builds milestone 1, reports progress
+4. **Review** → You review and approve before next milestone
+5. **Repeat** → Milestones 2-5 follow same pattern
+
+### 3. Approve a Milestone
+
+When executor finishes a milestone:
+
+```
+✅ Milestone 1: EmailTemplate model + migrations
+[code, tests, and a detailed progress report]
+
+What's next?
+```
+
+You respond:
+```
+✅ Approved. Proceed to Milestone 2.
+```
+
+Or if there's an issue:
+```
+❌ Milestone 1 needs changes: Email validation should reject addresses with +, handle case-insensitive. Fix and regenerate.
+```
+
+### 4. Check Status Anytime
+
+```bash
+orchestrator list                    # See all sessions
+orchestrator status <session-id>     # Check current milestone
+orchestrator resume <session-id>     # Continue where you left off
+```
+
+---
+
+## Common Workflows
+
+### Workflow: Build a Backend API
+
+**Scenario:** Add a `/api/users` endpoint with authentication, validation, and tests.
+
+```bash
+orchestrator start -f "Add /api/users POST endpoint with email validation and password hashing"
+```
+
+**Typical milestones the planner creates:**
+- M1: User model + database migrations
+- M2: Serializer + password hashing + validation
+- M3: API endpoint + authentication check
+- M4: Unit tests + integration tests
+- M5: Error handling + edge cases
+
+**Your role:** Review each milestone, verify tests pass, approve before next.
+
+### Workflow: Build a Frontend Component
+
+**Scenario:** Add a login form with validation and error handling.
+
+```bash
+orchestrator start -f "Build login form component with email/password fields, client-side validation, and error messages"
+```
+
+**Typical milestones:**
+- M1: Component structure + styling
+- M2: Form state management + validation
+- M3: Error display + loading state
+- M4: Integration with auth API
+- M5: Accessibility + unit tests
+
+**Your role:** Review screenshots after each milestone, approve styling before moving on.
+
+### Workflow: Refactor Existing Code
+
+**Scenario:** Migrate authentication from sessions to JWT.
+
+```bash
+orchestrator start -f "Refactor authentication from session-based to JWT tokens, maintaining backward compatibility"
+```
+
+**Typical milestones:**
+- M1: JWT generation + token validation logic
+- M2: Middleware + protected routes
+- M3: Migration script + session cleanup
+- M4: Tests + security validation
+- M5: Documentation + deployment guide
+
+**Your role:** Test each milestone, verify no regressions.
+
+### Workflow: Cost-Saving with Cheaper Models
+
+**Default:** Opus for planner, Sonnet for executor (most accurate).
+
+**Budget option:** Use cheaper models for executor
+
+```bash
+orchestrator start -f "Add X feature" -pm sonnet -em haiku
+```
+
+Saves ~70% on execution cost. Planner (Opus) still plans well; executor just needs to follow instructions.
+
+### Workflow: Auto-Commit on Completion
+
+**Scenario:** You trust the workflow and want automatic commits.
+
+```bash
+orchestrator start -f "Add feature" --auto-commit
+```
+
+Or with AI-generated commit messages:
+
+```bash
+orchestrator start -f "Add feature" --auto-commit --smart-commit
+```
+
+**Note:** Never pushes automatically. Only creates local commits.
+
+### Workflow: Batch Process Multiple Features (Queue Mode)
+
+**Scenario:** You have 3 features to build, want them sequential.
+
+Create plan files:
+- `plan1.md` - "Add user authentication"
+- `plan2.md` - "Add email notifications"
+- `plan3.md` - "Add password reset"
+
+Then run them sequentially:
+
+```bash
+orchestrator start --queue plan1.md plan2.md plan3.md
+```
+
+Each plan becomes its own session. When plan1 completes, plan2 starts automatically. If a plan hits a blocker, queue pauses—resolve with `orchestrator resume <id>`, then queue continues.
+
+**Resume existing queue:**
+```bash
+orchestrator start --queue
+```
+
+### Workflow: Watch a Directory for New Plans
+
+**Scenario:** Continuous delivery—drop plans in a folder, they execute automatically.
+
+```bash
+orchestrator watch ./plans/ --auto-commit
+```
+
+**What happens:**
+1. Drop `feature-x.md` into `./plans/`
+2. Watcher sees it, validates it, auto-converts if needed
+3. Orchestrator executes it
+4. On completion: `feature-x.md` → `feature-x_done.md` (auto-committed)
+
+---
+
+## Quick Reference & All Commands
+
+**Looking for a specific command?** See the table of contents below:
+
+- **[Installation](#installation)** - Setup & authentication
+- **[CLI Commands](#cli-commands)** - Full command reference
+  - `start` - Start new workflow
+  - `resume` - Continue paused workflow
+  - `list` - See all sessions
+  - `status` - Check session details
+  - `respond` - Answer a blocker question
+  - `export` - Save session to markdown
+  - `check` - Health check (dependencies, auth, API)
+  - `convert` - Convert markdown to orchestrator format
+  - `telegram` - Telegram notifications
+  - `watch` - Monitor directory for plans
+  - `chat` - Direct chat without orchestration
+- **[Configuration](#configuration)** - Models, auth, files
+- **[MCP Tools](#mcp-tool-support)** - Browser automation, Figma, etc.
+- **[Troubleshooting](#troubleshooting)** - Common issues & solutions
+- **[Development](#development)** - For contributors
+
+---
+
+### All CLI Examples
 
 ```bash
 # Start a new workflow
@@ -114,6 +315,32 @@ orchestrator convert plan.md --validate-only   # Check if already valid
 
 ---
 
+## Choosing the Right Flags
+
+**I want to...** → **Use these flags:**
+
+| Goal | Command |
+|------|---------|
+| Just start a basic workflow | `orchestrator start -f "Feature"` |
+| Save money on API costs | `orchestrator start -f "Feature" -pm sonnet -em haiku` |
+| Auto-commit when done | `orchestrator start -f "Feature" --auto-commit` |
+| Auto-commit with AI messages | `orchestrator start -f "Feature" --auto-commit --smart-commit` |
+| Use an existing plan file | `orchestrator start --plan docs/plan.md` |
+| Run multiple plans sequentially | `orchestrator start --queue plan1.md plan2.md plan3.md` |
+| Monitor a folder for new plans | `orchestrator watch ./plans/ --auto-commit` |
+| Get notifications via Telegram | `orchestrator start -f "Feature" --telegram` |
+| Use Playwright for browser tests | `orchestrator start -f "E2E tests" --mcp-config .mcp.json` |
+| Run headless (no browser window) | `orchestrator start -f "Feature" --mcp-config .mcp.json --headless` |
+| Resume a paused workflow | `orchestrator resume <session-id>` |
+| Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
+| See all sessions | `orchestrator list` |
+| Check session details | `orchestrator status <session-id>` |
+| Export session to markdown | `orchestrator export <session-id> -o report.md` |
+| Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
+| Verify setup (dependencies, auth, API) | `orchestrator check` |
+
+---
+
 ## Installation
 
 ```bash
@@ -157,6 +384,139 @@ orchestrator check
 - OAuth tokens (`sk-ant-oat01-...`) go in `CLAUDE_CODE_OAUTH_TOKEN`
 - API keys (`sk-ant-api03-...`) go in `ANTHROPIC_API_KEY`
 - Run `orchestrator check` to verify your setup
+
+### Workflow Execution Flow
+
+When you run `orchestrator start -f "Feature description"`:
+
+```
+1. DISCOVERY
+   You describe what to build
+        ↓
+   Planner asks clarifying questions (if needed)
+        ↓
+   Requirements finalized
+
+2. PLANNING
+   Planner reads framework docs
+        ↓
+   Creates 3-5 milestones
+        ↓
+   You approve, request changes, or provide more info
+
+3. EXECUTION (repeat for each milestone)
+   Executor implements milestone N
+        ↓
+   Runs tests, generates progress report
+        ↓
+   You review the work
+        ↓
+   ✅ Approve? → Proceed to next milestone
+   ❌ Changes needed? → Executor fixes and regenerates
+   🛑 Abort? → Stop workflow entirely
+
+4. COMPLETION
+   All milestones approved
+        ↓
+   Optional: auto-commit changes to git
+        ↓
+   Session marked complete
+
+5. EXPORT (optional)
+   Export session to markdown report
+```
+
+**Key insight:** Executor STOPS after each milestone and waits for your approval. This prevents wasted compute on wrong directions.
+
+---
+
+## When Things Go Wrong
+
+### I started a workflow but it paused with a blocker. What do I do?
+
+**Blocker = Executor asking for clarification or human input.**
+
+The session paused because the executor needs information:
+- Unclear requirements
+- Decision needed (approach A vs B)
+- External dependency (need API key, etc.)
+
+Check what the blocker is:
+```bash
+orchestrator status <session-id>
+```
+
+See the blocker message? Respond:
+```bash
+orchestrator respond <session-id> "Your answer here"
+```
+
+Workflow resumes and continues to next milestone.
+
+### My API key doesn't work
+
+**Diagnose:**
+```bash
+orchestrator check
+```
+
+**If check fails:**
+1. **API key format wrong:** Should be `sk-ant-api03-...` (not `sk-ant-oat01-...` which is OAuth)
+2. **Key has no credits:** Visit https://console.anthropic.com/account/billing/overview
+3. **Wrong variable name:** Use `ANTHROPIC_API_KEY` for API keys, not `CLAUDE_CODE_OAUTH_TOKEN`
+
+### Workflow seems stuck / no progress for 10+ minutes
+
+**Check status:**
+```bash
+orchestrator status <session-id>
+```
+
+**If it shows ACTIVE but no heartbeat:**
+```bash
+orchestrator reset <session-id>
+```
+
+Then resume:
+```bash
+orchestrator resume <session-id>
+```
+
+**If that doesn't work, force-resume:**
+```bash
+orchestrator resume <session-id> --force
+```
+
+### I want to stop and start over
+
+```bash
+# Don't use reset—that's just for stuck sessions
+# Instead, just start a new workflow:
+orchestrator start -f "New feature description"
+```
+
+Old session stays in database but won't interfere.
+
+### Where are the logs?
+
+Every session logs to:
+```
+~/.claude_orchestrator/logs/error_<session-id>_<timestamp>.log
+```
+
+Check that file if something goes wrong:
+```bash
+cat ~/.claude_orchestrator/logs/error_*.log
+```
+
+### I have multiple sessions and want to clean up
+
+List all sessions:
+```bash
+orchestrator list --all-projects
+```
+
+Sessions persist in database. They don't take resources. You can safely leave them.
 
 ---
 
@@ -919,6 +1279,44 @@ orchestrator-auto/
 pytest tests/ -v
 pytest tests/ --cov=orchestrator_auto
 ```
+
+---
+
+## Model Selection Guide
+
+**Planner** (breaks feature into milestones) should be smart → **Use Opus**
+
+**Executor** (builds one milestone) → **Choose based on complexity:**
+
+| Executor Model | Cost | Best For | Example |
+|---|---|---|---|
+| **Opus** | ~3x Sonnet | Complex logic, hard problems | Refactor legacy code, security features |
+| **Sonnet** (default) | ~1x baseline | General purpose, most tasks | Building features, APIs, components |
+| **Haiku** | ~0.3x Sonnet | Simple tasks, speed priority | Format fixes, simple CRUD endpoints, documentation |
+
+### Cost Optimization
+
+**Default setup (most accurate):**
+```bash
+orchestrator start -f "Feature"
+# Uses: Planner=Opus, Executor=Sonnet (~$1-5 per feature)
+```
+
+**Budget setup (70% cheaper):**
+```bash
+orchestrator start -f "Feature" -pm sonnet -em haiku
+# Uses: Planner=Sonnet, Executor=Haiku (~$0.3-1 per feature)
+# Good for: simple features, known patterns
+```
+
+**Complex task setup (most accurate):**
+```bash
+orchestrator start -f "Feature" -pm opus -em opus
+# Uses: Both Opus (~$5-15 per feature)
+# For: challenging algorithms, security, critical logic
+```
+
+**Remember:** You can always restart with different models if a workflow isn't going well. The code written is independent of the model.
 
 ---
 
