@@ -3303,5 +3303,130 @@ def _process_watch_file(
         )
 
 
+@cli.command('test-playwright')
+@click.argument('role', type=click.Choice(['planner', 'executor', 'both']))
+@click.option('--test-url', required=True, help='URL to the test website (e.g., http://localhost:<PORT>/)')
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file')
+@click.option('--out-dir', type=click.Path(), help='Directory to write artifacts')
+@click.option('--timeout', default=120, type=int, help='Overall timeout in seconds (default: 120)')
+@click.option('--model', help='Override model for test agent')
+@click.option('--verbose', '-v', is_flag=True, help='Print full agent response')
+def test_playwright(
+    role: str,
+    test_url: str,
+    mcp_config: Optional[str],
+    out_dir: Optional[str],
+    timeout: int,
+    model: Optional[str],
+    verbose: bool,
+):
+    """Verify Playwright MCP tool integration for agents.
+
+    Tests that the specified agent role(s) can access and use Playwright MCP tools.
+    Validates success by checking for screenshot artifact creation.
+
+    Prerequisites:
+    - Playwright MCP server configured in .mcp.json
+    - Test site running at --test-url
+    - npx @anthropic/mcp-server-playwright available
+
+    Examples:
+        # Test planner agent
+        orchestrator test-playwright planner --test-url http://localhost:<PORT>/
+
+        # Test executor agent
+        orchestrator test-playwright executor --test-url http://localhost:<PORT>/
+
+        # Test both agents sequentially
+        orchestrator test-playwright both --test-url http://localhost:<PORT>/
+
+        # With custom MCP config
+        orchestrator test-playwright planner --test-url http://localhost:<PORT>/ --mcp-config ./custom.mcp.json
+    """
+    from .playwright_test import (
+        run_playwright_test,
+        run_playwright_test_both,
+    )
+
+    out_path = Path(out_dir) if out_dir else None
+
+    click.echo()
+    click.secho("=" * 60, bold=True)
+    click.secho("  MCP PLAYWRIGHT VERIFICATION", bold=True)
+    click.secho("=" * 60, bold=True)
+    click.echo()
+    click.echo(f"  Role(s): {role}")
+    click.echo(f"  Test URL: {test_url}")
+    if mcp_config:
+        click.echo(f"  MCP Config: {mcp_config}")
+    else:
+        click.echo(f"  MCP Config: auto-discover (.mcp.json)")
+    if model:
+        click.echo(f"  Model: {model}")
+    click.echo()
+
+    if role == 'both':
+        all_passed, results, actual_out_dir = run_playwright_test_both(
+            test_url=test_url,
+            mcp_config_path=mcp_config,
+            out_dir=out_path,
+            timeout=timeout,
+            model=model,
+            verbose=verbose,
+        )
+
+        click.secho("-" * 60, dim=True)
+        click.secho("Results:", bold=True)
+        click.echo()
+
+        for agent_role, (success, msg) in results.items():
+            if success:
+                click.echo(f"  {click.style('✓', fg='green')} {agent_role}: {msg}")
+            else:
+                click.echo(f"  {click.style('✗', fg='red')} {agent_role}: {msg}")
+
+        click.echo()
+        click.echo(f"  Artifacts: {actual_out_dir}")
+        click.echo()
+
+        if all_passed:
+            click.secho("PASS", fg="green", bold=True)
+            sys.exit(0)
+        else:
+            click.secho("FAIL", fg="red", bold=True)
+            sys.exit(1)
+
+    else:
+        success, msg, actual_out_dir = run_playwright_test(
+            role=role,
+            test_url=test_url,
+            mcp_config_path=mcp_config,
+            out_dir=out_path,
+            timeout=timeout,
+            model=model,
+            verbose=verbose,
+        )
+
+        click.secho("-" * 60, dim=True)
+        click.secho("Result:", bold=True)
+        click.echo()
+
+        if success:
+            click.echo(f"  {click.style('✓', fg='green')} {role}: {msg}")
+        else:
+            click.echo(f"  {click.style('✗', fg='red')} {role}: {msg}")
+
+        click.echo()
+        click.echo(f"  Artifacts: {actual_out_dir}")
+        click.echo()
+
+        if success:
+            click.secho("PASS", fg="green", bold=True)
+            sys.exit(0)
+        else:
+            click.secho("FAIL", fg="red", bold=True)
+            sys.exit(1)
+
+
 if __name__ == '__main__':
     cli()
