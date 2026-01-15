@@ -42,21 +42,9 @@ DEFAULT_ARTIFACT_DIR = Path(".orchestrator_artifacts/playwright-test")
 DEFAULT_TEST_MODEL = "claude-sonnet-4-5-20250929"
 
 
-def _generate_verification_prompt(test_url: str, role: str, out_dir: Path) -> str:
-    """
-    Generate the verification prompt for the agent.
-
-    The prompt instructs the agent to:
-    1. Navigate to the test URL
-    2. Take a snapshot and report visible elements
-    3. Click the "go to form" link
-    4. Type into the username input
-    5. Collect console messages
-    6. Collect network requests
-    7. Take a screenshot
-    8. Close the browser
-    """
-    screenshot_path = out_dir / f"{role}_test.png"
+def _generate_verification_prompt(test_url: str, role: str) -> str:
+    """Generate the verification prompt for the agent."""
+    screenshot_name = f"{role}_test.png"
 
     return f"""You are testing MCP Playwright tool integration.
 
@@ -68,7 +56,7 @@ Your task is to verify that Playwright MCP tools work correctly by performing th
 4. Wait for the form page to load, then type "testuser" into the input with data-testid="username"
 5. Collect console messages and report any [mcp-test] prefixed messages
 6. Collect network requests and report any /api/ requests you see (ping, fail)
-7. Take a screenshot and save it to: {screenshot_path}
+7. Take a screenshot and save it as: {screenshot_name}
 8. Close the browser
 
 IMPORTANT:
@@ -78,6 +66,31 @@ IMPORTANT:
 
 Execute each step and report your findings.
 """
+
+
+def _find_screenshot_path(out_dir: Path, role: str) -> Optional[Path]:
+    """Locate screenshot created by Playwright MCP.
+
+    Playwright MCP commonly writes artifacts under a `.playwright-mcp/` sandbox
+    directory. This helper accepts both direct output and sandboxed output.
+    """
+    filename = f"{role}_test.png"
+
+    direct_path = out_dir / filename
+    if direct_path.exists():
+        return direct_path
+
+    sandbox_dir = out_dir / ".playwright-mcp"
+    preferred_sandbox_path = sandbox_dir / filename
+    if preferred_sandbox_path.exists():
+        return preferred_sandbox_path
+
+    if sandbox_dir.exists():
+        matches = sorted(sandbox_dir.rglob(filename))
+        if matches:
+            return matches[0]
+
+    return None
 
 
 def _create_output_dir(out_dir: Optional[Path] = None) -> Path:
@@ -183,7 +196,7 @@ def run_playwright_test(
             )
 
         # Generate and send verification prompt with timeout
-        prompt = _generate_verification_prompt(test_url, role, actual_out_dir)
+        prompt = _generate_verification_prompt(test_url, role)
         try:
             loop = agent._get_loop()
             response = loop.run_until_complete(
@@ -205,11 +218,14 @@ def run_playwright_test(
             print("--- End Response ---\n")
 
         # Validate artifacts
-        screenshot_path = actual_out_dir / f"{role}_test.png"
-        if not screenshot_path.exists():
+        screenshot_path = _find_screenshot_path(actual_out_dir, role)
+        if screenshot_path is None:
+            expected = actual_out_dir / f"{role}_test.png"
+            expected_sandbox = actual_out_dir / ".playwright-mcp" / f"{role}_test.png"
             return (
                 False,
-                f"Screenshot not created: {screenshot_path}",
+                "Screenshot not created. Looked for: "
+                f"{expected} and {expected_sandbox}",
                 actual_out_dir,
             )
 

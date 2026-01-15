@@ -34,6 +34,15 @@ orchestrator start -f "My feature" --auto-commit --no-smart-commit
 # Start with MCP tools (e.g., Playwright browser automation)
 orchestrator start -f "E2E tests" --mcp-config .mcp.json
 
+# Verify Planner + Executor have Playwright MCP tools
+# Terminal 1: start the local fixture site
+cd orchestrator-auto/fixtures/playwright-test-site
+npm ci
+npm run dev -- --port <PORT>
+
+# Terminal 2: run the verification tool
+orchestrator test-playwright both --test-url http://localhost:<PORT>/
+
 # Start with Telegram notifications
 orchestrator start -f "My feature" --telegram
 
@@ -724,6 +733,28 @@ orchestrator start -f "E2E tests" --mcp-config .mcp.json
 
 # Auto-discovery (if .mcp.json exists in project root)
 orchestrator start -f "E2E tests"
+```
+
+**Verify Playwright MCP Access (Planner + Executor):**
+
+This repo includes a committed local test site plus a CLI verification command.
+
+```bash
+# Terminal 1: start the test site
+cd orchestrator-auto/fixtures/playwright-test-site
+npm ci
+npm run dev -- --port <PORT>
+
+# Terminal 2: run verification
+orchestrator test-playwright planner --test-url http://localhost:<PORT>/
+orchestrator test-playwright executor --test-url http://localhost:<PORT>/
+orchestrator test-playwright both --test-url http://localhost:<PORT>/
+
+# Artifacts will be written under:
+# .orchestrator_artifacts/playwright-test/<timestamp>/
+#
+# Note: Playwright MCP often writes files into a sandbox folder:
+# .orchestrator_artifacts/playwright-test/<timestamp>/.playwright-mcp/
 ```
 
 **Per-Agent Scoping:**
