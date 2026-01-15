@@ -276,6 +276,57 @@ def extract_all_tags(content: str) -> List[str]:
     return matches
 
 
+def is_response_truncated(content: str) -> bool:
+    """
+    Detect if a response appears to be truncated mid-stream.
+
+    Uses heuristics to identify incomplete responses:
+    - Ends with action starters like "Let me..." without completion
+    - Ends with a colon (about to do something)
+    - Ends mid-sentence without proper punctuation
+
+    Does NOT consider truncated if response contains valid tags like
+    [BLOCKED], [CLARIFICATION_NEEDED], or [PROGRESS_REPORT].
+
+    Args:
+        content: Response text to check
+
+    Returns:
+        True if response appears truncated
+    """
+    if not content:
+        return False
+
+    # If response contains a valid response tag, it's not truncated
+    # (the tag parser will handle it appropriately)
+    valid_tags = ['PROGRESS_REPORT', 'BLOCKED', 'CLARIFICATION_NEEDED',
+                  'MILESTONE_APPROVED', 'CHANGES_REQUESTED', 'HUMAN_INPUT_NEEDED', 'PLAN_READY']
+    for tag in valid_tags:
+        if f'[{tag}]' in content.upper():
+            return False
+
+    content = content.rstrip()
+
+    # Ends with colon (about to do something)
+    if content.endswith(':'):
+        return True
+
+    # Ends with incomplete action starters
+    # Pattern: "Let me", "Now let me", "I'll", "I will" near end without completion
+    last_200 = content[-200:] if len(content) > 200 else content
+    if re.search(r'(Let me|Now let me|I\'ll|I will|I\'m going to)\s+[^.!?\]]*$', last_200):
+        return True
+
+    # Ends mid-word or without sentence-ending punctuation
+    # Valid endings: . ! ? ] (for tags like [/PROGRESS_REPORT])
+    if content and not re.search(r'[.!?\]]\s*$', content):
+        # Check if it ends with a partial word (letters/numbers without punctuation)
+        if re.search(r'\w$', content):
+            return True
+
+    return False
+
+
 def parse_response(content: str, agent_type: str) -> Tuple[str, Dict[str, Any]]:
     """
     Parse response based on agent type.

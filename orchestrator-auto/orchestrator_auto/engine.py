@@ -33,6 +33,7 @@ from .state import StateMachine, WorkflowState, TransitionEvent
 from .parser import (
     parse_planner_response,
     parse_executor_response,
+    is_response_truncated,
     PLANNER_APPROVED,
     PLANNER_CHANGES_REQUESTED,
     PLANNER_BLOCKED,
@@ -981,8 +982,72 @@ The orchestrator will save the file for you.
                 return
 
             else:
-                # FIX: Improved error message for unrecognized executor response
-                # Provides clearer guidance on what tags are expected
+                # FIX: Detect truncated responses and attempt auto-continuation
+                # This handles cases where executor hits token limits mid-response
+                if is_response_truncated(executor_response):
+                    self._output("\n⚠ Executor response appears truncated. Requesting continuation...\n")
+
+                    # Ask executor to continue and provide the required report
+                    continuation_prompt = (
+                        "Your previous response was cut off before completion. "
+                        "Please continue from where you left off and provide your "
+                        "[PROGRESS_REPORT]...[/PROGRESS_REPORT] when the milestone is complete, "
+                        "or use [BLOCKED] if you cannot proceed."
+                    )
+                    continuation = self._send_with_activity(
+                        executor, continuation_prompt, "Executor continuing"
+                    )
+                    self._log_message("executor", "assistant", continuation)
+
+                    # Re-parse the continuation response
+                    response_type, data = parse_executor_response(continuation)
+
+                    if response_type == EXECUTOR_REPORT:
+                        # Success - process the report normally
+                        report_content = data["content"]
+                        self._output(f"\n✓ Executor completed milestone {current_milestone} (after continuation)\n")
+                        validation, executor_feedback_response = self._route_to_planner(report_content)
+
+                        if validation == "approved":
+                            success, self.state, error = self.state_machine.transition(
+                                self.session_id,
+                                TransitionEvent.MILESTONE_APPROVED.value
+                            )
+                            if not success:
+                                raise RuntimeError(f"State transition failed: {error}")
+                            current_milestone = self.state.current_milestone
+                            continue
+                        elif validation == "changes_requested":
+                            if executor_feedback_response:
+                                executor_response = executor_feedback_response
+                                continue
+                        elif validation == "blocked":
+                            return
+
+                    elif response_type == EXECUTOR_BLOCKED:
+                        self._handle_blocker("executor", data["reason"])
+                        return
+
+                    elif response_type == EXECUTOR_CLARIFICATION:
+                        # Route clarification to planner
+                        self._output(f"\n→ Executor needs clarification from Planner\n")
+                        clarification_response = self._send_with_activity(
+                            planner, data["question"], "Planner clarifying"
+                        )
+                        self._route_to_executor(clarification_response)
+                        continue
+
+                    # Continuation didn't produce a valid response either
+                    self._output("\n⚠ Continuation also unrecognized. Pausing for human review.\n")
+                    self._handle_blocker(
+                        "executor",
+                        f"Executor response was truncated and continuation attempt also failed to produce "
+                        f"expected tags. The executor may be stuck or hitting output limits. "
+                        f"Please review the session logs and provide guidance."
+                    )
+                    return
+
+                # Not truncated, just unrecognized format
                 self._output("\n⚠ Executor response not recognized. Pausing.\n")
                 self._handle_blocker(
                     "executor",
