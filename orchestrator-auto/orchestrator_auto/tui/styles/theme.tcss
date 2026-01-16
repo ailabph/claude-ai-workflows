@@ -1,0 +1,197 @@
+/* Orchestrator TUI Theme - Hacker Aesthetic */
+
+/* Color palette - dark theme with green accents */
+$primary: #00ff41;          /* Matrix green */
+$secondary: #008f11;        /* Dark green */
+$accent: #00d9ff;           /* Cyan accent */
+$warning: #ffcc00;          /* Yellow warning */
+$error: #ff3333;            /* Red error */
+$background: #0d0d0d;       /* Near black */
+$surface: #1a1a1a;          /* Dark gray surface */
+$text: #c0c0c0;             /* Light gray text */
+$text-muted: #666666;       /* Muted text */
+
+/* Base screen styling */
+Screen {
+    background: $background;
+}
+
+/* Header styling */
+Header {
+    background: $surface;
+    color: $primary;
+    text-style: bold;
+}
+
+/* Footer styling */
+Footer {
+    background: $surface;
+    color: $text-muted;
+}
+
+/* Panel borders */
+.panel {
+    border: solid $secondary;
+    background: $surface;
+    padding: 0 1;
+}
+
+/* Status panel */
+StatusPanel {
+    border: solid $primary;
+    background: $surface;
+    padding: 0 1;
+}
+
+StatusPanel .title {
+    color: $primary;
+    text-style: bold;
+}
+
+StatusPanel .label {
+    color: $text-muted;
+}
+
+StatusPanel .value {
+    color: $text;
+}
+
+/* Agent output panel */
+AgentOutput {
+    border: solid $secondary;
+    background: $background;
+    scrollbar-size: 1 1;
+}
+
+/* Log panel */
+LogPanel {
+    border: solid $accent;
+    background: $background;
+    scrollbar-size: 1 1;
+}
+
+/* Milestone list */
+MilestoneList {
+    border: solid $secondary;
+    background: $surface;
+}
+
+MilestoneList .milestone-pending {
+    color: $text-muted;
+}
+
+MilestoneList .milestone-active {
+    color: $primary;
+    text-style: bold;
+}
+
+MilestoneList .milestone-completed {
+    color: $accent;
+}
+
+MilestoneList .milestone-failed {
+    color: $error;
+}
+
+/* Queue panel */
+QueuePanel {
+    border: solid $secondary;
+    background: $surface;
+}
+
+QueuePanel .item-pending {
+    color: $text-muted;
+}
+
+QueuePanel .item-running {
+    color: $primary;
+    text-style: bold;
+}
+
+QueuePanel .item-completed {
+    color: $accent;
+}
+
+QueuePanel .item-failed {
+    color: $error;
+}
+
+QueuePanel .item-paused {
+    color: $warning;
+}
+
+/* Watch panel */
+WatchPanel {
+    border: solid $secondary;
+    background: $surface;
+}
+
+/* Input modal */
+InputModal {
+    align: center middle;
+    width: 60;
+    height: auto;
+    background: $surface;
+    border: heavy $primary;
+    padding: 1 2;
+}
+
+InputModal Input {
+    background: $background;
+    border: solid $secondary;
+    color: $text;
+}
+
+InputModal Input:focus {
+    border: solid $primary;
+}
+
+InputModal .title {
+    color: $primary;
+    text-style: bold;
+    text-align: center;
+}
+
+/* Buttons */
+Button {
+    background: $secondary;
+    color: $text;
+    border: none;
+    min-width: 10;
+}
+
+Button:hover {
+    background: $primary;
+    color: $background;
+}
+
+Button:focus {
+    background: $primary;
+    color: $background;
+}
+
+/* Scrollbars */
+Scrollbar {
+    background: $surface;
+}
+
+Scrollbar > .scrollbar--thumb {
+    background: $secondary;
+}
+
+Scrollbar > .scrollbar--thumb:hover {
+    background: $primary;
+}
+
+/* Progress indicators */
+ProgressBar {
+    color: $primary;
+}
+
+ProgressBar > .bar--bar {
+    background: $secondary;
+}
+
+ProgressBar > .bar--complete {
+    background: $primary;
+}

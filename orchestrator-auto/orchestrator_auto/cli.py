@@ -16,6 +16,7 @@ from . import git
 from . import __version__
 from .engine import Orchestrator
 from .state import Phase, Status
+from .controllers import QueueController, QueueEvent, WatchController, WatchEvent
 from .exceptions import OrchestratorError
 from .parser import extract_feature_from_plan, parse_plan_file
 from .auth import detect_auth, format_auth_display
@@ -74,6 +75,177 @@ def format_status(status: str) -> str:
     }
     color = colors.get(status, "white")
     return click.style(status.upper(), fg=color, bold=True)
+
+
+def _handle_queue_event(event: QueueEvent, data: dict) -> None:
+    """Handle QueueController events with CLI output."""
+    if event == QueueEvent.STARTED:
+        click.echo()
+        click.secho("Starting queue runner...", fg="cyan", bold=True)
+
+    elif event == QueueEvent.ITEM_STARTED:
+        position = data.get("position", 0)
+        plan_path = data.get("plan_path", "")
+        feature = data.get("feature_description", "")
+
+        click.echo()
+        click.secho("=" * 60, fg="cyan")
+        click.secho(f"Queue Item {position}: {Path(plan_path).name}", fg="cyan", bold=True)
+        click.secho(f"Feature: {feature}", fg="cyan")
+        click.secho("=" * 60, fg="cyan")
+        click.echo()
+
+    elif event == QueueEvent.ITEM_COMPLETED:
+        position = data.get("position", 0)
+        click.secho(f"✓ Queue item {position} completed", fg="green", bold=True)
+
+    elif event == QueueEvent.ITEM_FAILED:
+        position = data.get("position", 0)
+        error = data.get("error", "")
+        click.secho(f"✗ Queue item {position} failed", fg="red", bold=True)
+        if error:
+            click.secho(f"  Error: {error}", fg="red")
+        click.secho("  Continuing to next item (fail-forward)...", fg="yellow")
+
+    elif event == QueueEvent.ITEM_PAUSED:
+        position = data.get("position", 0)
+        session_id = data.get("session_id", "")
+        click.secho(f"⏸ Queue item {position} paused (blocker)", fg="yellow", bold=True)
+        click.secho("Queue halted. Use 'orchestrator resume <session-id>' to continue.", fg="yellow")
+        if session_id:
+            click.echo(f"  Session: {session_id}")
+
+    elif event == QueueEvent.COMPLETED:
+        completed = data.get("completed", 0)
+        failed = data.get("failed", 0)
+        paused = data.get("paused", 0)
+
+        click.echo()
+        click.secho("=" * 60, fg="cyan")
+        click.secho("Queue Complete", fg="cyan", bold=True)
+        click.secho("=" * 60, fg="cyan")
+        click.echo()
+        click.echo(f"Completed: {click.style(str(completed), fg='green', bold=True)}")
+        click.echo(f"Failed:    {click.style(str(failed), fg='red', bold=True)}")
+        click.echo(f"Paused:    {click.style(str(paused), fg='yellow', bold=True)}")
+
+    elif event == QueueEvent.HALTED:
+        reason = data.get("reason", "")
+        item = data.get("item", {})
+        session_id = item.get("session_id", "") if item else ""
+
+        if reason == "halt_paused":
+            click.echo()
+            click.secho(f"⏸ Queue halted: item {item.get('position', 0) + 1} is paused", fg="yellow", bold=True)
+            if session_id:
+                click.echo(f"  Resume with: orchestrator resume {session_id}")
+        elif reason == "halt_active":
+            click.echo()
+            click.secho("⚠ Another queue runner appears to be active", fg="yellow", bold=True)
+            if session_id:
+                click.echo(f"  Session {session_id} has recent heartbeat")
+            click.echo("  Exiting to avoid double-running.")
+        elif reason == "halt_orphaned":
+            position = item.get("position", 0) + 1 if item else 0
+            click.echo()
+            click.secho(f"⚠ Queue item {position} has orphaned session", fg="yellow", bold=True)
+            if session_id:
+                click.echo(f"  Session {session_id} has stale heartbeat")
+                click.echo()
+                click.echo("  To recover, run:")
+                click.secho(f"    orchestrator reset {session_id}", fg="cyan")
+                click.secho(f"    orchestrator resume {session_id} --force", fg="cyan")
+
+    elif event == QueueEvent.RECONCILED:
+        message = data.get("message", "")
+        click.secho(f"✓ Reconciling: {message}", fg="green")
+
+    elif event == QueueEvent.INFO:
+        message = data.get("message", "")
+        click.echo(message)
+
+    elif event == QueueEvent.WARNING:
+        message = data.get("message", "")
+        click.secho(f"⚠ {message}", fg="yellow")
+
+
+def _handle_watch_event(event: WatchEvent, data: dict) -> None:
+    """Handle WatchController events with CLI output."""
+    if event == WatchEvent.STARTED:
+        directory = data.get("directory", "")
+        poll_interval = data.get("poll_interval", 2)
+        auto_convert = data.get("auto_convert", True)
+
+        click.echo()
+        click.secho("👁️  Watch Mode", fg="cyan", bold=True)
+        click.echo()
+        click.echo(f"  Directory: {directory}")
+        click.echo(f"  Poll interval: {poll_interval}s")
+        click.echo(f"  Auto-convert: {'enabled' if auto_convert else 'disabled'}")
+        click.echo()
+        click.secho("Press Ctrl+C to stop", fg="yellow")
+        click.echo()
+
+    elif event == WatchEvent.FILE_FOUND:
+        plan_path = data.get("plan_path", "")
+        click.echo(f"📄 Found: {plan_path}")
+
+    elif event == WatchEvent.FILE_COMPLETED:
+        new_path = data.get("new_path", "")
+        click.secho(f"✓ Completed: {new_path}", fg="green")
+
+    elif event == WatchEvent.FILE_FAILED:
+        new_path = data.get("new_path", "")
+        error = data.get("error", "")
+        click.secho(f"✗ Failed: {new_path}", fg="red")
+        if error:
+            click.echo(f"  Error: {error}")
+
+    elif event == WatchEvent.FILE_PAUSED:
+        session_id = data.get("session_id", "")
+        click.echo()
+        click.secho("⏸️  Session paused (blocker)", fg="yellow", bold=True)
+        click.echo(f"  Resume with: orchestrator resume {session_id} --answer \"your response\"")
+        click.echo()
+
+    elif event == WatchEvent.FILE_SKIPPED:
+        plan_path = data.get("plan_path", "")
+        reason = data.get("reason", "")
+        click.secho(f"⚠ Skipped: {plan_path}", fg="yellow")
+        if reason:
+            click.echo(f"  Reason: {reason}")
+
+    elif event == WatchEvent.FILE_CONVERTED:
+        original = data.get("original", "")
+        converted = data.get("converted", "")
+        click.secho(f"  ✓ Converted: {converted}", fg="green")
+
+    elif event == WatchEvent.CONVERSION_FAILED:
+        plan_path = data.get("plan_path", "")
+        click.secho(f"⚠ Conversion failed (quarantined): {plan_path}", fg="yellow")
+
+    elif event == WatchEvent.RESUMED_COMPLETED:
+        new_path = data.get("new_path", "")
+        click.secho(f"✓ Resumed session completed: {new_path}", fg="green")
+
+    elif event == WatchEvent.RESUMED_FAILED:
+        new_path = data.get("new_path", "")
+        click.secho(f"✗ Resumed session failed: {new_path}", fg="red")
+
+    elif event == WatchEvent.STOPPED:
+        completed = data.get("completed", 0)
+        failed = data.get("failed", 0)
+        paused = data.get("paused", 0)
+        click.echo()
+        click.secho("✓ Watch mode stopped", fg="green")
+
+    elif event == WatchEvent.INFO:
+        message = data.get("message", "")
+        click.echo(f"  {message}")
+
+    elif event == WatchEvent.WARNING:
+        message = data.get("message", "")
+        click.secho(f"⚠ {message}", fg="yellow")
 
 
 def _handle_orchestrator_error(
@@ -753,13 +925,9 @@ def _run_queue(
 ) -> None:
     """
     Run queued plans sequentially with crash recovery and fail-forward behavior.
+
+    Uses QueueController for the core logic with CLI-specific event handling.
     """
-    global _current_orchestrator
-
-    # Resolve model names
-    resolved_planner = get_planner_model(planner_model)
-    resolved_executor = get_executor_model(executor_model)
-
     # Setup Telegram notifier if configured
     telegram_notifier = None
     if telegram is not False:
@@ -768,240 +936,77 @@ def _run_queue(
     # Check for stuck sessions
     _check_stuck_sessions(telegram_notifier, db_path)
 
-    click.echo()
-    click.secho("Starting queue runner...", fg="cyan", bold=True)
+    # Resolve model names for auto-commit
+    resolved_executor = get_executor_model(executor_model)
 
-    # Reconcile queue state before starting (handles crash recovery)
-    action, head_item = _reconcile_queue_head(
-        project_id, db_path, auto_commit, telegram_notifier, smart_commit, auto_commit_model
+    # State for CLI-specific post-processing
+    _last_completed_session_id: Optional[str] = None
+    _last_completed_plan_path: Optional[str] = None
+    _last_completed_feature: Optional[str] = None
+
+    def cli_event_handler(event: QueueEvent, data: dict) -> None:
+        """Handle queue events with CLI output and auto-commit/rename."""
+        nonlocal _last_completed_session_id, _last_completed_plan_path, _last_completed_feature
+
+        # Handle base CLI output
+        _handle_queue_event(event, data)
+
+        # Handle CLI-specific post-processing for completed items
+        if event == QueueEvent.ITEM_COMPLETED:
+            session_id = data.get("session_id")
+            feature = data.get("feature_description", "")
+
+            # Auto-commit if enabled
+            if auto_commit and session_id:
+                click.echo()
+                click.secho("Creating auto-commit...", fg="cyan")
+                milestones = db.get_milestones(session_id, db_path)
+                success, msg = _do_smart_auto_commit(
+                    feature,
+                    milestones,
+                    smart_commit_flag=smart_commit,
+                    executor_model=resolved_executor,
+                    auto_commit_model_flag=auto_commit_model,
+                )
+                if success:
+                    click.secho("✓ Changes committed", fg="green")
+                    click.echo(f"  {msg.split(chr(10))[0]}")
+                else:
+                    click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
+
+            # Get plan path from queue item for renaming
+            if not no_rename:
+                items = db.list_queue_items(project_id, db_path, include_completed=True)
+                for item in items:
+                    if item.get("session_id") == session_id:
+                        plan_path = item.get("plan_path")
+                        if plan_path:
+                            success, result = _rename_plan_done(plan_path)
+                            if success:
+                                click.secho(f"✓ Plan renamed: {result}", fg="green")
+                            else:
+                                click.secho(f"⚠ Could not rename plan: {result}", fg="yellow")
+                        break
+
+    # Create and run the controller
+    controller = QueueController(
+        project_id=project_id,
+        db_path=db_path,
+        on_event=cli_event_handler,
+        on_output=output_callback if show_activity else None,
+        planner_model=planner_model,
+        executor_model=executor_model,
+        auto_commit=False,  # Handled via event handler
+        smart_commit=smart_commit,
+        telegram_notifier=telegram_notifier,
+        show_activity=show_activity,
+        mcp_config_path=mcp_config_path,
+        headless=headless,
+        no_rename=True,  # Handled via event handler
     )
 
-    if action == "empty":
-        click.echo()
-        click.secho("Queue is empty - nothing to run", fg="yellow")
-        return
-
-    if action in ("halt_paused", "halt_active", "halt_orphaned"):
-        # Reconciliation printed the appropriate message, just return
-        return
-
-    # Telegram: Queue started notification
-    if telegram_notifier:
-        all_items = db.list_queue_items(project_id, db_path, include_completed=False)
-        telegram_notifier.notify_queue_started(len(all_items))
-
-    completed_count = 0
-    failed_count = 0
-    paused_count = 0
-
-    while True:
-        # Reconcile before each iteration to ensure sequential ordering
-        action, next_item = _reconcile_queue_head(project_id, db_path, auto_commit, telegram_notifier, smart_commit)
-
-        if action == "empty":
-            # No more active items
-            break
-
-        if action == "halt_paused":
-            # Queue halted on paused item
-            paused_count += 1
-            break
-
-        if action in ("halt_active", "halt_orphaned"):
-            # Queue halted for other reasons - don't count as paused
-            # (reconciliation already printed the appropriate message)
-            break
-
-        if action != "ready":
-            # Unexpected action - should not happen
-            click.secho(f"⚠ Unexpected reconciliation action: {action}", fg="yellow")
-            break
-
-        item_id = next_item["id"]
-        plan_path = next_item["plan_path"]
-        feature_desc = next_item["feature_description"]
-        position = next_item["position"] + 1
-
-        click.echo()
-        click.secho(f"=" * 60, fg="cyan")
-        click.secho(f"Queue Item {position}: {Path(plan_path).name}", fg="cyan", bold=True)
-        click.secho(f"Feature: {feature_desc}", fg="cyan")
-        click.secho(f"=" * 60, fg="cyan")
-        click.echo()
-
-        # Telegram: Item start notification
-        if telegram_notifier:
-            telegram_notifier.notify_queue_item_started(position, feature_desc)
-
-        try:
-            # Mark as running
-            db.update_queue_item(
-                item_id,
-                db_path,
-                status="running",
-                started_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            )
-
-            # Create orchestrator for this plan
-            orch = Orchestrator(
-                feature_description=feature_desc,
-                db_path=db_path,
-                plan_path=plan_path,
-                on_output=output_callback,
-                show_activity=show_activity,
-                planner_model=resolved_planner,
-                executor_model=resolved_executor,
-                telegram_notifier=telegram_notifier,
-                mcp_config_path=mcp_config_path,
-                headless=headless,
-            )
-            _current_orchestrator = orch
-
-            # Store session_id on queue item
-            db.update_queue_item(item_id, db_path, session_id=orch.session_id)
-
-            click.secho(f"✓ Session created: {orch.session_id}", fg="green")
-            click.echo()
-
-            # Run the workflow
-            orch.start()
-
-            # Check final status
-            final_phase = orch.state.phase
-            final_status = orch.state.status
-
-            click.echo()
-            click.secho(f"Workflow ended: phase={final_phase}, status={final_status}", fg="yellow")
-
-            if final_phase == Phase.COMPLETED:
-                # Mark queue item as completed
-                db.update_queue_item(
-                    item_id,
-                    db_path,
-                    status="completed",
-                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                )
-                completed_count += 1
-
-                click.secho(f"✓ Queue item {position} completed", fg="green", bold=True)
-
-                # Telegram: Item completed
-                if telegram_notifier:
-                    telegram_notifier.notify_queue_item_completed(position, feature_desc)
-
-                # Auto-commit if enabled
-                if auto_commit:
-                    click.echo()
-                    click.secho("Creating auto-commit...", fg="cyan")
-                    milestones = db.get_milestones(orch.session_id, db_path)
-                    success, msg = _do_smart_auto_commit(
-                        feature_desc,
-                        milestones,
-                        smart_commit_flag=smart_commit,
-                        executor_model=resolved_executor,
-                        auto_commit_model_flag=auto_commit_model,
-                    )
-                    if success:
-                        click.secho("✓ Changes committed", fg="green")
-                        click.echo(f"  {msg.split(chr(10))[0]}")
-                    else:
-                        click.secho(f"⚠ Auto-commit skipped: {msg}", fg="yellow")
-
-                # Rename plan file on completion
-                if plan_path and not no_rename:
-                    success, result = _rename_plan_done(plan_path)
-                    if success:
-                        click.secho(f"✓ Plan renamed: {result}", fg="green")
-                    else:
-                        click.secho(f"⚠ Could not rename plan: {result}", fg="yellow")
-
-            elif final_phase == Phase.PAUSED or final_status == Status.PAUSED:
-                # Mark queue item as paused - queue halts
-                db.update_queue_item(item_id, db_path, status="paused")
-                paused_count += 1
-
-                click.secho(f"⏸ Queue item {position} paused (blocker)", fg="yellow", bold=True)
-                click.secho("Queue halted. Use 'orchestrator resume <session-id>' to continue.", fg="yellow")
-
-                # Telegram: Item paused
-                if telegram_notifier:
-                    telegram_notifier.notify_queue_item_paused(position, feature_desc, orch.session_id)
-
-                # Stop queue runner
-                break
-
-            else:
-                # Failed or other terminal state - fail forward
-                error_msg = f"Workflow ended in unexpected state: {final_phase}/{final_status}"
-                db.update_queue_item(
-                    item_id,
-                    db_path,
-                    status="failed",
-                    error_message=error_msg,
-                    completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                )
-                failed_count += 1
-
-                click.secho(f"✗ Queue item {position} failed", fg="red", bold=True)
-                click.secho(f"  Error: {error_msg}", fg="red")
-                click.secho("  Continuing to next item (fail-forward)...", fg="yellow")
-
-                # Telegram: Item failed
-                if telegram_notifier:
-                    telegram_notifier.notify_queue_item_failed(position, feature_desc, error_msg)
-
-        except KeyboardInterrupt:
-            # User interrupted - mark as paused
-            click.echo()
-            click.secho("⚠ Queue interrupted by user", fg="yellow")
-            db.update_queue_item(item_id, db_path, status="paused")
-            paused_count += 1
-
-            # Telegram: Queue interrupted
-            if telegram_notifier:
-                telegram_notifier.notify_queue_interrupted(position, feature_desc)
-
-            # Stop queue runner
-            raise
-
-        except Exception as e:
-            # Workflow error - fail forward
-            error_msg = str(e)
-            db.update_queue_item(
-                item_id,
-                db_path,
-                status="failed",
-                error_message=error_msg,
-                completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            )
-            failed_count += 1
-
-            click.secho(f"✗ Queue item {position} failed with exception", fg="red", bold=True)
-            click.secho(f"  Error: {error_msg}", fg="red")
-            click.secho("  Continuing to next item (fail-forward)...", fg="yellow")
-
-            # Telegram: Item failed
-            if telegram_notifier:
-                telegram_notifier.notify_queue_item_failed(position, feature_desc, error_msg)
-
-        finally:
-            if _current_orchestrator:
-                _current_orchestrator._cleanup()
-                _current_orchestrator = None
-
-    # Queue complete - show summary
-    click.echo()
-    click.secho("=" * 60, fg="cyan")
-    click.secho("Queue Complete", fg="cyan", bold=True)
-    click.secho("=" * 60, fg="cyan")
-    click.echo()
-    click.echo(f"Completed: {click.style(str(completed_count), fg='green', bold=True)}")
-    click.echo(f"Failed:    {click.style(str(failed_count), fg='red', bold=True)}")
-    click.echo(f"Paused:    {click.style(str(paused_count), fg='yellow', bold=True)}")
-
-    # Telegram: Queue complete summary
-    if telegram_notifier:
-        telegram_notifier.notify_queue_completed(completed_count, failed_count, paused_count)
+    # Run the queue
+    controller.run()
 
 
 def _display_queue_status(queue_items: list) -> None:

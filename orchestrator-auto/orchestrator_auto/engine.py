@@ -50,7 +50,7 @@ from .prompts import (
 )
 from .recovery import register_recovery_hook
 from .output import StreamingIndicator
-from .input_handler import prompt_with_paste_support
+from .io import InputProvider, CLIInputProvider
 
 
 class Orchestrator:
@@ -67,6 +67,9 @@ class Orchestrator:
         db_path: Optional[str] = None,
         plan_path: Optional[str] = None,
         on_output: Optional[Callable[[str], None]] = None,
+        on_chunk: Optional[Callable[[str, str], None]] = None,
+        on_state_change: Optional[Callable[[WorkflowState], None]] = None,
+        input_provider: Optional[InputProvider] = None,
         show_activity: bool = True,
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
@@ -84,6 +87,9 @@ class Orchestrator:
             db_path: Optional database path
             plan_path: Optional path to existing plan file (skips discovery/planning)
             on_output: Optional callback for output messages
+            on_chunk: Optional callback for streaming chunks (chunk, agent_name)
+            on_state_change: Optional callback for state transitions
+            input_provider: Optional input provider (defaults to CLIInputProvider)
             show_activity: Whether to show streaming activity indicator (default: True)
             planner_model: Model for planner agent (optional, uses default if not specified)
             executor_model: Model for executor agent (optional, uses default if not specified)
@@ -94,6 +100,9 @@ class Orchestrator:
         """
         self.db_path = db_path
         self.on_output = on_output or print
+        self.on_chunk = on_chunk
+        self.on_state_change = on_state_change
+        self.input_provider = input_provider or CLIInputProvider()
         self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
         self._debug = debug
@@ -463,6 +472,7 @@ class Orchestrator:
             )
             if not success:
                 raise RuntimeError(f"Failed to resume: {error}")
+            self._notify_state_change()
         else:
             # Resolve blocker with answer
             blocker = blockers[0]
@@ -485,6 +495,7 @@ class Orchestrator:
                 )
                 if not success:
                     raise RuntimeError(f"Failed to resume: {error}")
+                self._notify_state_change()
             else:
                 raise ValueError("Answer required to resolve blocker")
 
@@ -540,7 +551,8 @@ Please continue based on this information."""
             agent = self._create_executor()
 
         response = self._send_with_activity(
-            agent, injection_prompt, f"{target_agent.capitalize()} processing response"
+            agent, injection_prompt, f"{target_agent.capitalize()} processing response",
+            agent_name=target_agent
         )
 
         # Log the response
@@ -552,6 +564,11 @@ Please continue based on this information."""
         """Output a message via callback."""
         if self.on_output:
             self.on_output(message)
+
+    def _notify_state_change(self) -> None:
+        """Notify listeners of state change via callback."""
+        if self.on_state_change:
+            self.on_state_change(self.state)
 
     def _notify_telegram(self, method_name: str, **kwargs) -> Optional[int]:
         """
@@ -630,7 +647,8 @@ Please continue based on this information."""
         self,
         agent,
         message: str,
-        activity_label: str = "Working"
+        activity_label: str = "Working",
+        agent_name: str = "executor",
     ) -> str:
         """
         Send message to agent with optional activity indicator.
@@ -639,6 +657,7 @@ Please continue based on this information."""
             agent: Agent to send message to
             message: Message content
             activity_label: Label to show before indicator
+            agent_name: Name of agent for on_chunk callback ("planner" or "executor")
 
         Returns:
             Agent's response
@@ -651,15 +670,24 @@ Please continue based on this information."""
         # Touch heartbeat before sending
         self._touch_heartbeat()
 
+        # Create combined callback that handles both activity indicator and external on_chunk
+        def combined_chunk_handler(chunk: str) -> None:
+            # Activity indicator (if enabled)
+            if indicator:
+                indicator.on_chunk(chunk)
+            # External callback (for TUI) - always call if set
+            if self.on_chunk:
+                self.on_chunk(chunk, agent_name)
+
         # Wrap callback to update heartbeat during streaming
-        on_chunk = self._create_heartbeat_callback(
-            indicator.on_chunk if indicator else None,
+        on_chunk_callback = self._create_heartbeat_callback(
+            combined_chunk_handler,
             interval_seconds=60
         )
 
         response = agent.send_message(
             message,
-            on_chunk=on_chunk
+            on_chunk=on_chunk_callback
         )
 
         # Touch heartbeat after response
@@ -684,7 +712,7 @@ Please continue based on this information."""
         planner = self._create_planner()
 
         # Wait for user's first message before starting (with paste support)
-        display_text, user_input = prompt_with_paste_support("\nYou: ")
+        display_text, user_input = self.input_provider.prompt("\nYou: ")
         if not user_input:
             # Use feature description as fallback if user just hits enter
             user_input = self.state.feature_description
@@ -703,12 +731,13 @@ Please continue based on this information."""
             )
             if not success:
                 raise RuntimeError(f"Failed to transition to planning: {error}")
+            self._notify_state_change()
             return
 
         while True:
             # Send to planner with activity indicator
             self._output("\n")  # Add spacing before activity indicator
-            response = self._send_with_activity(planner, user_input, "→ Planner")
+            response = self._send_with_activity(planner, user_input, "→ Planner", agent_name="planner")
 
             # Log response
             self._log_message("planner", "assistant", response)
@@ -723,7 +752,7 @@ Please continue based on this information."""
                 return
 
             # Get user input (with paste support)
-            display_text, user_input = prompt_with_paste_support("\nYou: ")
+            display_text, user_input = self.input_provider.prompt("\nYou: ")
             # Show collapsed preview if paste was detected
             if display_text != user_input:
                 self._output(f"  {display_text}\n")
@@ -738,6 +767,7 @@ Please continue based on this information."""
                 )
                 if not success:
                     raise RuntimeError(f"Failed to transition to planning: {error}")
+                self._notify_state_change()
                 return
 
     def _run_planning(self) -> None:
@@ -788,7 +818,7 @@ IMPORTANT: Include the FULL plan content between [PLAN_CONTENT] and [/PLAN_CONTE
 The orchestrator will save the file for you.
 """
 
-        response = self._send_with_activity(planner, plan_prompt, "Planner creating plan")
+        response = self._send_with_activity(planner, plan_prompt, "Planner creating plan", agent_name="planner")
 
         # Log response
         self._log_message("planner", "assistant", response)
@@ -835,6 +865,7 @@ The orchestrator will save the file for you.
             )
             if not success:
                 raise RuntimeError(f"Failed to transition to execution: {error}")
+            self._notify_state_change()
 
         elif response_type == PLANNER_BLOCKED:
             self._handle_blocker("planner", data["question"])
@@ -878,6 +909,8 @@ The orchestrator will save the file for you.
                         TransitionEvent.MILESTONE_APPROVED.value,
                         current_milestone=base_milestone
                     )
+                    if success:
+                        self._notify_state_change()
                 elif validation == "blocked":
                     return
                 # For "changes_requested", continue to milestone loop below
@@ -910,7 +943,7 @@ The orchestrator will save the file for you.
             # Send to executor with activity indicator
             self._output("→ Sending milestone to Executor...\n")
             executor_response = self._send_with_activity(
-                executor, milestone_prompt, "Executor implementing"
+                executor, milestone_prompt, "Executor implementing", agent_name="executor"
             )
 
             # Log response
@@ -939,6 +972,7 @@ The orchestrator will save the file for you.
                     )
                     if not success:
                         raise RuntimeError(f"Failed to approve milestone: {error}")
+                    self._notify_state_change()
 
                     # Send milestone completion notification
                     self._notify_telegram(
@@ -980,7 +1014,7 @@ The orchestrator will save the file for you.
                 self._output(f"\n→ Executor needs clarification from Planner\n")
                 # Route question to planner with activity indicator
                 clarification_response = self._send_with_activity(
-                    planner, data["question"], "Planner clarifying"
+                    planner, data["question"], "Planner clarifying", agent_name="planner"
                 )
                 # Send response back to executor
                 self._route_to_executor(clarification_response)
@@ -1004,7 +1038,7 @@ The orchestrator will save the file for you.
                         "Keep your response concise."
                     )
                     continuation = self._send_with_activity(
-                        executor, continuation_prompt, "Executor continuing"
+                        executor, continuation_prompt, "Executor continuing", agent_name="executor"
                     )
                     self._log_message("executor", "assistant", continuation)
 
@@ -1024,6 +1058,7 @@ The orchestrator will save the file for you.
                             )
                             if not success:
                                 raise RuntimeError(f"State transition failed: {error}")
+                            self._notify_state_change()
                             current_milestone = self.state.current_milestone
                             continue
                         elif validation == "changes_requested":
@@ -1041,7 +1076,7 @@ The orchestrator will save the file for you.
                         # Route clarification to planner
                         self._output(f"\n→ Executor needs clarification from Planner\n")
                         clarification_response = self._send_with_activity(
-                            planner, data["question"], "Planner clarifying"
+                            planner, data["question"], "Planner clarifying", agent_name="planner"
                         )
                         self._route_to_executor(clarification_response)
                         continue
@@ -1073,6 +1108,7 @@ The orchestrator will save the file for you.
         )
         if not success:
             raise RuntimeError(f"Failed to complete workflow: {error}")
+        self._notify_state_change()
 
         # Send workflow completion notification
         self._notify_telegram(
@@ -1109,7 +1145,7 @@ The orchestrator will save the file for you.
         Respond with [MILESTONE_APPROVED], [CHANGES_REQUESTED], or [HUMAN_INPUT_NEEDED].
         """
 
-        response = self._send_with_activity(planner, validation_prompt, "Planner reviewing")
+        response = self._send_with_activity(planner, validation_prompt, "Planner reviewing", agent_name="planner")
 
         # Log response
         self._log_message("planner", "assistant", response)
@@ -1162,7 +1198,7 @@ The orchestrator will save the file for you.
                     "Keep your response concise (1-2 sentences max)."
                 )
                 continuation = self._send_with_activity(
-                    planner, continuation_prompt, "Planner continuing"
+                    planner, continuation_prompt, "Planner continuing", agent_name="planner"
                 )
                 self._log_message("planner", "assistant", continuation)
 
@@ -1227,7 +1263,7 @@ The orchestrator will save the file for you.
         """
         executor = self._create_executor()
 
-        response = self._send_with_activity(executor, feedback, "Executor working")
+        response = self._send_with_activity(executor, feedback, "Executor working", agent_name="executor")
 
         # Log
         self._log_message("executor", "assistant", response)
@@ -1245,7 +1281,7 @@ The orchestrator will save the file for you.
                 "Keep your response concise."
             )
             continuation = self._send_with_activity(
-                executor, continuation_prompt, "Executor continuing"
+                executor, continuation_prompt, "Executor continuing", agent_name="executor"
             )
             self._log_message("executor", "assistant", continuation)
             response = continuation
@@ -1303,6 +1339,7 @@ The orchestrator will save the file for you.
         )
         if not success:
             raise RuntimeError(f"Failed to pause: {error}")
+        self._notify_state_change()
 
     def _handle_fatal_error(self, error: Exception) -> None:
         """

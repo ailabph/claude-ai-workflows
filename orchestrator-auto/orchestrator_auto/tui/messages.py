@@ -1,0 +1,114 @@
+"""
+Custom Textual messages for TUI communication.
+
+These messages are used to communicate between the worker thread
+(running the orchestrator) and the main TUI thread.
+"""
+
+from textual.message import Message
+from typing import Optional, Any
+
+
+class ChunkReceived(Message):
+    """A chunk of output was received from an agent."""
+
+    def __init__(self, chunk: str, agent: str) -> None:
+        self.chunk = chunk
+        self.agent = agent
+        super().__init__()
+
+
+class StateChanged(Message):
+    """The orchestrator state changed."""
+
+    def __init__(self, state: Any, previous_phase: Optional[str] = None, event_type: Optional[str] = None) -> None:
+        self.state = state
+        self.previous_phase = previous_phase
+        self.event_type = event_type
+        super().__init__()
+
+
+class OutputReceived(Message):
+    """A general output message was received."""
+
+    def __init__(self, message: str, level: str = "info") -> None:
+        self.message = message
+        self.level = level
+        super().__init__()
+
+
+class InputRequested(Message):
+    """The orchestrator is requesting user input."""
+
+    def __init__(self, prompt_text: str, context: str = "input") -> None:
+        self.prompt_text = prompt_text
+        self.context = context
+        super().__init__()
+
+
+class InputProvided(Message):
+    """User provided input in response to InputRequested."""
+
+    def __init__(self, display_text: str, full_content: str) -> None:
+        self.display_text = display_text
+        self.full_content = full_content
+        super().__init__()
+
+
+class WorkflowStarted(Message):
+    """Workflow has started."""
+
+    def __init__(self, session_id: str, feature: str) -> None:
+        self.session_id = session_id
+        self.feature = feature
+        super().__init__()
+
+
+class WorkflowCompleted(Message):
+    """Workflow has completed."""
+
+    def __init__(self, session_id: str, success: bool, message: str = "") -> None:
+        self.session_id = session_id
+        self.success = success
+        self.message = message
+        super().__init__()
+
+
+class WorkflowError(Message):
+    """Workflow encountered an error."""
+
+    def __init__(self, error: str, session_id: Optional[str] = None) -> None:
+        self.error = error
+        self.session_id = session_id
+        super().__init__()
+
+
+class MilestoneUpdated(Message):
+    """A milestone status was updated."""
+
+    def __init__(self, milestone_id: int, title: str, status: str) -> None:
+        self.milestone_id = milestone_id
+        self.title = title
+        self.status = status
+        super().__init__()
+
+
+class QueueItemUpdated(Message):
+    """A queue item status was updated."""
+
+    def __init__(self, position: int, status: str, feature: str, error: Optional[str] = None) -> None:
+        self.position = position
+        self.status = status
+        self.feature = feature
+        self.error = error
+        super().__init__()
+
+
+class WatchFileUpdated(Message):
+    """A watched file status was updated."""
+
+    def __init__(self, filename: str, status: str, error: Optional[str] = None) -> None:
+        self.filename = filename
+        self.status = status
+        self.error = error
+        super().__init__()

@@ -22,6 +22,9 @@ dev = [
 telegram = [
     "httpx>=0.27",
 ]
+tui = [
+    "textual>=0.80.0",
+]
 
 [project.scripts]
 orchestrator = "orchestrator_auto.cli:cli"
