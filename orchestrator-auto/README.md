@@ -295,7 +295,7 @@ orchestrator watch ./plans/ --auto-commit
 
 **What happens:**
 1. Drop `feature-x.md` into `./plans/`
-2. Watcher sees it, validates it, auto-converts if needed
+2. Watcher sees it, validates it (use `--convert` to auto-convert invalid plans)
 3. Orchestrator executes it
 4. On completion: `feature-x.md` → `feature-x_done.md` (auto-committed)
 

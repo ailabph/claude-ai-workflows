@@ -87,7 +87,7 @@ class WatchPanel(Static):
         super().__init__(*args, **kwargs)
         self._directory: str = "—"
         self._poll_interval: int = 2
-        self._auto_convert: bool = True
+        self._auto_convert: bool = False
         self._is_paused: bool = False
         self._paused_session: Optional[str] = None
         self._completed: int = 0

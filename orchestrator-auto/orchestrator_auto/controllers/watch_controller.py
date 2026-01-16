@@ -52,7 +52,7 @@ class WatchState:
     """Current state of the watch controller."""
     directory: Path = field(default_factory=lambda: Path.cwd())
     poll_interval: int = 2
-    auto_convert: bool = True
+    auto_convert: bool = False
     is_running: bool = False
     is_paused: bool = False
     paused_session_id: Optional[str] = None
@@ -80,7 +80,7 @@ class WatchController:
         plans_dir: Path,
         db_path: Optional[str] = None,
         poll_interval: int = 2,
-        auto_convert: bool = True,
+        auto_convert: bool = False,
         on_event: Optional[Callable[[WatchEvent, Dict[str, Any]], None]] = None,
         on_output: Optional[Callable[[str], None]] = None,
         on_chunk: Optional[Callable[[str, str], None]] = None,

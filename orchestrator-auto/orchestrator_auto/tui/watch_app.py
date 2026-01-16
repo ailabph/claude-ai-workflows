@@ -55,43 +55,40 @@ class WatchTUI(App):
     CSS_PATH = "styles/theme.tcss"
 
     CSS = """
-    Screen {
-        layout: grid;
-        grid-size: 3 3;
-        grid-columns: 1fr 1fr 2fr;
-        grid-rows: auto 1fr auto;
+    #main-container {
+        width: 100%;
+        height: 1fr;
     }
 
     #watch-panel {
-        column-span: 1;
-        row-span: 2;
+        width: 1fr;
+        min-width: 30;
+    }
+
+    #middle-column {
+        width: 1fr;
+        min-width: 30;
+        height: 100%;
     }
 
     #status-panel {
-        column-span: 1;
-        row-span: 1;
+        height: auto;
+        max-height: 12;
     }
 
     #milestone-list {
-        column-span: 1;
-        row-span: 1;
+        height: 1fr;
+        min-height: 10;
     }
 
     #agent-output {
-        column-span: 1;
-        row-span: 2;
+        width: 2fr;
+        min-width: 40;
+        height: 100%;
     }
 
     #log-panel {
-        column-span: 3;
-        height: 8;
-    }
-
-    Header {
-        dock: top;
-    }
-
-    Footer {
+        height: 10;
         dock: bottom;
     }
     """
@@ -103,7 +100,7 @@ class WatchTUI(App):
         plans_dir: str,
         db_path: Optional[str] = None,
         poll_interval: int = 2,
-        auto_convert: bool = True,
+        auto_convert: bool = False,
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
         auto_commit: bool = False,
@@ -163,11 +160,11 @@ class WatchTUI(App):
         self._current_processing_file: Optional[str] = None
 
     def compose(self) -> ComposeResult:
-        """Compose the TUI layout."""
+        """Compose the TUI layout with containers."""
         yield Header()
-        with Horizontal():
+        with Horizontal(id="main-container"):
             yield WatchPanel(id="watch-panel")
-            with Vertical():
+            with Vertical(id="middle-column"):
                 yield StatusPanel(id="status-panel")
                 yield MilestoneList(id="milestone-list")
             yield AgentOutput(id="agent-output")
@@ -530,12 +527,18 @@ class WatchTUI(App):
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""
-        output = self.query_one("#agent-output", AgentOutput)
-        output.write_chunk(message.chunk, message.agent)
+        try:
+            output = self.query_one("#agent-output", AgentOutput)
+            output.write_chunk(message.chunk, message.agent)
+        except Exception:
+            pass
 
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        estimated_tokens = max(1, len(message.chunk) // 4)
-        status_panel.add_tokens(estimated_tokens)
+        try:
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            estimated_tokens = max(1, len(message.chunk) // 4)
+            status_panel.add_tokens(estimated_tokens)
+        except Exception:
+            pass
 
     def on_state_changed(self, message: messages.StateChanged) -> None:
         """Handle state change."""

@@ -3288,7 +3288,7 @@ def _rename_to_terminal(
 @cli.command()
 @click.argument('plans_dir', type=click.Path(exists=True, file_okay=False))
 @click.option('--poll-interval', default=2, type=int, help='Poll interval in seconds (default: 2)')
-@click.option('--convert/--no-convert', 'auto_convert', default=True, help='Auto-convert invalid plans (default: enabled)')
+@click.option('--convert/--no-convert', 'auto_convert', default=False, help='Auto-convert invalid plans (default: disabled)')
 @click.option('--db-path', '-d', help='Custom database path')
 @click.option('--planner-model', '-pm', help='Model for planner agent')
 @click.option('--executor-model', '-em', help='Model for executor agent')
