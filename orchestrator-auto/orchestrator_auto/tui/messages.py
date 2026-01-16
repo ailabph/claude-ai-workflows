@@ -139,7 +139,13 @@ class ModelsSet(Message):
 
 
 class MilestonesLoaded(Message):
-    """Milestones were loaded from the plan."""
+    """
+    Milestones were loaded from the plan.
+
+    Note: The adapter provides notify_milestones_loaded() to trigger this,
+    but the actual plan parsing and milestone extraction will be wired
+    in Phase 4 when the engine emits milestone data after plan approval.
+    """
 
     def __init__(self, milestones: list) -> None:
         """
@@ -147,11 +153,4 @@ class MilestonesLoaded(Message):
             milestones: List of dicts with 'id', 'title', 'status'
         """
         self.milestones = milestones
-        super().__init__()
-
-
-class TimerTick(Message):
-    """Timer tick for updating elapsed time."""
-
-    def __init__(self) -> None:
         super().__init__()

@@ -5,7 +5,7 @@ Milestone list widget for tracking workflow progress.
 from dataclasses import dataclass
 from textual.app import ComposeResult
 from textual.widgets import Static, Label, ListView, ListItem
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from typing import List, Optional
 
 
@@ -20,46 +20,7 @@ class Milestone:
 class MilestoneItem(ListItem):
     """A single milestone item in the list."""
 
-    DEFAULT_CSS = """
-    MilestoneItem {
-        height: 1;
-        padding: 0 1;
-    }
-
-    MilestoneItem.milestone-pending .milestone-marker {
-        color: $text-muted;
-    }
-
-    MilestoneItem.milestone-pending .milestone-title {
-        color: $text-muted;
-    }
-
-    MilestoneItem.milestone-active .milestone-marker {
-        color: $primary;
-        text-style: bold;
-    }
-
-    MilestoneItem.milestone-active .milestone-title {
-        color: $primary;
-        text-style: bold;
-    }
-
-    MilestoneItem.milestone-completed .milestone-marker {
-        color: $accent;
-    }
-
-    MilestoneItem.milestone-completed .milestone-title {
-        color: $accent;
-    }
-
-    MilestoneItem.milestone-failed .milestone-marker {
-        color: $error;
-    }
-
-    MilestoneItem.milestone-failed .milestone-title {
-        color: $error;
-    }
-    """
+    # CSS is defined in theme.tcss to avoid duplication
 
     MARKERS = {
         "pending": "[ ]",
@@ -74,9 +35,12 @@ class MilestoneItem(ListItem):
         self.add_class(f"milestone-{milestone.status}")
 
     def compose(self) -> ComposeResult:
+        """Compose with Horizontal container for proper ListItem rendering."""
         marker = self.MARKERS.get(self.milestone.status, "[ ]")
-        yield Label(marker, classes="milestone-marker")
-        yield Label(f" M{self.milestone.id}: {self.milestone.title}", classes="milestone-title")
+        # Wrap in Horizontal to ensure ListItem renders correctly
+        with Horizontal(classes="milestone-row"):
+            yield Label(marker, classes="milestone-marker")
+            yield Label(f" M{self.milestone.id}: {self.milestone.title}", classes="milestone-title")
 
     def update_status(self, status: str) -> None:
         """Update the milestone status."""

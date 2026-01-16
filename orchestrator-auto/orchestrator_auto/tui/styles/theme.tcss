@@ -38,6 +38,8 @@ Footer {
 
 /* Status panel */
 StatusPanel {
+    height: auto;
+    min-height: 8;
     border: solid $primary;
     background: $surface;
     padding: 0 1;
@@ -46,6 +48,11 @@ StatusPanel {
 StatusPanel .title {
     color: $primary;
     text-style: bold;
+    margin-bottom: 1;
+}
+
+StatusPanel .stat-row {
+    height: 1;
 }
 
 StatusPanel .stat-label {
@@ -112,6 +119,21 @@ MilestoneList .progress-label {
 MilestoneList ListView {
     background: transparent;
     height: auto;
+}
+
+/* Milestone items */
+MilestoneItem {
+    height: 1;
+    padding: 0;
+}
+
+MilestoneItem .milestone-row {
+    height: 1;
+    width: 100%;
+}
+
+MilestoneItem .milestone-marker {
+    width: 4;
 }
 
 MilestoneItem.milestone-pending .milestone-marker {

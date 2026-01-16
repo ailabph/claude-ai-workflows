@@ -2,6 +2,7 @@
 Status panel widget for displaying workflow status and stats.
 """
 
+import re
 from datetime import datetime
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -17,56 +18,15 @@ class StatusPanel(Static):
     - Phase and status
     - Session ID
     - Models being used (planner/executor)
-    - API call count
-    - Token count (estimated)
+    - Estimated API call count
+    - Estimated token count
     - Elapsed time
+
+    Note: API calls and tokens are estimates based on heuristics,
+    not actual values from the API.
     """
 
-    DEFAULT_CSS = """
-    StatusPanel {
-        height: auto;
-        min-height: 8;
-        border: solid $primary;
-        padding: 0 1;
-        background: $surface;
-    }
-
-    StatusPanel .title {
-        text-style: bold;
-        color: $primary;
-        margin-bottom: 1;
-    }
-
-    StatusPanel .stat-row {
-        height: 1;
-    }
-
-    StatusPanel .stat-label {
-        color: $text-muted;
-        width: 12;
-    }
-
-    StatusPanel .stat-value {
-        color: $text;
-    }
-
-    StatusPanel .stat-value.phase-active {
-        color: $primary;
-        text-style: bold;
-    }
-
-    StatusPanel .stat-value.phase-paused {
-        color: $warning;
-    }
-
-    StatusPanel .stat-value.phase-completed {
-        color: $accent;
-    }
-
-    StatusPanel .stat-value.phase-failed {
-        color: $error;
-    }
-    """
+    # CSS is defined in theme.tcss to avoid duplication
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -95,10 +55,10 @@ class StatusPanel(Static):
                 yield Label("Models:", classes="stat-label")
                 yield Label(f"{self.planner_model}/{self.executor_model}", id="models-value", classes="stat-value")
             with Horizontal(classes="stat-row"):
-                yield Label("API Calls:", classes="stat-label")
+                yield Label("Est. Calls:", classes="stat-label")
                 yield Label(str(self.api_calls), id="api-calls-value", classes="stat-value")
             with Horizontal(classes="stat-row"):
-                yield Label("Tokens:", classes="stat-label")
+                yield Label("Est. Tokens:", classes="stat-label")
                 yield Label(self._format_tokens(), id="tokens-value", classes="stat-value")
             with Horizontal(classes="stat-row"):
                 yield Label("Elapsed:", classes="stat-label")
@@ -187,13 +147,30 @@ class StatusPanel(Static):
         """Extract short model name from full model ID."""
         if not model:
             return "—"
-        # Handle common patterns
-        if "opus" in model.lower():
+
+        model_lower = model.lower()
+
+        # Handle common Claude model families
+        if "opus" in model_lower:
             return "opus"
-        elif "sonnet" in model.lower():
+        elif "sonnet" in model_lower:
             return "sonnet"
-        elif "haiku" in model.lower():
+        elif "haiku" in model_lower:
             return "haiku"
-        # Return last part after any hyphens, limited to 8 chars
+
+        # Try to extract version-like pattern (e.g., "claude-3-5" -> "3.5")
+        version_match = re.search(r'(\d+)[.-](\d+)', model)
+        if version_match:
+            return f"v{version_match.group(1)}.{version_match.group(2)}"
+
+        # Fallback: find the most descriptive segment
+        # Skip common prefixes like "claude", "gpt", "anthropic"
+        skip_prefixes = {"claude", "gpt", "anthropic", "openai", "meta", "llama"}
         parts = model.split("-")
-        return parts[0][:8] if parts else model[:8]
+
+        for part in parts:
+            if part.lower() not in skip_prefixes and not part.isdigit():
+                return part[:8]
+
+        # Last resort: first 8 chars of the whole model
+        return model[:8]
