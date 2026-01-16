@@ -112,3 +112,46 @@ class WatchFileUpdated(Message):
         self.status = status
         self.error = error
         super().__init__()
+
+
+class StatsUpdated(Message):
+    """Statistics were updated (API calls, tokens, etc.)."""
+
+    def __init__(
+        self,
+        api_calls: Optional[int] = None,
+        tokens: Optional[int] = None,
+        elapsed_seconds: Optional[int] = None
+    ) -> None:
+        self.api_calls = api_calls
+        self.tokens = tokens
+        self.elapsed_seconds = elapsed_seconds
+        super().__init__()
+
+
+class ModelsSet(Message):
+    """Model configuration was set."""
+
+    def __init__(self, planner_model: str, executor_model: str) -> None:
+        self.planner_model = planner_model
+        self.executor_model = executor_model
+        super().__init__()
+
+
+class MilestonesLoaded(Message):
+    """Milestones were loaded from the plan."""
+
+    def __init__(self, milestones: list) -> None:
+        """
+        Args:
+            milestones: List of dicts with 'id', 'title', 'status'
+        """
+        self.milestones = milestones
+        super().__init__()
+
+
+class TimerTick(Message):
+    """Timer tick for updating elapsed time."""
+
+    def __init__(self) -> None:
+        super().__init__()

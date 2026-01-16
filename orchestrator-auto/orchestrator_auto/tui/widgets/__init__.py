@@ -1,10 +1,19 @@
 """
 TUI widgets for orchestrator-auto.
 
-Custom Textual widgets for displaying workflow information.
+Provides reusable UI components for the TUI application.
 """
 
-# Widgets will be implemented in Phase 3-5
-# For now, this is a placeholder package
+from .status_panel import StatusPanel
+from .milestone_list import MilestoneList
+from .agent_output import AgentOutput
+from .log_panel import LogPanel
+from .input_modal import InputModal
 
-__all__ = []
+__all__ = [
+    "StatusPanel",
+    "MilestoneList",
+    "AgentOutput",
+    "LogPanel",
+    "InputModal",
+]

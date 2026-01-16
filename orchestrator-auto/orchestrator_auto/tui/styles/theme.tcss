@@ -48,12 +48,30 @@ StatusPanel .title {
     text-style: bold;
 }
 
-StatusPanel .label {
+StatusPanel .stat-label {
     color: $text-muted;
+    width: 12;
 }
 
-StatusPanel .value {
+StatusPanel .stat-value {
     color: $text;
+}
+
+StatusPanel .stat-value.phase-active {
+    color: $primary;
+    text-style: bold;
+}
+
+StatusPanel .stat-value.phase-paused {
+    color: $warning;
+}
+
+StatusPanel .stat-value.phase-completed {
+    color: $accent;
+}
+
+StatusPanel .stat-value.phase-failed {
+    color: $error;
 }
 
 /* Agent output panel */
@@ -74,22 +92,59 @@ LogPanel {
 MilestoneList {
     border: solid $secondary;
     background: $surface;
+    padding: 0 1;
 }
 
-MilestoneList .milestone-pending {
-    color: $text-muted;
-}
-
-MilestoneList .milestone-active {
+MilestoneList .title {
     color: $primary;
     text-style: bold;
 }
 
-MilestoneList .milestone-completed {
+MilestoneList .empty-message {
+    color: $text-muted;
+    text-style: italic;
+}
+
+MilestoneList .progress-label {
+    color: $text-muted;
+}
+
+MilestoneList ListView {
+    background: transparent;
+    height: auto;
+}
+
+MilestoneItem.milestone-pending .milestone-marker {
+    color: $text-muted;
+}
+
+MilestoneItem.milestone-pending .milestone-title {
+    color: $text-muted;
+}
+
+MilestoneItem.milestone-active .milestone-marker {
+    color: $primary;
+    text-style: bold;
+}
+
+MilestoneItem.milestone-active .milestone-title {
+    color: $primary;
+    text-style: bold;
+}
+
+MilestoneItem.milestone-completed .milestone-marker {
     color: $accent;
 }
 
-MilestoneList .milestone-failed {
+MilestoneItem.milestone-completed .milestone-title {
+    color: $accent;
+}
+
+MilestoneItem.milestone-failed .milestone-marker {
+    color: $error;
+}
+
+MilestoneItem.milestone-failed .milestone-title {
     color: $error;
 }
 

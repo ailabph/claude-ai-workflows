@@ -113,6 +113,36 @@ class TUIOutputAdapter:
             messages.MilestoneUpdated(milestone_id=milestone_id, title=title, status=status)
         )
 
+    def notify_milestones_loaded(self, milestones: list) -> None:
+        """Notify TUI that milestones were loaded from plan."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.MilestonesLoaded(milestones=milestones)
+        )
+
+    def notify_models_set(self, planner_model: str, executor_model: str) -> None:
+        """Notify TUI of model configuration."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.ModelsSet(planner_model=planner_model, executor_model=executor_model)
+        )
+
+    def notify_stats_updated(
+        self,
+        api_calls: int = None,
+        tokens: int = None,
+        elapsed_seconds: int = None
+    ) -> None:
+        """Notify TUI of stats update."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.StatsUpdated(
+                api_calls=api_calls,
+                tokens=tokens,
+                elapsed_seconds=elapsed_seconds
+            )
+        )
+
 
 class TUIInputProvider(InputProvider):
     """
