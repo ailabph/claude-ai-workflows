@@ -7,7 +7,8 @@ Provides a rich text user interface for running workflows.
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
-from textual.widgets import Header, Footer, Static, RichLog, Label
+from textual.screen import ModalScreen
+from textual.widgets import Header, Footer, Static, RichLog, Label, Input, Button
 from textual.worker import Worker, WorkerState
 from typing import Optional, TYPE_CHECKING
 
@@ -91,6 +92,80 @@ class LogPanel(RichLog):
         super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
 
 
+class InputModal(ModalScreen):
+    """Modal screen for user input."""
+
+    DEFAULT_CSS = """
+    InputModal {
+        align: center middle;
+    }
+
+    InputModal > Container {
+        width: 60;
+        height: auto;
+        background: $surface;
+        border: heavy $primary;
+        padding: 1 2;
+    }
+
+    InputModal .title {
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+
+    InputModal Input {
+        margin: 1 0;
+    }
+
+    InputModal .buttons {
+        align: center middle;
+        margin-top: 1;
+    }
+
+    InputModal Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel"),
+        Binding("enter", "submit", "Submit", priority=True),
+    ]
+
+    def __init__(self, prompt: str, input_provider: "TUIInputProvider", **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.prompt = prompt
+        self.input_provider = input_provider
+
+    def compose(self) -> ComposeResult:
+        with Container():
+            yield Label(self.prompt, classes="title")
+            yield Input(placeholder="Enter your response...")
+            with Horizontal(classes="buttons"):
+                yield Button("Submit", id="submit", variant="primary")
+                yield Button("Cancel", id="cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press."""
+        if event.button.id == "submit":
+            self.action_submit()
+        else:
+            self.action_cancel()
+
+    def action_submit(self) -> None:
+        """Submit the input."""
+        input_widget = self.query_one(Input)
+        value = input_widget.value
+        self.input_provider.provide_input(value, value)
+        self.dismiss()
+
+    def action_cancel(self) -> None:
+        """Cancel input."""
+        self.input_provider.cancel_input()
+        self.dismiss()
+
+
 class OrchestratorTUI(App):
     """
     Text User Interface for orchestrator-auto.
@@ -108,6 +183,7 @@ class OrchestratorTUI(App):
 
     TITLE = "Orchestrator Auto"
     SUB_TITLE = "AI Workflow Manager"
+    CSS_PATH = "styles/theme.tcss"
 
     CSS = """
     Screen {
@@ -275,10 +351,10 @@ class OrchestratorTUI(App):
 
     def on_input_requested(self, message: messages.InputRequested) -> None:
         """Handle input request - show input modal."""
-        # For now, just log that input is needed
-        # TODO: Implement input modal in Phase 3
         log_panel = self.query_one(LogPanel)
         log_panel.write(f"[yellow]Input requested: {message.prompt_text}[/yellow]")
+        # Push the input modal to get user input
+        self.push_screen(InputModal(message.prompt_text, self._input_provider))
 
     def on_workflow_started(self, message: messages.WorkflowStarted) -> None:
         """Handle workflow started."""

@@ -130,6 +130,7 @@ class QueueController:
         self._current_orchestrator: Optional[Orchestrator] = None
         self._should_stop = False
         self._state = QueueState()
+        self._reconciled_completed_count = 0  # Track completions found during reconciliation
 
     def get_state(self) -> QueueState:
         """Get current queue state."""
@@ -273,6 +274,8 @@ class QueueController:
                         "session_id": session_id,
                         "reconciled": True,  # Flag to indicate this was a reconciliation
                     })
+                    # Track for final summary
+                    self._reconciled_completed_count += 1
                     continue
 
                 if session_phase == Phase.PAUSED or session_status == Status.PAUSED:
@@ -317,6 +320,7 @@ class QueueController:
         """
         self._should_stop = False
         self._state = self.get_state()
+        self._reconciled_completed_count = 0  # Reset for this run
 
         # Initial reconciliation
         action, head_item = self.reconcile_head()
@@ -370,17 +374,20 @@ class QueueController:
                 paused_count += 1
                 break
 
+        # Include reconciled completions in total
+        total_completed = completed_count + self._reconciled_completed_count
+
         # Final state
         final_state = QueueState(
             items=self.get_state().items,
             is_running=False,
-            completed_count=completed_count,
+            completed_count=total_completed,
             failed_count=failed_count,
             paused_count=paused_count,
         )
 
         self.on_event(QueueEvent.COMPLETED, {
-            "completed": completed_count,
+            "completed": total_completed,
             "failed": failed_count,
             "paused": paused_count,
         })
