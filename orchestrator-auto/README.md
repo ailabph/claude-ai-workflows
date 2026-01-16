@@ -164,6 +164,9 @@ orchestrator resume <session-id>     # Continue where you left off
 | `logging_config.py` | Session logging | Per-session file logging |
 | `todo.py` | Batch task execution | `TodoRunner`, `run_todo_file()`, `parse_completion_tags()` |
 | `todo_parser.py` | Checkbox file parsing | `parse_task_file()`, `update_task_file()`, `Task`, `TaskFile` |
+| `convert.py` | Plan format conversion | `convert_plan()`, `validate_plan()`, `PlanConverter` |
+| `controllers/queue_controller.py` | Queue mode orchestration | `QueueController`, `QueueEvent`, `QueueItem` |
+| `controllers/watch_controller.py` | Watch mode orchestration | `WatchController`, `WatchEvent`, `FileState` |
 | `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, widgets, screens |
 
 ### Database Tables
@@ -175,6 +178,7 @@ orchestrator resume <session-id>     # Continue where you left off
 | `blockers` | Questions waiting for human answers |
 | `milestones` | Plan structure and milestone statuses |
 | `queue_items` | Batch execution queue state |
+| `telegram_state` | Telegram polling cursor for reply routing |
 
 ---
 
@@ -378,45 +382,46 @@ orchestrator todo tasks.md --verbose          # Show full agent output
 - [ ] Add tests for @src/services/email.py following @tests/test_example.py pattern
 ```
 
-### Session Helper (Debug Stuck Sessions)
+### Force-Complete Stuck Sessions
 
-> **🚧 Coming Soon:** This feature is planned but not yet implemented.
-
-**Scenario:** Your workflow is stuck and you're not sure what to do next.
+**Scenario:** Session finished all work but is stuck due to incorrect milestone count or unresolvable blocker.
 
 ```bash
-orchestrator helper <session-id>
+orchestrator complete <session-id>                    # Force-complete
+orchestrator complete <session-id> --auto-commit      # Complete and commit
 ```
 
-The helper command analyzes your session state and provides actionable guidance:
+### Convert Plans to Orchestrator Format
 
-**What it checks:**
-- Current phase and status
-- Time since last activity
-- Pending blockers (questions waiting for your response)
-- Orphaned state (process crashed mid-execution)
-- Heartbeat status (stalled execution)
-
-**What it suggests:**
-- The exact `orchestrator` command to run next
-- Context about why the session is stuck
-- Blocker questions you need to answer
-
-**Example scenarios:**
-
-| Session State | Helper Suggests |
-|---------------|-----------------|
-| Blocker waiting | `orchestrator respond <id> "answer"` with the question shown |
-| Orphaned session | `orchestrator resume <id> --force` |
-| Stale heartbeat | `orchestrator reset <id>` then `orchestrator resume <id>` |
-| Completed | Session finished, no action needed |
-| Active | Session running normally, wait or check logs |
-
-**Pro tip:** Run `orchestrator helper` without a session ID to check all recent sessions:
+**Scenario:** You have a markdown plan that doesn't follow orchestrator milestone format.
 
 ```bash
-orchestrator helper              # Analyze all sessions from last 24h
-orchestrator helper --all        # Analyze all sessions ever
+orchestrator convert plan.md                          # Output to stdout
+orchestrator convert plan.md -o converted.md          # Output to file
+orchestrator convert plan.md --in-place               # Modify in place (creates backup)
+orchestrator convert plan.md --validate-only          # Check if already valid
+orchestrator convert plan.md --dry-run                # Preview without writing
+```
+
+### Kill Orphaned MCP Processes
+
+**Scenario:** Playwright MCP servers left running after crashed sessions.
+
+```bash
+orchestrator cleanup                     # Kill MCP servers only (safe)
+orchestrator cleanup --dry-run           # Preview what would be killed
+orchestrator cleanup --all               # Also kill browser processes
+orchestrator cleanup -p "my-mcp"         # Custom pattern
+```
+
+### Test Playwright MCP Integration
+
+**Scenario:** Verify Playwright MCP tools work with your agents.
+
+```bash
+orchestrator test-playwright planner --test-url http://localhost:3000/
+orchestrator test-playwright executor --test-url http://localhost:3000/
+orchestrator test-playwright both --test-url http://localhost:3000/
 ```
 
 ---
@@ -441,7 +446,10 @@ orchestrator helper --all        # Analyze all sessions ever
 | Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
 | See all sessions | `orchestrator list` |
 | Check session details | `orchestrator status <session-id>` |
-| Debug stuck session (coming soon) | `orchestrator helper <session-id>` |
+| Force-complete stuck session | `orchestrator complete <session-id>` |
+| Convert plan to orchestrator format | `orchestrator convert plan.md -o out.md` |
+| Kill orphaned MCP processes | `orchestrator cleanup --dry-run` |
+| Test Playwright MCP integration | `orchestrator test-playwright executor --test-url URL` |
 | Export session to markdown | `orchestrator export <session-id> -o report.md` |
 | Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
 | Run a checklist of tasks | `orchestrator todo tasks.md` |
@@ -480,45 +488,23 @@ Common fixes:
 
 ### Workflow stuck / no progress
 
-**Quick fix (coming soon):** Use the helper command to diagnose and get recommended actions:
+**Diagnose and fix:**
 
 ```bash
-orchestrator helper <session-id>
+orchestrator status <session-id>              # Check state and blockers
+orchestrator respond <session-id> "answer"    # Answer pending blocker
+orchestrator reset <session-id>               # Reset stale heartbeat
+orchestrator resume <session-id>              # Resume paused session
+orchestrator resume <session-id> --force      # Force resume orphaned session
+orchestrator complete <session-id>            # Force-complete if stuck at end
 ```
 
-The helper analyzes your session and suggests the exact command to run. It checks:
-- Session state (phase, status, last activity)
-- Pending blockers requiring your response
-- Orphaned sessions (crashed mid-execution)
-- Stalled execution (no heartbeat)
-
-**Example output:**
-```
-🔍 Analyzing session abc123...
-
-Session State:
-  Phase: execution
-  Status: paused
-  Last Activity: 15 minutes ago
-  Current Milestone: 2/4
-
-Issue Detected: Blocker waiting for response
-
-💡 Recommended Action:
-   orchestrator respond abc123 "Your answer here"
-
-Blocker Question:
-   "Should I use JWT or session-based authentication?"
-```
-
-**Manual commands** (if you prefer step-by-step):
-
-```bash
-orchestrator status <session-id>   # Check state
-orchestrator reset <session-id>    # Reset heartbeat
-orchestrator resume <session-id>   # Resume
-orchestrator resume <session-id> --force  # Force resume if needed
-```
+| Symptom | Solution |
+|---------|----------|
+| Blocker waiting | `orchestrator respond <id> "answer"` |
+| Orphaned (crashed) | `orchestrator resume <id> --force` |
+| Stale heartbeat | `orchestrator reset <id>` then `resume` |
+| Finished but stuck | `orchestrator complete <id>` |
 
 ### Where are the logs?
 

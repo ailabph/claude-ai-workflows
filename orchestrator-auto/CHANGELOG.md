@@ -5,6 +5,24 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-01-16
+
+### Added
+
+- **CLI: `--tui` on watch command** - Enable TUI for directory watch mode (`orchestrator start --watch ./plans --tui`)
+
+### Changed
+
+- **Unified WatchController** - CLI and TUI now share the same WatchController for consistent behavior
+
+### Fixed
+
+- **Watch option passthrough** - All watch options (poll interval, convert, auto-commit, telegram) now correctly passed to TUI mode with warnings for unsupported options
+- **Milestone pattern validation** - Unified milestone header pattern (`## Milestone` or `### Milestone`) across start and watch modes
+- **Watch mode parity** - Addressed regressions in unified watch mode (file processing, state tracking)
+- **Output callback handling** - Always pass output_callback regardless of show_activity setting in watch mode
+- **Rich markup in AgentOutput** - Disabled Rich markup parsing to prevent crashes on agent output containing bracket patterns
+
 ## [1.0.0] - 2026-01-16
 
 ### Added
