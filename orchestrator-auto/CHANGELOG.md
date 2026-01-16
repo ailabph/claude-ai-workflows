@@ -5,6 +5,33 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-01-16
+
+### Added
+
+- **TUI (Text User Interface)** - Full terminal UI for all orchestrator modes
+- **CLI: `--tui`** - Enable TUI on `start`, `resume`, `watch`, and queue commands
+- **Single Session TUI** - Real-time streaming output, status panel, milestone tracking
+- **Queue TUI** - Queue progress visualization, item status, current session detail
+- **Watch TUI** - Directory monitoring, file status tracking, processing stats
+- **Responsive layouts** - Adapts to terminal width (small <80, medium 80-119, large 120+)
+- **HelpScreen** - Modal with keybinding reference for each mode (`?` key)
+- **SessionPickerScreen** - Resume session selection with status indicators
+- **Thread-safe adapters** - TUIOutputAdapter and TUIInputProvider bridge worker threads to UI
+- **StatusPanel widget** - Phase, status, models, API calls, tokens, elapsed time
+- **MilestoneList widget** - Progress tracking with checkmarks
+- **AgentOutput widget** - Streaming output with syntax highlighting and auto-scroll
+- **LogPanel widget** - Orchestrator message log with level indicators
+- **InputModal widget** - Modal for blocker/discovery input
+- **QueuePanel widget** - Queue item list with position and status
+- **WatchPanel widget** - Watch directory stats, pending files, last result
+- **New package** - `orchestrator_auto.tui` with widgets, screens, messages, adapters
+- **Optional dependency** - `pip install orchestrator-auto[tui]` (requires textual>=0.80.0)
+
+### Changed
+
+- **Version 1.0.0** - First stable release with complete TUI implementation
+
 ## [0.13.0] - 2026-01-16
 
 ### Added

@@ -164,6 +164,7 @@ orchestrator resume <session-id>     # Continue where you left off
 | `logging_config.py` | Session logging | Per-session file logging |
 | `todo.py` | Batch task execution | `TodoRunner`, `run_todo_file()`, `parse_completion_tags()` |
 | `todo_parser.py` | Checkbox file parsing | `parse_task_file()`, `update_task_file()`, `Task`, `TaskFile` |
+| `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, widgets, screens |
 
 ### Database Tables
 
@@ -304,6 +305,36 @@ orchestrator chat -m opus        # Use Opus
 orchestrator chat --no-tools     # Pure chat mode
 ```
 
+### Text User Interface (TUI)
+
+**Scenario:** Rich terminal interface for monitoring workflows with real-time updates.
+
+```bash
+pip install orchestrator-auto[tui]  # Install TUI dependencies
+
+orchestrator start -f "Feature" --tui     # Single session TUI
+orchestrator start --queue plans/ --tui   # Queue mode TUI
+orchestrator watch ./plans/ --tui         # Watch mode TUI
+```
+
+**TUI Features:**
+- Real-time streaming output with syntax highlighting
+- Status panel showing phase, models, API calls, tokens, elapsed time
+- Milestone progress tracking with visual checkmarks
+- Log panel for orchestrator messages
+- Input modals for blocker/discovery prompts
+- Responsive layouts adapting to terminal width
+
+**Keybindings (press `?` for full list):**
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `?` | Show help |
+| `l` | Toggle logs |
+| `m` | Toggle milestones |
+| `s` | Show status |
+| `Esc` | Back/Cancel |
+
 ### Batch Task Execution (Todo Mode)
 
 **Scenario:** Execute a checklist of independent tasks with fresh agent context per task.
@@ -415,6 +446,9 @@ orchestrator helper --all        # Analyze all sessions ever
 | Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
 | Run a checklist of tasks | `orchestrator todo tasks.md` |
 | Run tasks with cheaper model | `orchestrator todo tasks.md -m haiku` |
+| Use TUI for single session | `orchestrator start -f "Feature" --tui` |
+| Use TUI for queue mode | `orchestrator start --queue plans/ --tui` |
+| Use TUI for watch mode | `orchestrator watch ./plans/ --tui` |
 | Verify setup | `orchestrator check` |
 
 ---
@@ -533,7 +567,8 @@ conda env create -f environment.yml
 conda activate orchestrator-auto
 
 # 3. Install
-pip install -e .
+pip install -e .              # Base install
+pip install -e ".[tui]"       # With TUI support (optional)
 
 # 4. Configure authentication (choose one)
 
@@ -616,7 +651,17 @@ orchestrator-auto/
 │   ├── prompts.py           # System prompts
 │   ├── db.py                # Database ops
 │   ├── logging_config.py    # Per-session logging
-│   └── exceptions.py        # Custom exceptions
+│   ├── exceptions.py        # Custom exceptions
+│   └── tui/                 # Text User Interface
+│       ├── app.py           # OrchestratorTUI
+│       ├── queue_app.py     # QueueTUI
+│       ├── watch_app.py     # WatchTUI
+│       ├── adapter.py       # Thread-safe adapters
+│       ├── messages.py      # Custom messages
+│       ├── bindings.py      # Keybindings
+│       ├── widgets/         # UI widgets
+│       ├── screens/         # Modal screens
+│       └── styles/          # Theme CSS
 ├── tests/
 ├── docs/
 └── README.md
