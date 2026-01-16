@@ -257,6 +257,10 @@ def _start_watch_tui(
     executor_model: Optional[str],
     auto_commit: bool,
     smart_commit: Optional[bool],
+    telegram: Optional[bool],
+    show_activity: bool,
+    mcp_config: Optional[str],
+    headless: bool,
 ) -> None:
     """
     Start watch mode with TUI dashboard.
@@ -272,11 +276,30 @@ def _start_watch_tui(
         executor_model: Model for executor agent
         auto_commit: Whether to auto-commit on completion
         smart_commit: Whether to use AI-generated commit messages
+        telegram: Whether to enable Telegram notifications (not yet supported)
+        show_activity: Whether to show streaming activity (ignored in TUI)
+        mcp_config: Path to MCP configuration file (not yet supported)
+        headless: Whether to run Playwright browser headless (not yet supported)
     """
+    # Warn about options not yet supported in TUI mode
+    unsupported = []
+    if telegram:
+        unsupported.append("--telegram")
+    if mcp_config:
+        unsupported.append("--mcp-config")
+    if headless:
+        unsupported.append("--headless")
+
+    if unsupported:
+        click.secho(
+            f"Warning: {', '.join(unsupported)} not yet supported in TUI mode (ignored)",
+            fg="yellow"
+        )
+
     try:
         from .tui import get_watch_app_class, check_textual_available
         check_textual_available()
-    except ImportError as e:
+    except ImportError:
         click.secho("Error: Textual is not installed.", fg="red", bold=True)
         click.echo()
         click.echo("Install TUI support with:")
@@ -3321,6 +3344,10 @@ def watch(
             executor_model=executor_model,
             auto_commit=auto_commit,
             smart_commit=smart_commit,
+            telegram=telegram,
+            show_activity=show_activity,
+            mcp_config=mcp_config,
+            headless=headless,
         )
         return
     plans_path = Path(plans_dir).resolve()
