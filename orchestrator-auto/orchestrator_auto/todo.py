@@ -14,10 +14,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, List, Callable
 import re
-import uuid
 
 from claude_agent_sdk import ClaudeSDKClient
-from claude_agent_sdk.types import ClaudeAgentOptions
+from claude_agent_sdk.types import (
+    ClaudeAgentOptions,
+    AssistantMessage,
+    ResultMessage,
+    TextBlock,
+)
 
 from .todo_parser import (
     Task, TaskFile, TaskStatus,
@@ -50,7 +54,9 @@ OR if you cannot complete the task:
 Reason: <why you could not complete the task>
 [/TASK_FAILED]
 
-IMPORTANT: You MUST output one of these tags when done. Do not stop without a completion tag.
+IMPORTANT:
+- You MUST output one of these tags when done. Do not stop without a completion tag.
+- Do NOT modify the task file itself (the markdown file containing this task). The orchestrator manages task status automatically.
 
 ---
 
@@ -101,9 +107,12 @@ def build_file_context(task: Task, base_path: Path) -> str:
     """
     Build context string from @file references in task.
 
+    Security: Only allows relative paths within the base directory.
+    Absolute paths and paths escaping base_path (via ..) are rejected.
+
     Args:
         task: Task with file_refs list
-        base_path: Base path for resolving relative paths
+        base_path: Base path for resolving relative paths (task file directory)
 
     Returns:
         Formatted context string, or empty string if no refs
@@ -112,8 +121,24 @@ def build_file_context(task: Task, base_path: Path) -> str:
         return ""
 
     context_parts = ["FILE CONTEXT:"]
+    base_resolved = base_path.resolve()
+
     for ref in task.file_refs:
-        file_path = base_path / ref if not ref.is_absolute() else ref
+        # Security: reject absolute paths
+        if ref.is_absolute():
+            context_parts.append(f"\n--- {ref} ---\n[Rejected: absolute paths not allowed for security]\n")
+            continue
+
+        # Resolve the path relative to base
+        file_path = (base_path / ref).resolve()
+
+        # Security: ensure path is within base directory (no ../ escapes)
+        try:
+            file_path.relative_to(base_resolved)
+        except ValueError:
+            context_parts.append(f"\n--- {ref} ---\n[Rejected: path escapes task directory]\n")
+            continue
+
         if file_path.exists():
             try:
                 content = file_path.read_text()
@@ -236,8 +261,8 @@ class TodoRunner:
         """
         Run agent query with completely fresh context.
 
-        Creates new agent session with unique ID, sends prompt,
-        collects response, and closes session.
+        Creates new agent session, sends prompt, collects response,
+        and closes session. Each call is fully isolated.
 
         Args:
             prompt: Full prompt to send to agent
@@ -245,9 +270,6 @@ class TodoRunner:
         Returns:
             Agent's text response
         """
-        # Create unique session ID for this task
-        session_id = f"todo-{uuid.uuid4().hex[:8]}"
-
         # Build agent options
         options_kwargs = {
             "system_prompt": "You are a helpful assistant executing tasks.",
@@ -265,15 +287,18 @@ class TodoRunner:
 
         # Create fresh client, run query, close client
         async with ClaudeSDKClient(options) as client:
-            response_parts = []
-            async for event in client.query(prompt):
-                # Collect text from response
-                if hasattr(event, 'content'):
-                    for block in event.content:
-                        if hasattr(block, 'text'):
-                            response_parts.append(block.text)
+            await client.query(prompt)
+            response_text = ""
 
-            return ''.join(response_parts)
+            async for message in client.receive_messages():
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            response_text += block.text
+                elif isinstance(message, ResultMessage):
+                    break
+
+            return response_text
 
     def run_all(
         self,

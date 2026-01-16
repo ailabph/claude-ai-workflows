@@ -3763,10 +3763,13 @@ def todo(
     hitting token limits.
 
     \b
-    Task File Format:
+    Task File Format (only dash bullets supported):
         - [ ] Pending task to execute
         - [x] Already done (skipped)
         - [!] Previously failed (use --retry-failed)
+
+    Note: Only '-' bullets are supported. '*', '+', and numbered lists
+    are not recognized as tasks.
 
     \b
     Multi-line tasks (indent continuation lines):
@@ -3777,6 +3780,9 @@ def todo(
     \b
     File context injection (use @path):
         - [ ] Review @src/auth.py for security issues
+
+    Note: @path only supports relative paths within the task file's
+    directory. Absolute paths and '../' escapes are rejected for security.
 
     \b
     Completion Tags:
@@ -3828,7 +3834,19 @@ def todo(
         return
 
     if dry_run:
-        click.secho(f"[DRY RUN] Would process {actionable} task(s)", fg="cyan")
+        click.secho(f"[DRY RUN] Would process {actionable} task(s):", fg="cyan")
+        click.echo()
+
+        # List the tasks that would be processed
+        from .todo_parser import get_actionable_tasks as get_tasks
+        tasks_to_run = get_tasks(task_file, retry_failed=retry_failed)
+        for i, task in enumerate(tasks_to_run, 1):
+            status_marker = "[!]" if task.status == TaskStatus.FAILED else "[ ]"
+            task_preview = task.first_line
+            if len(task_preview) > 60:
+                task_preview = task_preview[:57] + "..."
+            click.echo(f"  {i}. {status_marker} {task_preview}")
+
         click.echo()
         return
 

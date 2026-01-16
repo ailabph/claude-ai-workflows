@@ -174,6 +174,50 @@ class TestBuildFileContext:
         assert "content 1" in context
         assert "content 2" in context
 
+    def test_absolute_path_rejected(self, tmp_path):
+        """Test that absolute paths are rejected for security."""
+        task = Task(
+            line_number=0,
+            content="Read @/etc/passwd",
+            file_refs=[Path("/etc/passwd")]
+        )
+
+        context = build_file_context(task, tmp_path)
+
+        assert "Rejected: absolute paths not allowed" in context
+        assert "passwd" not in context or "Rejected" in context
+
+    def test_parent_directory_escape_rejected(self, tmp_path):
+        """Test that ../ escapes are rejected for security."""
+        # Create a file outside tmp_path that we shouldn't be able to access
+        task = Task(
+            line_number=0,
+            content="Read @../../../etc/passwd",
+            file_refs=[Path("../../../etc/passwd")]
+        )
+
+        context = build_file_context(task, tmp_path)
+
+        assert "Rejected: path escapes task directory" in context
+
+    def test_subdirectory_access_allowed(self, tmp_path):
+        """Test that subdirectory access is allowed."""
+        # Create subdirectory and file
+        subdir = tmp_path / "subdir"
+        subdir.mkdir()
+        (subdir / "file.py").write_text("subdir content")
+
+        task = Task(
+            line_number=0,
+            content="Read @subdir/file.py",
+            file_refs=[Path("subdir/file.py")]
+        )
+
+        context = build_file_context(task, tmp_path)
+
+        assert "subdir content" in context
+        assert "Rejected" not in context
+
 
 class TestGetModelId:
     """Test model alias resolution."""
