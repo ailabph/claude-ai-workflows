@@ -14,7 +14,7 @@ from typing import Optional, Callable, List, Dict, Any, TYPE_CHECKING
 from .. import db
 from ..engine import Orchestrator
 from ..state import Phase, Status
-from ..config import get_planner_model, get_executor_model
+from ..config import get_planner_model, get_executor_model, get_project_identity
 
 if TYPE_CHECKING:
     from ..io import InputProvider
@@ -159,6 +159,9 @@ class WatchController:
             poll_interval=poll_interval,
             auto_convert=auto_convert,
         )
+
+        # Get project identity for DB queries
+        self._project_id, _ = get_project_identity()
 
     def get_state(self) -> WatchState:
         """Get current watch state."""
@@ -575,6 +578,71 @@ class WatchController:
             # Still in progress (discovery/planning/execution)
             return True
 
+    def _restore_paused_session(self) -> None:
+        """
+        Restore paused session state from database on startup.
+
+        This ensures that if the TUI is restarted while a session is paused,
+        it will continue polling for the blocker response.
+        """
+        try:
+            # Query for paused sessions in this project
+            paused_sessions = db.list_sessions(
+                db_path=self.db_path,
+                status="paused",
+                project_id=self._project_id,
+            )
+
+            if not paused_sessions:
+                return
+
+            # Take the most recent paused session
+            session = paused_sessions[0]
+            session_id = session.get('session_id')
+            plan_path_str = session.get('plan_path', '')
+
+            if not session_id:
+                return
+
+            # Find the corresponding *_paused.md file
+            paused_file = None
+            if plan_path_str:
+                # Try exact path first
+                candidate = Path(plan_path_str)
+                if candidate.exists() and candidate.name.endswith('_paused.md'):
+                    paused_file = candidate
+                else:
+                    # Search in plans directory
+                    for f in self.plans_dir.glob('*_paused.md'):
+                        # Match by plan path or session ID prefix in filename
+                        if plan_path_str in str(f) or session_id[:8] in f.name:
+                            paused_file = f
+                            break
+
+            if not paused_file:
+                # Search by any _paused.md file (fallback)
+                paused_files = list(self.plans_dir.glob('*_paused.md'))
+                if paused_files:
+                    paused_file = paused_files[0]
+
+            if paused_file and paused_file.exists():
+                self._paused_session_id = session_id
+                self._paused_plan_path = paused_file
+                self._state.paused_count = 1
+
+                self.on_event(WatchEvent.INFO, {
+                    "message": f"Restored paused session: {session_id[:8]} ({paused_file.name})"
+                })
+                self.on_event(WatchEvent.FILE_PAUSED, {
+                    "session_id": session_id,
+                    "new_path": paused_file.name,
+                })
+
+        except Exception as e:
+            self.on_event(WatchEvent.WARNING, {
+                "message": f"Could not restore paused session: {e}"
+            })
+
     def run(self) -> WatchState:
         """
         Run watch loop until stopped.
@@ -588,6 +656,9 @@ class WatchController:
 
         # Initialize database
         db.init_db(self.db_path)
+
+        # Restore any paused session from previous run
+        self._restore_paused_session()
 
         self.on_event(WatchEvent.STARTED, {
             "directory": str(self.plans_dir),
