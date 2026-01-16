@@ -3783,6 +3783,7 @@ def todo(
 
     Note: @path only supports relative paths within the task file's
     directory. Absolute paths and '../' escapes are rejected for security.
+    Symlinks pointing outside the task directory are also rejected.
 
     \b
     Completion Tags:

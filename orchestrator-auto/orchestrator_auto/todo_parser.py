@@ -170,15 +170,48 @@ def render_task_line(task: Task) -> str:
     return f"{task.indent}- [{marker}] {task.first_line}"
 
 
+def _update_checkbox_marker(line: str, new_status: TaskStatus) -> str:
+    """
+    Update only the checkbox marker in a line, preserving everything else.
+
+    Args:
+        line: Original line (must be a checkbox line)
+        new_status: New status to set
+
+    Returns:
+        Line with updated marker, or original if not a checkbox
+    """
+    match = CHECKBOX_PATTERN.match(line)
+    if not match:
+        return line
+
+    indent = match.group(1)
+    # Content after the checkbox (preserve exactly as-is)
+    content = match.group(3)
+
+    marker = {
+        TaskStatus.PENDING: ' ',
+        TaskStatus.DONE: 'x',
+        TaskStatus.FAILED: '!',
+    }[new_status]
+
+    return f"{indent}- [{marker}] {content}"
+
+
 def update_task_file(task_file: TaskFile) -> None:
     """
     Write updated task statuses back to file atomically.
 
+    Re-reads the file from disk before applying updates to avoid clobbering
+    any changes made by the agent during task execution. Only the checkbox
+    markers are updated; all other content is preserved.
+
     Uses backup/temp/rename pattern to prevent data loss on crash:
-    1. Create backup of original
-    2. Write to temp file
-    3. Atomic rename temp -> original
-    4. Remove backup on success
+    1. Re-read current file content from disk
+    2. Update only checkbox markers for tasks that changed
+    3. Write to temp file
+    4. Atomic rename temp -> original
+    5. Remove backup on success
 
     Args:
         task_file: TaskFile with updated task statuses
@@ -190,17 +223,24 @@ def update_task_file(task_file: TaskFile) -> None:
     backup_path = path.with_suffix('.md.bak')
     temp_path = path.with_suffix('.md.tmp')
 
-    # Build updated content
-    new_lines = task_file.raw_lines.copy()
+    # Re-read current file content to avoid clobbering agent edits
+    current_content = path.read_text()
+    current_lines = current_content.splitlines()
 
+    # Update checkbox markers for each task
     for task in task_file.tasks:
-        # Only update the checkbox line, not continuation lines
-        new_lines[task.line_number] = render_task_line(task)
+        line_num = task.line_number
+        # Safety check: ensure line number is still valid
+        if line_num < len(current_lines):
+            current_lines[line_num] = _update_checkbox_marker(
+                current_lines[line_num],
+                task.status
+            )
 
     # Atomic write
     shutil.copy(path, backup_path)
     try:
-        temp_path.write_text('\n'.join(new_lines) + '\n')
+        temp_path.write_text('\n'.join(current_lines) + '\n')
         temp_path.rename(path)
         backup_path.unlink()
     except Exception:

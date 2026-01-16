@@ -185,7 +185,6 @@ class TestBuildFileContext:
         context = build_file_context(task, tmp_path)
 
         assert "Rejected: absolute paths not allowed" in context
-        assert "passwd" not in context or "Rejected" in context
 
     def test_parent_directory_escape_rejected(self, tmp_path):
         """Test that ../ escapes are rejected for security."""
