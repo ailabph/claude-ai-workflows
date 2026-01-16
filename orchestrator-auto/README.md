@@ -144,7 +144,7 @@ orchestrator resume <session-id>     # Continue where you left off
 
 | Module | Purpose | Key Entry Points |
 |--------|---------|------------------|
-| `cli.py` | CLI entry point | `start()`, `resume()`, `respond()`, `list_sessions()` |
+| `cli.py` | CLI entry point | `start()`, `resume()`, `respond()`, `list_sessions()`, `helper()` |
 | `engine.py` | Core orchestration | `Orchestrator` class, `run()`, `_run_discovery()`, `_run_planning()`, `_run_execution()` |
 | `state.py` | State machine | `StateMachine`, `WorkflowState`, `transition()` |
 | `parser.py` | Response parsing | `parse_planner_response()`, `parse_executor_response()`, `is_response_truncated()` |
@@ -347,6 +347,47 @@ orchestrator todo tasks.md --verbose          # Show full agent output
 - [ ] Add tests for @src/services/email.py following @tests/test_example.py pattern
 ```
 
+### Session Helper (Debug Stuck Sessions)
+
+> **🚧 Coming Soon:** This feature is planned but not yet implemented.
+
+**Scenario:** Your workflow is stuck and you're not sure what to do next.
+
+```bash
+orchestrator helper <session-id>
+```
+
+The helper command analyzes your session state and provides actionable guidance:
+
+**What it checks:**
+- Current phase and status
+- Time since last activity
+- Pending blockers (questions waiting for your response)
+- Orphaned state (process crashed mid-execution)
+- Heartbeat status (stalled execution)
+
+**What it suggests:**
+- The exact `orchestrator` command to run next
+- Context about why the session is stuck
+- Blocker questions you need to answer
+
+**Example scenarios:**
+
+| Session State | Helper Suggests |
+|---------------|-----------------|
+| Blocker waiting | `orchestrator respond <id> "answer"` with the question shown |
+| Orphaned session | `orchestrator resume <id> --force` |
+| Stale heartbeat | `orchestrator reset <id>` then `orchestrator resume <id>` |
+| Completed | Session finished, no action needed |
+| Active | Session running normally, wait or check logs |
+
+**Pro tip:** Run `orchestrator helper` without a session ID to check all recent sessions:
+
+```bash
+orchestrator helper              # Analyze all sessions from last 24h
+orchestrator helper --all        # Analyze all sessions ever
+```
+
 ---
 
 ## Quick Reference
@@ -369,6 +410,7 @@ orchestrator todo tasks.md --verbose          # Show full agent output
 | Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
 | See all sessions | `orchestrator list` |
 | Check session details | `orchestrator status <session-id>` |
+| Debug stuck session (coming soon) | `orchestrator helper <session-id>` |
 | Export session to markdown | `orchestrator export <session-id> -o report.md` |
 | Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
 | Run a checklist of tasks | `orchestrator todo tasks.md` |
@@ -403,6 +445,39 @@ Common fixes:
 - Wrong variable: Use `ANTHROPIC_API_KEY` for API keys
 
 ### Workflow stuck / no progress
+
+**Quick fix (coming soon):** Use the helper command to diagnose and get recommended actions:
+
+```bash
+orchestrator helper <session-id>
+```
+
+The helper analyzes your session and suggests the exact command to run. It checks:
+- Session state (phase, status, last activity)
+- Pending blockers requiring your response
+- Orphaned sessions (crashed mid-execution)
+- Stalled execution (no heartbeat)
+
+**Example output:**
+```
+🔍 Analyzing session abc123...
+
+Session State:
+  Phase: execution
+  Status: paused
+  Last Activity: 15 minutes ago
+  Current Milestone: 2/4
+
+Issue Detected: Blocker waiting for response
+
+💡 Recommended Action:
+   orchestrator respond abc123 "Your answer here"
+
+Blocker Question:
+   "Should I use JWT or session-based authentication?"
+```
+
+**Manual commands** (if you prefer step-by-step):
 
 ```bash
 orchestrator status <session-id>   # Check state
