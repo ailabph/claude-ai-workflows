@@ -15,6 +15,7 @@ from . import messages
 from .adapter import TUIOutputAdapter, TUIInputProvider
 from .bindings import GLOBAL_BINDINGS, SESSION_BINDINGS
 from .widgets import StatusPanel, MilestoneList, AgentOutput, LogPanel, InputModal
+from .screens import HelpScreen
 
 if TYPE_CHECKING:
     from ..engine import Orchestrator
@@ -41,6 +42,7 @@ class OrchestratorTUI(App):
     CSS_PATH = "styles/theme.tcss"
 
     CSS = """
+    /* Default layout (medium: 80-119 cols) */
     Screen {
         layout: grid;
         grid-size: 2 3;
@@ -83,6 +85,33 @@ class OrchestratorTUI(App):
 
     Footer {
         dock: bottom;
+    }
+
+    /* Small layout (<80 cols): single column, stacked */
+    Screen.layout-small {
+        layout: vertical;
+    }
+
+    Screen.layout-small #left-panel {
+        height: auto;
+        max-height: 12;
+    }
+
+    Screen.layout-small #right-panel {
+        height: 1fr;
+    }
+
+    Screen.layout-small #log-panel {
+        height: 6;
+    }
+
+    Screen.layout-small #milestone-list {
+        display: none;
+    }
+
+    /* Large layout (120+ cols): more space for output */
+    Screen.layout-large {
+        grid-columns: 1fr 3fr;
     }
     """
 
@@ -140,6 +169,9 @@ class OrchestratorTUI(App):
 
     def on_mount(self) -> None:
         """Handle app mount - start the workflow."""
+        # Apply initial responsive layout
+        self._apply_responsive_layout()
+
         # Log startup
         log_panel = self.query_one("#log-panel", LogPanel)
         log_panel.log_info("Orchestrator TUI Started")
@@ -160,6 +192,24 @@ class OrchestratorTUI(App):
         # Start workflow in worker thread
         if self.feature or self.session_id:
             self._start_workflow()
+
+    def on_resize(self, event) -> None:
+        """Handle terminal resize - update layout."""
+        self._apply_responsive_layout()
+
+    def _apply_responsive_layout(self) -> None:
+        """Apply responsive layout based on terminal width."""
+        width = self.size.width
+
+        # Remove existing layout classes
+        self.screen.remove_class("layout-small")
+        self.screen.remove_class("layout-large")
+
+        # Apply appropriate layout class
+        if width < 80:
+            self.screen.add_class("layout-small")
+        elif width >= 120:
+            self.screen.add_class("layout-large")
 
     def _start_workflow(self) -> None:
         """Start the orchestrator workflow in a worker thread."""
@@ -350,9 +400,7 @@ class OrchestratorTUI(App):
 
     def action_show_help(self) -> None:
         """Show help screen."""
-        # TODO: Implement help screen in Phase 6
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_info("Help: q=quit, l=toggle logs, m=toggle milestones, ?=help")
+        self.push_screen(HelpScreen(mode="session"))
 
     def action_toggle_logs(self) -> None:
         """Toggle log panel visibility."""

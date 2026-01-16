@@ -23,6 +23,7 @@ from .widgets import (
     InputModal,
     WatchPanel,
 )
+from .screens import HelpScreen
 from ..config import get_project_identity
 
 if TYPE_CHECKING:
@@ -583,8 +584,7 @@ class WatchTUI(App):
 
     def action_show_help(self) -> None:
         """Show help screen."""
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_info("Help: q=quit, r=refresh, c=clear files")
+        self.push_screen(HelpScreen(mode="watch"))
 
     def action_refresh(self) -> None:
         """Refresh the display."""

@@ -23,6 +23,7 @@ from .widgets import (
     InputModal,
     QueuePanel,
 )
+from .screens import HelpScreen
 from ..config import get_project_identity
 from ..parser import extract_feature_from_plan
 
@@ -520,8 +521,7 @@ class QueueTUI(App):
 
     def action_show_help(self) -> None:
         """Show help screen."""
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_info("Help: q=quit, n=next, k=skip, r=refresh")
+        self.push_screen(HelpScreen(mode="queue"))
 
     def action_toggle_logs(self) -> None:
         """Toggle log panel visibility."""
