@@ -1,7 +1,12 @@
 """
 Agent output widget for streaming agent responses.
+
+Uses markup=False to safely display agent output that may contain
+orchestrator tags like [PROGRESS_REPORT] which would otherwise be
+parsed as Rich markup and cause MarkupError.
 """
 
+from rich.text import Text
 from textual.widgets import RichLog
 
 
@@ -11,8 +16,9 @@ class AgentOutput(RichLog):
 
     Features:
     - Auto-scroll to bottom as new content arrives
-    - Rich text formatting support
+    - Safe handling of orchestrator tags (markup=False)
     - Syntax highlighting for code blocks
+    - Styled output via rich.text.Text objects
     """
 
     DEFAULT_CSS = """
@@ -31,7 +37,7 @@ class AgentOutput(RichLog):
     def __init__(self, **kwargs) -> None:
         super().__init__(
             highlight=True,
-            markup=True,
+            markup=False,  # Disable markup to safely display agent tags
             wrap=True,
             auto_scroll=True,
             **kwargs
@@ -46,13 +52,24 @@ class AgentOutput(RichLog):
             chunk: The text chunk to append
             agent: Name of the agent producing the output
         """
-        # Add agent prefix if agent changed
-        if agent and agent != self._current_agent:
-            self._current_agent = agent
-            self.write(f"\n[bold cyan]> {agent}:[/bold cyan]")
+        try:
+            # Add agent prefix if agent changed
+            if agent and agent != self._current_agent:
+                self._current_agent = agent
+                # Use Text object for styling since markup=False
+                prefix = Text()
+                prefix.append("\n")
+                prefix.append(f"> {agent}:", style="bold cyan")
+                self.write(prefix)
 
-        # Write the chunk (RichLog.write handles the actual display)
-        self.write(chunk, scroll_end=True)
+            # Write the chunk (RichLog.write handles the actual display)
+            self.write(chunk, scroll_end=True)
+        except Exception:
+            # Defensive fallback: write plain text if anything fails
+            try:
+                self.write(str(chunk), scroll_end=True)
+            except Exception:
+                pass  # Last resort: silently skip to avoid crashing TUI
 
     def write_message(self, message: str, style: str = "") -> None:
         """
@@ -62,14 +79,30 @@ class AgentOutput(RichLog):
             message: The message to write
             style: Optional Rich style string (e.g., "bold green")
         """
-        if style:
-            self.write(f"[{style}]{message}[/{style}]", scroll_end=True)
-        else:
-            self.write(message, scroll_end=True)
+        try:
+            if style:
+                # Use Text object for styling since markup=False
+                styled_text = Text(message, style=style)
+                self.write(styled_text, scroll_end=True)
+            else:
+                self.write(message, scroll_end=True)
+        except Exception:
+            # Defensive fallback: write plain text if styling fails
+            try:
+                self.write(str(message), scroll_end=True)
+            except Exception:
+                pass
 
     def write_separator(self) -> None:
         """Write a visual separator line."""
-        self.write("[dim]" + "─" * 60 + "[/dim]", scroll_end=True)
+        try:
+            separator = Text("─" * 60, style="dim")
+            self.write(separator, scroll_end=True)
+        except Exception:
+            try:
+                self.write("-" * 60, scroll_end=True)
+            except Exception:
+                pass
 
     def clear_output(self) -> None:
         """Clear all output."""

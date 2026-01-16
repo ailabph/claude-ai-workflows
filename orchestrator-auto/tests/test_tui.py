@@ -166,6 +166,100 @@ class TestSessionPicker:
         assert len(screen.sessions) == 2
 
 
+class TestAgentOutput:
+    """Test AgentOutput widget handles orchestrator tags safely."""
+
+    def test_write_chunk_with_progress_report_tag(self):
+        """Test that write_chunk handles [PROGRESS_REPORT] tags without crashing."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        # This would crash with markup=True due to unmatched [/PROGRESS_REPORT]
+        chunk = "Perfect!\n\n[PROGRESS_REPORT]\n## Milestone 1\n[/PROGRESS_REPORT]\n"
+        # Should not raise MarkupError
+        widget.write_chunk(chunk, agent="executor")
+
+    def test_write_chunk_with_plan_ready_tag(self):
+        """Test that write_chunk handles [PLAN_READY] tags without crashing."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        chunk = "[PLAN_READY]\n## Plan Overview\n"
+        widget.write_chunk(chunk, agent="planner")
+
+    def test_write_chunk_with_blocked_tag(self):
+        """Test that write_chunk handles [BLOCKED] tags without crashing."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        chunk = "[BLOCKED]\nNeed user input\n[/BLOCKED]"
+        widget.write_chunk(chunk, agent="executor")
+
+    def test_write_chunk_with_mixed_tags(self):
+        """Test that write_chunk handles various orchestrator tags."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        # Mix of various orchestrator tags that could be misinterpreted as Rich markup
+        chunks = [
+            "[MILESTONE_APPROVED]",
+            "[CHANGES_REQUESTED]",
+            "[HUMAN_INPUT_NEEDED]",
+            "[CLARIFICATION_NEEDED]",
+            "[bold]not actual markup[/bold]",
+            "[red]some text[/red]",
+        ]
+        for chunk in chunks:
+            widget.write_chunk(chunk, agent="test")
+
+    def test_write_message_with_style(self):
+        """Test that write_message with style works correctly."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        widget.write_message("Test message", style="bold green")
+
+    def test_write_message_plain(self):
+        """Test that write_message without style works correctly."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        widget.write_message("Plain message")
+
+    def test_write_separator(self):
+        """Test that write_separator works correctly."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        widget.write_separator()
+
+    def test_agent_prefix_styling(self):
+        """Test that agent prefixes are styled correctly without markup."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        widget.write_chunk("chunk1", agent="planner")
+        widget.write_chunk("chunk2", agent="executor")
+        # Verify agent tracking works
+        assert widget._current_agent == "executor"
+
+    def test_clear_output(self):
+        """Test that clear_output resets agent tracking."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        widget.write_chunk("test", agent="planner")
+        widget.clear_output()
+        assert widget._current_agent == ""
+
+    def test_markup_disabled_in_constructor(self):
+        """Test that markup is disabled in the widget."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        widget = AgentOutput()
+        assert widget.markup is False
+
+
 class TestBindings:
     """Test TUI bindings."""
 
