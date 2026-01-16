@@ -2,7 +2,7 @@
 AI-powered plan conversion for orchestrator-auto.
 
 Converts regular markdown plans into orchestrator-compatible format
-with properly formatted milestone headers (### Milestone N: Name).
+with properly formatted milestone headers (## or ### Milestone N: Name).
 
 Uses Claude to intelligently restructure plans while preserving content.
 """
@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple
 
+from .parser import MILESTONE_PATTERN
 from claude_agent_sdk import ClaudeSDKClient
 from claude_agent_sdk.types import (
     ClaudeAgentOptions,
@@ -140,7 +141,10 @@ def validate_plan_content(content: str) -> Tuple[bool, Dict[str, Any]]:
     Validate if content is orchestrator-compatible.
 
     Checks for properly formatted milestone headers:
-    ### Milestone N: Name
+    ## Milestone N: Name  OR  ### Milestone N: Name
+
+    This uses the same MILESTONE_PATTERN as parse_plan_file() to ensure
+    consistent validation across start --plan and watch modes.
 
     Args:
         content: Plan content as string
@@ -151,15 +155,15 @@ def validate_plan_content(content: str) -> Tuple[bool, Dict[str, Any]]:
         - milestone_names: List[str] - extracted milestone names
         - error: Optional[str] - error message if invalid
     """
-    # Pattern: ### Milestone N: Name
-    milestone_pattern = r'###\s*Milestone\s*(\d+):\s*(.+)'
-    matches = re.findall(milestone_pattern, content, re.IGNORECASE)
+    # Use shared pattern from parser.py (accepts ## and ###)
+    # MULTILINE needed because pattern is anchored to line start with ^
+    matches = re.findall(MILESTONE_PATTERN, content, re.IGNORECASE | re.MULTILINE)
 
     if not matches:
         return False, {
             "milestones": 0,
             "milestone_names": [],
-            "error": "No milestones found. Expected format: ### Milestone N: Name"
+            "error": "No milestones found. Expected format: ## Milestone N: Name (or ###)"
         }
 
     milestone_names = [name.strip() for _, name in matches]

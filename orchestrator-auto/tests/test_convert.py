@@ -83,11 +83,55 @@ Do more
         assert details["milestone_names"] == []
         assert "No milestones found" in details["error"]
 
-    def test_invalid_plan_wrong_header_level(self):
-        """Test validation fails with wrong header level."""
+    def test_valid_plan_double_hash_header(self):
+        """Test validation accepts ## milestone headers (matches parse_plan_file)."""
         content = """# My Plan
 
 ## Milestone 1: Setup
+Tasks
+
+## Milestone 2: Implementation
+More tasks
+"""
+        is_valid, details = validate_plan_content(content)
+
+        assert is_valid is True
+        assert details["milestones"] == 2
+        assert details["milestone_names"] == ["Setup", "Implementation"]
+
+    def test_valid_plan_mixed_header_levels(self):
+        """Test validation accepts mix of ## and ### milestone headers."""
+        content = """# My Plan
+
+## Milestone 1: Setup with double hash
+Tasks
+
+### Milestone 2: Build with triple hash
+More tasks
+"""
+        is_valid, details = validate_plan_content(content)
+
+        assert is_valid is True
+        assert details["milestones"] == 2
+        assert details["milestone_names"] == ["Setup with double hash", "Build with triple hash"]
+
+    def test_invalid_plan_single_hash_header(self):
+        """Test validation fails with single hash (# Milestone)."""
+        content = """# My Plan
+
+# Milestone 1: Setup
+Tasks
+"""
+        is_valid, details = validate_plan_content(content)
+
+        assert is_valid is False
+        assert details["milestones"] == 0
+
+    def test_invalid_plan_four_hash_header(self):
+        """Test validation fails with four hashes (#### Milestone)."""
+        content = """# My Plan
+
+#### Milestone 1: Setup
 Tasks
 """
         is_valid, details = validate_plan_content(content)

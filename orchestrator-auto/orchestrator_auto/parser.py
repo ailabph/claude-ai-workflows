@@ -9,6 +9,13 @@ import re
 from typing import Tuple, Dict, Any, Optional, List
 
 
+# Shared milestone pattern - accepts both ## and ### headers
+# Pattern: ## Milestone N: Name or ### Milestone N: Name
+# Anchored to start of line to prevent matching #### or # Milestone
+# Use with re.MULTILINE flag to match line starts
+MILESTONE_PATTERN = r'^#{2,3}\s*Milestone\s*(\d+):\s*(.+)'
+
+
 # Response type constants
 PLANNER_APPROVED = "approved"
 PLANNER_CHANGES_REQUESTED = "changes_requested"
@@ -137,10 +144,9 @@ def parse_plan_file(plan_path: str) -> Dict[str, Any]:
 
     content = path.read_text()
 
-    # Extract milestones using regex
-    # Pattern: ## Milestone N: Name or ### Milestone N: Name
-    milestone_pattern = r'#{2,3}\s*Milestone\s*(\d+):\s*(.+)'
-    matches = re.findall(milestone_pattern, content, re.IGNORECASE)
+    # Extract milestones using shared pattern (accepts ## and ###)
+    # MULTILINE needed because pattern is anchored to line start with ^
+    matches = re.findall(MILESTONE_PATTERN, content, re.IGNORECASE | re.MULTILINE)
 
     if not matches:
         return {"valid": False, "error": "No milestones found in plan file"}

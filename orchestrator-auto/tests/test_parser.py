@@ -486,6 +486,108 @@ Just some notes here.
         assert result["milestones"] == 1
         assert "Fix Bug" in result["milestone_names"][0]
 
+    def test_parse_plan_file_double_hash_milestones(self, tmp_path):
+        """Test parsing file with ## milestone headers (same as ### for parity)."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Implementation Plan
+
+## Milestone 1: Database Setup
+Tasks here
+
+## Milestone 2: API Layer
+More tasks
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is True
+        assert result["milestones"] == 2
+        assert "Database Setup" in result["milestone_names"][0]
+        assert "API Layer" in result["milestone_names"][1]
+
+    def test_parse_plan_file_mixed_hash_milestones(self, tmp_path):
+        """Test parsing file with mixed ## and ### milestone headers."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Implementation Plan
+
+## Milestone 1: First with double hash
+Tasks
+
+### Milestone 2: Second with triple hash
+More tasks
+
+## Milestone 3: Third with double hash again
+Final tasks
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is True
+        assert result["milestones"] == 3
+        assert result["milestone_names"] == [
+            "First with double hash",
+            "Second with triple hash",
+            "Third with double hash again"
+        ]
+
+
+class TestMilestonePattern:
+    """Test the shared MILESTONE_PATTERN constant."""
+
+    def test_milestone_pattern_exported(self):
+        """Test that MILESTONE_PATTERN is exported from parser."""
+        from orchestrator_auto.parser import MILESTONE_PATTERN
+        assert MILESTONE_PATTERN is not None
+        assert "#{2,3}" in MILESTONE_PATTERN
+
+    def test_milestone_pattern_matches_double_hash(self):
+        """Test MILESTONE_PATTERN matches ## Milestone."""
+        import re
+        from orchestrator_auto.parser import MILESTONE_PATTERN
+
+        text = "## Milestone 1: Setup Database"
+        matches = re.findall(MILESTONE_PATTERN, text, re.IGNORECASE | re.MULTILINE)
+
+        assert len(matches) == 1
+        assert matches[0] == ("1", "Setup Database")
+
+    def test_milestone_pattern_matches_triple_hash(self):
+        """Test MILESTONE_PATTERN matches ### Milestone."""
+        import re
+        from orchestrator_auto.parser import MILESTONE_PATTERN
+
+        text = "### Milestone 2: Build API"
+        matches = re.findall(MILESTONE_PATTERN, text, re.IGNORECASE | re.MULTILINE)
+
+        assert len(matches) == 1
+        assert matches[0] == ("2", "Build API")
+
+    def test_milestone_pattern_rejects_single_hash(self):
+        """Test MILESTONE_PATTERN does not match # Milestone."""
+        import re
+        from orchestrator_auto.parser import MILESTONE_PATTERN
+
+        text = "# Milestone 1: Invalid"
+        matches = re.findall(MILESTONE_PATTERN, text, re.IGNORECASE | re.MULTILINE)
+
+        assert len(matches) == 0
+
+    def test_milestone_pattern_rejects_four_hash(self):
+        """Test MILESTONE_PATTERN does not match #### Milestone."""
+        import re
+        from orchestrator_auto.parser import MILESTONE_PATTERN
+
+        text = "#### Milestone 1: Invalid"
+        matches = re.findall(MILESTONE_PATTERN, text, re.IGNORECASE | re.MULTILINE)
+
+        assert len(matches) == 0
+
 
 class TestExtractFeatureFromPlan:
     """Test extract_feature_from_plan function for queue feature."""
