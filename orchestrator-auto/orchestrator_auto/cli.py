@@ -3374,6 +3374,7 @@ def watch(
         poll_interval=poll_interval,
         auto_convert=auto_convert,
         on_event=on_event,
+        on_output=output_callback if show_activity else None,
         planner_model=planner_model,
         executor_model=executor_model,
         auto_commit=auto_commit,
@@ -3462,6 +3463,8 @@ def _process_watch_file(
     smart_commit: Optional[bool],
     telegram: Optional[bool],
     show_activity: bool,
+    mcp_config: Optional[str] = None,
+    headless: bool = False,
 ) -> WatchResult:
     """
     Process a single plan file in watch mode.
@@ -3481,6 +3484,8 @@ def _process_watch_file(
         auto_commit: Auto-commit on completion
         smart_commit: Use AI commit messages
         telegram: Enable Telegram notifications
+        mcp_config: Path to MCP configuration file
+        headless: Whether to run browsers in headless mode
         show_activity: Show streaming activity
 
     Returns:

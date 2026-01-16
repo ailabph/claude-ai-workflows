@@ -429,21 +429,50 @@ class WatchController:
             )
 
     def _do_auto_commit(self, feature: str, session_id: str) -> None:
-        """Perform auto-commit if enabled."""
+        """Perform auto-commit if enabled, using same logic as CLI."""
         from ..git import auto_commit
-        from ..commit_ai import generate_commit_message
+        from ..config import get_smart_commit_enabled, get_auto_commit_model
 
         milestones = db.get_milestones(session_id, self.db_path)
 
-        try:
-            if self.smart_commit:
-                message = generate_commit_message(feature, milestones, self.executor_model)
-            else:
-                message = f"feat: {feature}"
+        # Determine if smart commit should be used (mirrors CLI behavior)
+        use_smart = get_smart_commit_enabled(self.smart_commit)
 
-            success, result = auto_commit(message)
+        # Determine which model to use for smart commit
+        commit_model = get_auto_commit_model(None, self.executor_model)
+
+        # Status callback that emits events (mirrors CLI on_status)
+        def on_status(msg: str) -> None:
+            if "Secrets detected" in msg:
+                self.on_event(WatchEvent.WARNING, {"message": msg})
+            elif "failed" in msg.lower() or "error" in msg.lower():
+                self.on_event(WatchEvent.WARNING, {"message": msg})
+            else:
+                self.on_event(WatchEvent.INFO, {"message": msg})
+
+        try:
+            # Use full auto_commit signature for parity with CLI
+            success, result, fallback_reason = auto_commit(
+                feature_description=feature,
+                milestones=milestones,
+                use_smart_commit=use_smart,
+                smart_commit_model=commit_model,
+                on_status=on_status,
+            )
+
             if success:
                 self.on_event(WatchEvent.INFO, {"message": f"Auto-commit: {result}"})
+                # Show fallback reason if applicable
+                if fallback_reason == "secrets_detected":
+                    self.on_event(WatchEvent.WARNING, {
+                        "message": "Used static message due to potential secrets in diff"
+                    })
+                elif fallback_reason == "ai_generation_failed":
+                    self.on_event(WatchEvent.WARNING, {
+                        "message": "Used static message - AI generation unavailable"
+                    })
+                elif not fallback_reason and use_smart:
+                    self.on_event(WatchEvent.INFO, {"message": "AI-generated commit message"})
             else:
                 self.on_event(WatchEvent.WARNING, {"message": f"Commit failed: {result}"})
         except Exception as e:

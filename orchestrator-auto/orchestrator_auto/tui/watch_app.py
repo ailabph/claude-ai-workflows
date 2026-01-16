@@ -214,20 +214,22 @@ class WatchTUI(App):
             # Initialize database
             db.init_db(self.db_path)
 
-            # Create telegram notifier if enabled
+            # Create telegram notifier using shared function (same as CLI)
             telegram_notifier = None
             if self.telegram:
                 try:
-                    from ..telegram import TelegramNotifier
+                    from ..telegram import create_notifier_from_config
                     from ..config import get_telegram_config
                     telegram_config = get_telegram_config()
-                    if telegram_config.get('bot_token') and telegram_config.get('chat_id'):
-                        telegram_notifier = TelegramNotifier(
-                            bot_token=telegram_config['bot_token'],
-                            chat_id=telegram_config['chat_id'],
-                        )
+                    telegram_notifier = create_notifier_from_config(
+                        telegram_config, cli_enabled=self.telegram
+                    )
+                except ImportError:
+                    # Telegram requires httpx - log to panel if available
+                    pass
                 except Exception:
-                    pass  # Telegram not available, continue without it
+                    # Configuration error - continue without telegram
+                    pass
 
             # Create controller with TUI adapters
             self._controller = WatchController(
