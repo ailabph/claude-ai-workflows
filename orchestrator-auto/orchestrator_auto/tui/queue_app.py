@@ -200,7 +200,7 @@ class QueueTUI(App):
             if self.clear_before_enqueue:
                 cleared = db.clear_active_queue(self.project_id, self.db_path)
                 if cleared > 0:
-                    self._adapter.on_output(f"Cleared {cleared} existing queue items", "info")
+                    self._adapter.on_output(f"Cleared {cleared} existing queue items")
 
             # Enqueue plan files using proper db function and feature extraction
             for position, plan_path in enumerate(self.plan_paths):
