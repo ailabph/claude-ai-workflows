@@ -159,9 +159,18 @@ class StatusPanel(Static):
             return "haiku"
 
         # Try to extract version-like pattern (e.g., "claude-3-5" -> "3.5")
-        version_match = re.search(r'(\d+)[.-](\d+)', model)
+        # Use specific pattern to avoid matching dates like 2024-10-22
+        version_match = re.search(r'(?:claude|gpt|llama)[-_](\d+)[-_](\d+)', model_lower)
         if version_match:
             return f"v{version_match.group(1)}.{version_match.group(2)}"
+
+        # Fallback version match, but filter out year-like numbers (2020-2030)
+        version_match = re.search(r'(\d+)[.-](\d+)', model)
+        if version_match:
+            first_num = int(version_match.group(1))
+            # Skip if it looks like a year (2020-2030)
+            if not (2020 <= first_num <= 2030):
+                return f"v{version_match.group(1)}.{version_match.group(2)}"
 
         # Fallback: find the most descriptive segment
         # Skip common prefixes like "claude", "gpt", "anthropic"
