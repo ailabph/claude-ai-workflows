@@ -6,7 +6,7 @@ A planner (Claude Opus) breaks your feature request into milestones. An executor
 
 ---
 
-## Getting Started (5 Minutes)
+## Quick Start (5 Minutes)
 
 ### 1. Install & Verify
 
@@ -62,332 +62,33 @@ orchestrator resume <session-id>     # Continue where you left off
 
 ---
 
-## Common Workflows
+## How It Works
 
-### Workflow: Build a Backend API
+### Architecture
 
-**Scenario:** Add a `/api/users` endpoint with authentication, validation, and tests.
-
-```bash
-orchestrator start -f "Add /api/users POST endpoint with email validation and password hashing"
 ```
-
-**Typical milestones the planner creates:**
-- M1: User model + database migrations
-- M2: Serializer + password hashing + validation
-- M3: API endpoint + authentication check
-- M4: Unit tests + integration tests
-- M5: Error handling + edge cases
-
-**Your role:** Review each milestone, verify tests pass, approve before next.
-
-### Workflow: Build a Frontend Component
-
-**Scenario:** Add a login form with validation and error handling.
-
-```bash
-orchestrator start -f "Build login form component with email/password fields, client-side validation, and error messages"
+┌──────────────────────────────────────────────────────────────┐
+│                    orchestrator-auto                          │
+│  ┌────────────────┐         ┌─────────────────┐             │
+│  │  Planner Agent │ ◄─────► │ Executor Agent  │             │
+│  │  (Opus 4.5)    │         │ (Sonnet 4.5)    │             │
+│  └────────────────┘         └─────────────────┘             │
+│         ▲                            ▲                        │
+│         │                            │                        │
+│  ┌──────┴────────────────────────────┴─────┐                │
+│  │       Orchestrator Engine                │                │
+│  │  • State machine                         │                │
+│  │  • Message routing                       │                │
+│  │  • Blocker handling                      │                │
+│  └──────────────────┬───────────────────────┘                │
+│                     │                                         │
+│              ┌──────▼──────┐                                 │
+│              │  SQLite DB   │                                 │
+│              └──────────────┘                                 │
+└──────────────────────────────────────────────────────────────┘
 ```
-
-**Typical milestones:**
-- M1: Component structure + styling
-- M2: Form state management + validation
-- M3: Error display + loading state
-- M4: Integration with auth API
-- M5: Accessibility + unit tests
-
-**Your role:** Review screenshots after each milestone, approve styling before moving on.
-
-### Workflow: Refactor Existing Code
-
-**Scenario:** Migrate authentication from sessions to JWT.
-
-```bash
-orchestrator start -f "Refactor authentication from session-based to JWT tokens, maintaining backward compatibility"
-```
-
-**Typical milestones:**
-- M1: JWT generation + token validation logic
-- M2: Middleware + protected routes
-- M3: Migration script + session cleanup
-- M4: Tests + security validation
-- M5: Documentation + deployment guide
-
-**Your role:** Test each milestone, verify no regressions.
-
-### Workflow: Cost-Saving with Cheaper Models
-
-**Default:** Opus for planner, Sonnet for executor (most accurate).
-
-**Budget option:** Use cheaper models for executor
-
-```bash
-orchestrator start -f "Add X feature" -pm sonnet -em haiku
-```
-
-Saves ~70% on execution cost. Planner (Opus) still plans well; executor just needs to follow instructions.
-
-### Workflow: Auto-Commit on Completion
-
-**Scenario:** You trust the workflow and want automatic commits.
-
-```bash
-orchestrator start -f "Add feature" --auto-commit
-```
-
-Or with AI-generated commit messages:
-
-```bash
-orchestrator start -f "Add feature" --auto-commit --smart-commit
-```
-
-**Note:** Never pushes automatically. Only creates local commits.
-
-### Workflow: Batch Process Multiple Features (Queue Mode)
-
-**Scenario:** You have 3 features to build, want them sequential.
-
-Create plan files:
-- `plan1.md` - "Add user authentication"
-- `plan2.md` - "Add email notifications"
-- `plan3.md` - "Add password reset"
-
-Then run them sequentially:
-
-```bash
-orchestrator start --queue plan1.md plan2.md plan3.md
-```
-
-Each plan becomes its own session. When plan1 completes, plan2 starts automatically. If a plan hits a blocker, queue pauses—resolve with `orchestrator resume <id>`, then queue continues.
-
-**Resume existing queue:**
-```bash
-orchestrator start --queue
-```
-
-### Workflow: Watch a Directory for New Plans
-
-**Scenario:** Continuous delivery—drop plans in a folder, they execute automatically.
-
-```bash
-orchestrator watch ./plans/ --auto-commit
-```
-
-**What happens:**
-1. Drop `feature-x.md` into `./plans/`
-2. Watcher sees it, validates it, auto-converts if needed
-3. Orchestrator executes it
-4. On completion: `feature-x.md` → `feature-x_done.md` (auto-committed)
-
----
-
-## Quick Reference & All Commands
-
-**Looking for a specific command?** See the table of contents below:
-
-- **[Installation](#installation)** - Setup & authentication
-- **[CLI Commands](#cli-commands)** - Full command reference
-  - `start` - Start new workflow
-  - `resume` - Continue paused workflow
-  - `list` - See all sessions
-  - `status` - Check session details
-  - `respond` - Answer a blocker question
-  - `export` - Save session to markdown
-  - `check` - Health check (dependencies, auth, API)
-  - `convert` - Convert markdown to orchestrator format
-  - `telegram` - Telegram notifications
-  - `watch` - Monitor directory for plans
-  - `chat` - Direct chat without orchestration
-- **[Configuration](#configuration)** - Models, auth, files
-- **[MCP Tools](#mcp-tool-support)** - Browser automation, Figma, etc.
-- **[Troubleshooting](#troubleshooting)** - Common issues & solutions
-- **[Development](#development)** - For contributors
-
----
-
-### All CLI Examples
-
-```bash
-# Start a new workflow
-orchestrator start -f "Add user authentication with JWT"
-
-# Start with custom models (cost savings)
-orchestrator start -f "My feature" -pm sonnet -em haiku
-
-# Start with existing plan (feature auto-extracted, renamed to *_done.md on completion)
-orchestrator start --plan docs/plan.md
-
-# Start with plan and explicit feature override
-orchestrator start --plan docs/plan.md -f "My feature"
-
-# Start with plan but skip auto-rename on completion
-orchestrator start --plan docs/plan.md --no-rename
-
-# Start with auto-commit on completion
-orchestrator start -f "My feature" --auto-commit
-
-# Start with smart auto-commit (AI-generated messages)
-orchestrator start -f "My feature" --auto-commit --smart-commit
-
-# Disable smart commit (use static messages)
-orchestrator start -f "My feature" --auto-commit --no-smart-commit
-
-# Start with MCP tools (e.g., Playwright browser automation)
-orchestrator start -f "E2E tests" --mcp-config .mcp.json
-
-# Start with Playwright in headless mode (no browser window)
-orchestrator start -f "E2E tests" --mcp-config .mcp.json --headless
-
-# Verify Planner + Executor have Playwright MCP tools
-# Terminal 1: start the local fixture site
-cd orchestrator-auto/fixtures/playwright-test-site
-npm ci
-npm run dev -- --port <PORT>
-
-# Terminal 2: run the verification tool
-orchestrator test-playwright both --test-url http://localhost:<PORT>/
-
-# Start with Telegram notifications
-orchestrator start -f "My feature" --telegram
-
-# Run multiple plans sequentially (queue mode)
-orchestrator start --queue plan1.md plan2.md plan3.md
-
-# Resume existing queue
-orchestrator start --queue
-
-# Reset and recreate queue
-orchestrator start --queue --queue-reset plan1.md plan2.md
-
-# Test Telegram configuration
-orchestrator telegram test
-
-# Listen for Telegram blocker replies (Phase 2)
-orchestrator telegram listen
-
-# Watch mode: monitor directory for new plan files
-orchestrator watch ./plans/
-orchestrator watch ./plans/ --poll-interval 5
-orchestrator watch ./plans/ --auto-commit
-
-# Direct chat with Claude (no orchestration)
-orchestrator chat
-orchestrator chat -m opus --no-tools
-
-# List sessions (current project only)
-orchestrator list
-
-# List all sessions across projects
-orchestrator list --all-projects
-
-# Check session status
-orchestrator status <session-id>
-
-# Resume a session
-orchestrator resume <session-id>
-
-# Force resume an orphaned/stuck session
-orchestrator resume <session-id> --force
-
-# Reset an orphaned session (refresh heartbeat)
-orchestrator reset <session-id>
-
-# Force-complete a stuck session
-orchestrator complete <session-id>
-orchestrator complete <session-id> --auto-commit
-
-# Respond to a blocker
-orchestrator respond <session-id> "Your answer here"
-
-# Export session to markdown
-orchestrator export <session-id> -o report.md
-
-# Health check (dependencies, permissions, auth, API connection)
-orchestrator check
-orchestrator check -v  # verbose output
-
-# Convert a regular plan to orchestrator format
-orchestrator convert plan.md                    # Output to stdout
-orchestrator convert plan.md -o converted.md   # Output to file
-orchestrator convert plan.md --in-place        # Modify in place (with backup)
-orchestrator convert plan.md --validate-only   # Check if already valid
-```
-
----
-
-## Choosing the Right Flags
-
-**I want to...** → **Use these flags:**
-
-| Goal | Command |
-|------|---------|
-| Just start a basic workflow | `orchestrator start -f "Feature"` |
-| Save money on API costs | `orchestrator start -f "Feature" -pm sonnet -em haiku` |
-| Auto-commit when done | `orchestrator start -f "Feature" --auto-commit` |
-| Auto-commit with AI messages | `orchestrator start -f "Feature" --auto-commit --smart-commit` |
-| Use an existing plan file | `orchestrator start --plan docs/plan.md` |
-| Run multiple plans sequentially | `orchestrator start --queue plan1.md plan2.md plan3.md` |
-| Monitor a folder for new plans | `orchestrator watch ./plans/ --auto-commit` |
-| Get notifications via Telegram | `orchestrator start -f "Feature" --telegram` |
-| Use Playwright for browser tests | `orchestrator start -f "E2E tests" --mcp-config .mcp.json` |
-| Run headless (no browser window) | `orchestrator start -f "Feature" --mcp-config .mcp.json --headless` |
-| Resume a paused workflow | `orchestrator resume <session-id>` |
-| Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
-| See all sessions | `orchestrator list` |
-| Check session details | `orchestrator status <session-id>` |
-| Export session to markdown | `orchestrator export <session-id> -o report.md` |
-| Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
-| Verify setup (dependencies, auth, API) | `orchestrator check` |
-
----
-
-## Installation
-
-```bash
-# 1. Navigate to directory
-cd orchestrator-auto
-
-# 2. Create conda environment
-conda env create -f environment.yml
-conda activate orchestrator-auto
-
-# 3. Install
-pip install -e .
-
-# 4. Configure authentication (choose one)
-
-# Option A: Claude Pro/Max subscription (recommended)
-# First, ensure Claude Code CLI is installed and logged in
-claude login
-# Then generate a long-lived token
-claude setup-token
-# Add to your shell config (~/.zshrc or ~/.bashrc)
-export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-your-token"
-
-# Option B: API key (pay-as-you-go)
-# Get key from https://console.anthropic.com/settings/keys
-export ANTHROPIC_API_KEY="sk-ant-api03-your-key"
-
-# 5. Verify installation and auth
-orchestrator check
-```
-
-### Authentication Notes
-
-| Method | Env Variable | Billing | Best For |
-|--------|--------------|---------|----------|
-| **Claude Subscription** | `CLAUDE_CODE_OAUTH_TOKEN` | Pro/Max plan | Personal use, included usage |
-| **API Key** | `ANTHROPIC_API_KEY` | Pay-per-use | Teams, high volume, CI/CD |
-
-**Important:**
-- Don't set both variables simultaneously (causes conflicts)
-- OAuth tokens (`sk-ant-oat01-...`) go in `CLAUDE_CODE_OAUTH_TOKEN`
-- API keys (`sk-ant-api03-...`) go in `ANTHROPIC_API_KEY`
-- Run `orchestrator check` to verify your setup
 
 ### Workflow Execution Flow
-
-When you run `orchestrator start -f "Feature description"`:
 
 ```
 1. DISCOVERY
@@ -421,483 +122,373 @@ When you run `orchestrator start -f "Feature description"`:
    Optional: auto-commit changes to git
         ↓
    Session marked complete
-
-5. EXPORT (optional)
-   Export session to markdown report
 ```
 
 **Key insight:** Executor STOPS after each milestone and waits for your approval. This prevents wasted compute on wrong directions.
 
+### Workflow Phases
+
+| Phase | Description |
+|-------|-------------|
+| Discovery | Refine requirements with planner |
+| Planning | Create implementation plan with milestones |
+| Execution | Execute milestones, planner reviews each |
+| Completed | All milestones approved |
+| Paused | Waiting for human input (blocker) |
+
 ---
 
-## When Things Go Wrong
+## Module Map (For Agents)
 
-### I started a workflow but it paused with a blocker. What do I do?
+**Entry points and key functions for agents exploring the codebase.**
 
-**Blocker = Executor asking for clarification or human input.**
+| Module | Purpose | Key Entry Points |
+|--------|---------|------------------|
+| `cli.py` | CLI entry point | `start()`, `resume()`, `respond()`, `list_sessions()` |
+| `engine.py` | Core orchestration | `Orchestrator` class, `run()`, `_run_discovery()`, `_run_planning()`, `_run_execution()` |
+| `state.py` | State machine | `StateMachine`, `WorkflowState`, `transition()` |
+| `parser.py` | Response parsing | `parse_planner_response()`, `parse_executor_response()`, `is_response_truncated()` |
+| `agents.py` | Agent wrappers | `PlannerAgent`, `ExecutorAgent`, `create_planner_agent()`, `create_executor_agent()` |
+| `db.py` | Persistence | `create_session()`, `get_session()`, `update_session()`, `create_blocker()` |
+| `config.py` | Configuration | `load_config()`, `get_model_id()`, `load_mcp_config_raw()` |
+| `telegram.py` | Notifications | `TelegramNotifier`, `send_blocker_notification()` |
+| `git.py` | Auto-commit | `auto_commit()`, `get_staged_diff()` |
+| `commit_ai.py` | AI commit messages | `generate_commit_message()` |
+| `secrets.py` | Secrets detection | `scan_for_secrets()` |
+| `prompts.py` | System prompts | `PLANNER_SYSTEM_PROMPT`, `EXECUTOR_SYSTEM_PROMPT`, `MILESTONE_PROMPT` |
+| `auth.py` | Auth detection | `detect_auth()`, `format_auth_display()` |
+| `exceptions.py` | Custom exceptions | `OrchestratorError`, `AgentError`, `SessionStateError` |
+| `recovery.py` | Context recovery | For compressed session handling |
+| `output.py` | Activity display | `StreamingIndicator` |
+| `input_handler.py` | CLI input | Multi-line paste support |
+| `logging_config.py` | Session logging | Per-session file logging |
+| `todo.py` | Batch task execution | `TodoRunner`, `run_todo_file()`, `parse_completion_tags()` |
+| `todo_parser.py` | Checkbox file parsing | `parse_task_file()`, `update_task_file()`, `Task`, `TaskFile` |
 
-The session paused because the executor needs information:
-- Unclear requirements
-- Decision needed (approach A vs B)
-- External dependency (need API key, etc.)
+### Database Tables
 
-Check what the blocker is:
+| Table | Purpose |
+|-------|---------|
+| `sessions` | Workflow metadata, phase, status, milestone counts |
+| `messages` | All agent/user messages with token counts |
+| `blockers` | Questions waiting for human answers |
+| `milestones` | Plan structure and milestone statuses |
+| `queue_items` | Batch execution queue state |
+
+---
+
+## Common Workflows
+
+### Build a Backend API
+
+**Scenario:** Add a `/api/users` endpoint with authentication, validation, and tests.
+
+```bash
+orchestrator start -f "Add /api/users POST endpoint with email validation and password hashing"
+```
+
+**Typical milestones the planner creates:**
+- M1: User model + database migrations
+- M2: Serializer + password hashing + validation
+- M3: API endpoint + authentication check
+- M4: Unit tests + integration tests
+- M5: Error handling + edge cases
+
+**Your role:** Review each milestone, verify tests pass, approve before next.
+
+### Build a Frontend Component
+
+**Scenario:** Add a login form with validation and error handling.
+
+```bash
+orchestrator start -f "Build login form component with email/password fields, client-side validation, and error messages"
+```
+
+**Typical milestones:**
+- M1: Component structure + styling
+- M2: Form state management + validation
+- M3: Error display + loading state
+- M4: Integration with auth API
+- M5: Accessibility + unit tests
+
+**Your role:** Review screenshots after each milestone, approve styling before moving on.
+
+### Refactor Existing Code
+
+**Scenario:** Migrate authentication from sessions to JWT.
+
+```bash
+orchestrator start -f "Refactor authentication from session-based to JWT tokens, maintaining backward compatibility"
+```
+
+**Typical milestones:**
+- M1: JWT generation + token validation logic
+- M2: Middleware + protected routes
+- M3: Migration script + session cleanup
+- M4: Tests + security validation
+- M5: Documentation + deployment guide
+
+**Your role:** Test each milestone, verify no regressions.
+
+### Cost-Saving with Cheaper Models
+
+**Default:** Opus for planner, Sonnet for executor (most accurate).
+
+**Budget option:** Use cheaper models for executor
+
+```bash
+orchestrator start -f "Add X feature" -pm sonnet -em haiku
+```
+
+Saves ~70% on execution cost. Planner (Opus) still plans well; executor just needs to follow instructions.
+
+### Auto-Commit on Completion
+
+**Scenario:** You trust the workflow and want automatic commits.
+
+```bash
+orchestrator start -f "Add feature" --auto-commit
+```
+
+Or with AI-generated commit messages:
+
+```bash
+orchestrator start -f "Add feature" --auto-commit --smart-commit
+```
+
+**Note:** Never pushes automatically. Only creates local commits.
+
+### Batch Process Multiple Features (Queue Mode)
+
+**Scenario:** You have 3 features to build, want them sequential.
+
+Create plan files:
+- `plan1.md` - "Add user authentication"
+- `plan2.md` - "Add email notifications"
+- `plan3.md` - "Add password reset"
+
+Then run them sequentially:
+
+```bash
+orchestrator start --queue plan1.md plan2.md plan3.md
+```
+
+Each plan becomes its own session. When plan1 completes, plan2 starts automatically. If a plan hits a blocker, queue pauses—resolve with `orchestrator resume <id>`, then queue continues.
+
+**Resume existing queue:**
+```bash
+orchestrator start --queue
+```
+
+### Watch a Directory for New Plans
+
+**Scenario:** Continuous delivery—drop plans in a folder, they execute automatically.
+
+```bash
+orchestrator watch ./plans/ --auto-commit
+```
+
+**What happens:**
+1. Drop `feature-x.md` into `./plans/`
+2. Watcher sees it, validates it, auto-converts if needed
+3. Orchestrator executes it
+4. On completion: `feature-x.md` → `feature-x_done.md` (auto-committed)
+
+### Direct Chat (No Orchestration)
+
+**Scenario:** Quick questions or ad-hoc tasks without the full workflow.
+
+```bash
+orchestrator chat                # Default (Sonnet with tools)
+orchestrator chat -m opus        # Use Opus
+orchestrator chat --no-tools     # Pure chat mode
+```
+
+### Batch Task Execution (Todo Mode)
+
+**Scenario:** Execute a checklist of independent tasks with fresh agent context per task.
+
+Create a markdown file with checkbox tasks:
+
+```markdown
+# tasks.md
+- [ ] Add input validation to `src/api/users.py`
+- [ ] Write unit tests for the UserService class @tests/test_users.py
+- [ ] Update API documentation in README
+```
+
+Run all pending tasks:
+
+```bash
+orchestrator todo tasks.md                    # Execute pending tasks
+orchestrator todo tasks.md --retry-failed     # Also retry [!] tasks
+orchestrator todo tasks.md --dry-run          # Preview without executing
+orchestrator todo tasks.md -m haiku           # Use cheaper model
+orchestrator todo tasks.md --verbose          # Show full agent output
+```
+
+**Task file format:**
+- `[ ]` = pending (will execute)
+- `[x]` = done (skipped)
+- `[!]` = failed (skipped unless `--retry-failed`)
+- `@path/to/file` = inject file contents as context
+
+**Key features:**
+- Fresh agent context per task (no token accumulation)
+- Atomic file updates (crash-safe)
+- Per-task timeout (default 5 min)
+- MCP tool support via `--mcp-config`
+
+**Example with file references:**
+
+```markdown
+- [ ] Review and fix type errors in @src/models/user.py
+- [ ] Refactor authentication logic per @docs/auth-spec.md
+- [ ] Add tests for @src/services/email.py following @tests/test_example.py pattern
+```
+
+---
+
+## Quick Reference
+
+**I want to...** → **Use these flags:**
+
+| Goal | Command |
+|------|---------|
+| Start a basic workflow | `orchestrator start -f "Feature"` |
+| Save money on API costs | `orchestrator start -f "Feature" -pm sonnet -em haiku` |
+| Auto-commit when done | `orchestrator start -f "Feature" --auto-commit` |
+| Auto-commit with AI messages | `orchestrator start -f "Feature" --auto-commit --smart-commit` |
+| Use an existing plan file | `orchestrator start --plan docs/plan.md` |
+| Run multiple plans sequentially | `orchestrator start --queue plan1.md plan2.md plan3.md` |
+| Monitor a folder for new plans | `orchestrator watch ./plans/ --auto-commit` |
+| Get notifications via Telegram | `orchestrator start -f "Feature" --telegram` |
+| Use Playwright for browser tests | `orchestrator start -f "E2E tests" --mcp-config .mcp.json` |
+| Run headless (no browser window) | `orchestrator start -f "Feature" --mcp-config .mcp.json --headless` |
+| Resume a paused workflow | `orchestrator resume <session-id>` |
+| Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
+| See all sessions | `orchestrator list` |
+| Check session details | `orchestrator status <session-id>` |
+| Export session to markdown | `orchestrator export <session-id> -o report.md` |
+| Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
+| Run a checklist of tasks | `orchestrator todo tasks.md` |
+| Run tasks with cheaper model | `orchestrator todo tasks.md -m haiku` |
+| Verify setup | `orchestrator check` |
+
+---
+
+## Troubleshooting Basics
+
+### Blocker paused my workflow
+
+Check what the blocker is asking:
 ```bash
 orchestrator status <session-id>
 ```
 
-See the blocker message? Respond:
+Respond to continue:
 ```bash
 orchestrator respond <session-id> "Your answer here"
 ```
 
-Workflow resumes and continues to next milestone.
-
-### My API key doesn't work
-
-**Diagnose:**
-```bash
-orchestrator check
-```
-
-**If check fails:**
-1. **API key format wrong:** Should be `sk-ant-api03-...` (not `sk-ant-oat01-...` which is OAuth)
-2. **Key has no credits:** Visit https://console.anthropic.com/account/billing/overview
-3. **Wrong variable name:** Use `ANTHROPIC_API_KEY` for API keys, not `CLAUDE_CODE_OAUTH_TOKEN`
-
-### Workflow seems stuck / no progress for 10+ minutes
-
-**Check status:**
-```bash
-orchestrator status <session-id>
-```
-
-**If it shows ACTIVE but no heartbeat:**
-```bash
-orchestrator reset <session-id>
-```
-
-Then resume:
-```bash
-orchestrator resume <session-id>
-```
-
-**If that doesn't work, force-resume:**
-```bash
-orchestrator resume <session-id> --force
-```
-
-### I want to stop and start over
+### API key doesn't work
 
 ```bash
-# Don't use reset—that's just for stuck sessions
-# Instead, just start a new workflow:
-orchestrator start -f "New feature description"
+orchestrator check  # Diagnose the issue
 ```
 
-Old session stays in database but won't interfere.
+Common fixes:
+- API key format: Should be `sk-ant-api03-...` (not `sk-ant-oat01-...` which is OAuth)
+- No credits: Visit https://console.anthropic.com/account/billing/overview
+- Wrong variable: Use `ANTHROPIC_API_KEY` for API keys
+
+### Workflow stuck / no progress
+
+```bash
+orchestrator status <session-id>   # Check state
+orchestrator reset <session-id>    # Reset heartbeat
+orchestrator resume <session-id>   # Resume
+orchestrator resume <session-id> --force  # Force resume if needed
+```
 
 ### Where are the logs?
 
-Every session logs to:
 ```
 ~/.claude_orchestrator/logs/error_<session-id>_<timestamp>.log
 ```
 
-Check that file if something goes wrong:
+Use `--debug` flag for immediate stack traces:
 ```bash
-cat ~/.claude_orchestrator/logs/error_*.log
-```
-
-### I have multiple sessions and want to clean up
-
-List all sessions:
-```bash
-orchestrator list --all-projects
-```
-
-Sessions persist in database. They don't take resources. You can safely leave them.
-
----
-
-## CLI Commands
-
-### `start` - Start new workflow
-
-```bash
-orchestrator start -f "Feature description" [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-f, --feature` | Feature description (auto-extracted from `--plan` if not provided) |
-| `-p, --plan` | Path to existing plan file |
-| `--queue` | Queue mode: run multiple plans sequentially |
-| `--queue-reset` | Reset existing queue for this project |
-| `queue_plans` | Plan file paths (when using `--queue`) |
-| `-pm, --planner-model` | Planner model: `opus`, `sonnet`, `haiku` |
-| `-em, --executor-model` | Executor model: `opus`, `sonnet`, `haiku` |
-| `--auto-commit` | Auto-commit on completion |
-| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
-| `--auto-commit-model` | Model for AI commit messages (default: executor model) |
-| `--telegram` | Enable Telegram notifications |
-| `--no-telegram` | Disable Telegram notifications |
-| `--mcp-config` | Path to MCP configuration file (`.mcp.json`) |
-| `--headless` | Run Playwright MCP browser in headless mode |
-| `--no-rename` | Do not rename plan file to `*_done.md` on completion |
-| `--no-activity` | Disable activity indicator |
-| `--debug` | Enable debug mode (full stack trace on error) |
-| `-d, --db-path` | Custom database path |
-
-#### Queue Mode
-
-Queue mode enables sequential execution of multiple plan files:
-
-```bash
-# Create and run queue
-orchestrator start --queue plan1.md plan2.md plan3.md
-
-# Resume existing queue (if interrupted)
-orchestrator start --queue
-
-# Overwrite existing queue
-orchestrator start --queue --queue-reset plan1.md plan2.md
-```
-
-**Behavior:**
-
-- **Sequential execution:** Plans execute in order provided. Each plan creates a new session.
-- **Feature extraction:** Feature descriptions are extracted from each plan file (from YAML frontmatter, `# Feature:` header, or filename).
-- **Automatic advancement:** When a session completes, the next plan starts automatically.
-- **Fail-forward:** Failed plans are recorded but don't stop the queue. The next plan starts.
-- **Pause on blocker:** If a plan hits a blocker (needs human input), the queue halts. Use `orchestrator resume <session-id>` to continue.
-- **Auto-commit:** Use `--auto-commit` to commit changes after each completed plan (not once at queue end).
-- **Crash recovery:** Queue state is persisted in the database. Resuming after a crash continues from the next pending item.
-- **Queue matching:** Running the same plan list again resumes the existing queue (no duplication). Use `--queue-reset` to force recreation.
-- **Project scoping:** Queues are scoped to the current project (repo root).
-
-**Queue visibility:**
-
-- `orchestrator list` shows queue position and status for sessions in a queue
-- Queue items are displayed as: `Queue: #2 [RUNNING]`
-
-### `resume` - Resume existing session
-
-```bash
-orchestrator resume <session-id> [-a "answer"] [--force] [--auto-commit]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-a, --answer` | Answer to blocker question |
-| `--force` | Force resume orphaned sessions (bypasses pause check) |
-| `--auto-commit` | Auto-commit changes on completion (for queue continuation) |
-| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
-| `--auto-commit-model` | Model for AI commit messages (default: executor model) |
-| `--mcp-config` | Path to MCP configuration file (overrides saved config) |
-| `--headless` | Run Playwright MCP browser in headless mode |
-| `--debug` | Enable debug mode (full stack trace on error) |
-
-### `reset` - Reset orphaned session
-
-```bash
-orchestrator reset <session-id>
-```
-
-Refreshes heartbeat and prepares session for force resume. Use when a session is stuck in ACTIVE status but no process is running.
-
-### `complete` - Force-complete a stuck session
-
-```bash
-orchestrator complete <session-id> [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--auto-commit` | Auto-commit changes after completion |
-| `--smart-commit/--no-smart-commit` | Use AI-generated commit messages (default: enabled) |
-| `--auto-commit-model` | Model for AI commit messages |
-
-Force-completes a session that has finished all work but is stuck due to:
-- Incorrect milestone count in the system
-- Blocker that cannot be resolved normally
-- Other edge cases where manual completion is needed
-
-**What it does:**
-1. Resolves any unresolved blockers (marks them as "Force-completed by user")
-2. Sets session phase and status to COMPLETED
-3. Optionally runs auto-commit with smart commit message generation
-
-**Examples:**
-```bash
-# Simple force-complete
-orchestrator complete 7a6b014b
-
-# Force-complete and commit changes
-orchestrator complete 7a6b014b --auto-commit
-
-# Force-complete with specific commit model
-orchestrator complete 7a6b014b --auto-commit --auto-commit-model haiku
-```
-
-### `respond` - Answer a blocker
-
-```bash
-orchestrator respond <session-id> "Your answer"
-```
-
-### `list` - List sessions
-
-```bash
-orchestrator list [-s active|paused|completed|failed] [--all-projects]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-s, --status` | Filter by status |
-| `-a, --all-projects` | Show sessions from all projects (default: current project only) |
-
-### `status` - Session details
-
-```bash
-orchestrator status <session-id>
-```
-
-### `export` - Export to markdown
-
-```bash
-orchestrator export <session-id> [-o output.md]
-```
-
-### `check` - Health check
-
-```bash
-orchestrator check [-v]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-v, --verbose` | Show detailed output (session count, response text) |
-
-Runs health checks on:
-1. **Dependencies** - Required packages (claude-agent-sdk, click, prompt_toolkit, pyyaml) and optional (httpx)
-2. **Permissions** - Database directory writable, database file accessible
-3. **Authentication** - Detected auth source (API key, OAuth token, cloud providers, credentials file)
-4. **API Connection** - Tests connection with a minimal request:
-   - **OAuth tokens** (`CLAUDE_CODE_OAUTH_TOKEN`) - Tests via Claude Agent SDK
-   - **API keys** (`ANTHROPIC_API_KEY`) - Tests via Anthropic SDK
-
-Exit code: 0 if all checks pass, 1 if any fail.
-
-**Example output:**
-```
-1. Dependencies
-   ✓ claude-agent-sdk
-   ✓ click
-   ...
-
-2. Permissions
-   ✓ Database directory: ~/.claude_orchestrator
-
-3. Authentication
-   ✓ CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat01...)
-
-4. API Connection
-   Testing connection via Claude Agent SDK...
-   ✓ Connection successful (OAuth)
-```
-
-### `convert` - Convert plan to orchestrator format
-
-```bash
-orchestrator convert <input.md> [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-o, --output` | Output file path (default: stdout) |
-| `-i, --in-place` | Modify input file in place (creates .bak backup) |
-| `--no-backup` | Skip backup creation when using --in-place |
-| `-m, --model` | Model: opus, sonnet, haiku (default: sonnet) |
-| `--max-milestones` | Maximum milestones to create (default: 5) |
-| `--validate-only` | Only check if file is orchestrator-compatible |
-| `--dry-run` | Preview conversion without writing |
-
-Uses AI to convert regular markdown plans into orchestrator-compatible format with properly formatted milestone headers (`## Milestone N: Name` or `### Milestone N: Name`).
-
-**Exit codes:**
-- 0: Success (conversion completed or file already valid)
-- 1: Error (file not found, read error)
-- 2: Conversion validation failed after retry
-
-**Examples:**
-
-```bash
-# Check if a plan is already orchestrator-compatible
-orchestrator convert plan.md --validate-only
-
-# Convert and output to stdout
-orchestrator convert plan.md
-
-# Convert and save to new file
-orchestrator convert plan.md -o converted_plan.md
-
-# Convert in place (creates plan.md.bak backup)
-orchestrator convert plan.md --in-place
-
-# Convert in place without backup
-orchestrator convert plan.md --in-place --no-backup
-
-# Preview conversion without writing
-orchestrator convert plan.md --dry-run
-
-# Use a different model
-orchestrator convert plan.md -m opus
-
-# Limit to 3 milestones
-orchestrator convert plan.md --max-milestones 3
-```
-
-### `telegram test` - Test Telegram configuration
-
-```bash
-orchestrator telegram test
-```
-
-### `telegram ping` - Verify 2-way communication
-
-```bash
-orchestrator telegram ping [--timeout N] [--verbose]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--timeout` | Seconds to wait for reply (default: 60) |
-| `-v, --verbose` | Show debug output |
-
-Sends a ping message to your configured Telegram chat and waits for you to reply. This verifies that both outbound (sending) and inbound (receiving) messaging work correctly before relying on blocker replies.
-
-**Important:** Reply to the ping message itself (not a new message) to confirm 2-way communication.
-
-### `telegram listen` - Listen for blocker replies
-
-```bash
-orchestrator telegram listen [--poll-interval N] [--once] [--verbose]
-```
-
-| Option | Description |
-|--------|-------------|
-| `--poll-interval` | Seconds between polls (default: 3) |
-| `--once` | Process one batch and exit |
-| `-v, --verbose` | Show debug output for ignored messages |
-
-Listens for Telegram replies to blocker notifications. When you reply to a blocker message in Telegram, the listener resolves the blocker and prepares the session for resume.
-
-### `watch` - Watch Directory for Plans
-
-```bash
-orchestrator watch PLANS_DIR [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `PLANS_DIR` | Directory to watch (required) |
-| `--poll-interval` | Poll interval in seconds (default: 2) |
-| `--convert/--no-convert` | Auto-convert invalid plans (default: enabled) |
-| `--auto-commit` | Auto-commit on completion |
-| `--smart-commit` | Use AI-generated commit messages |
-| `--telegram` | Enable Telegram notifications |
-| `--mcp-config` | Path to MCP configuration file for all watched sessions |
-| `--headless` | Run Playwright MCP browser in headless mode |
-| `-pm, --planner-model` | Model for planner agent |
-| `-em, --executor-model` | Model for executor agent |
-| `--show-activity` | Show streaming activity indicator (default) |
-
-Monitor a directory for new `.md` plan files. Plans are processed oldest-first (by modification time), auto-converted to orchestrator format if needed, and renamed to terminal state on completion.
-
-**File naming conventions:**
-- `_orchestrator-skip__*` - Quarantined originals (ignored)
-- `*_done.md` - Completed successfully
-- `*_failed.md` - Failed execution
-- `*_paused.md` - Paused on blocker (queue halted until resumed)
-
-**Examples:**
-
-```bash
-# Watch a directory with defaults
-orchestrator watch ./plans/
-
-# Watch with longer poll interval
-orchestrator watch ./plans/ --poll-interval 5
-
-# Watch without auto-conversion (quarantine invalid plans)
-orchestrator watch ./plans/ --no-convert
-
-# Watch with auto-commit on completion
-orchestrator watch ./plans/ --auto-commit
-
-# Watch with Telegram notifications
-orchestrator watch ./plans/ --telegram
-```
-
-**Workflow:**
-1. Drop a plan file (e.g., `feature-x.md`) into the watched directory
-2. Watcher validates and auto-converts if needed
-3. Orchestrator executes the plan
-4. On completion: `feature-x.md` → `feature-x_done.md`
-5. On failure: `feature-x.md` → `feature-x_failed.md`
-6. On blocker: `feature-x.md` → `feature-x_paused.md` (queue halts)
-7. After manual resume: `feature-x_paused.md` → `feature-x_done.md` or `feature-x_failed.md`
-
-**Note on restart behavior:** If the watcher is stopped while a session is paused, and you manually resume the session (`orchestrator resume <session_id>`), the `*_paused.md` file will not be automatically renamed to `*_done.md` or `*_failed.md`. The file remains as `*_paused.md` (safely ignored) and can be renamed manually if desired.
-
-### `chat` - Direct chat with Claude
-
-```bash
-orchestrator chat [options]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-m, --model` | Model: opus, sonnet, haiku (default: sonnet) |
-| `-s, --system-prompt` | Path to custom system prompt file |
-| `--no-tools` | Disable file/bash tools (pure chat mode) |
-| `--show-activity` | Show streaming activity indicator (default) |
-| `--no-activity` | Disable streaming activity indicator |
-
-Start a direct chat session with Claude without the orchestration workflow. Useful for quick questions, ad-hoc tasks, or interactive coding sessions.
-
-**In-Chat Commands:**
-- `/exit`, `/quit` - End chat session
-- `/help` - Show available commands
-- `/clear` - Clear conversation (reset context)
-- `/model <alias>` - Switch model (resets context)
-
-**Examples:**
-
-```bash
-# Default chat (Sonnet with tools)
-orchestrator chat
-
-# Chat with Opus
-orchestrator chat -m opus
-
-# Pure chat mode (no file/bash tools)
-orchestrator chat --no-tools
-
-# Custom system prompt
-echo "You are a Python expert." > prompt.txt
-orchestrator chat -s prompt.txt
-
-# Combine options
-orchestrator chat -m opus --no-tools --no-activity
+orchestrator start -f "Feature" --debug
 ```
 
 ---
 
-## Configuration
+## Response Tags
 
-### Model Aliases
+Communication protocol between agents and orchestrator.
+
+### Planner Tags
+
+| Tag | Meaning |
+|-----|---------|
+| `[PLAN_READY]` | Plan created, ready for approval |
+| `[MILESTONE_APPROVED]` | Proceed to next milestone |
+| `[CHANGES_REQUESTED]` | Revisions needed on current milestone |
+| `[HUMAN_INPUT_NEEDED]` | Blocker - need human decision |
+
+### Executor Tags
+
+| Tag | Meaning |
+|-----|---------|
+| `[PROGRESS_REPORT]` | Milestone complete, reporting results |
+| `[CLARIFICATION_NEEDED]` | Need info to proceed |
+| `[BLOCKED]` | External dependency or error |
+
+---
+
+## Installation
+
+```bash
+# 1. Navigate to directory
+cd orchestrator-auto
+
+# 2. Create conda environment
+conda env create -f environment.yml
+conda activate orchestrator-auto
+
+# 3. Install
+pip install -e .
+
+# 4. Configure authentication (choose one)
+
+# Option A: Claude Pro/Max subscription (recommended)
+claude login
+claude setup-token
+export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-your-token"
+
+# Option B: API key (pay-as-you-go)
+export ANTHROPIC_API_KEY="sk-ant-api03-your-key"
+
+# 5. Verify installation and auth
+orchestrator check
+```
+
+### Authentication Methods
+
+| Method | Env Variable | Billing | Best For |
+|--------|--------------|---------|----------|
+| **Claude Subscription** | `CLAUDE_CODE_OAUTH_TOKEN` | Pro/Max plan | Personal use, included usage |
+| **API Key** | `ANTHROPIC_API_KEY` | Pay-per-use | Teams, high volume, CI/CD |
+
+**Important:**
+- Don't set both variables simultaneously
+- OAuth tokens (`sk-ant-oat01-...`) → `CLAUDE_CODE_OAUTH_TOKEN`
+- API keys (`sk-ant-api03-...`) → `ANTHROPIC_API_KEY`
+
+---
+
+## Model Selection
 
 | Alias | Model ID |
 |-------|----------|
@@ -907,678 +498,25 @@ orchestrator chat -m opus --no-tools --no-activity
 
 **Defaults:** Planner = Opus, Executor = Sonnet
 
-### Config Files
-
-**Global config:** `~/.claude_orchestrator/config.yaml`
-
-**Repo-local config:** `<repo>/.claude_orchestrator/config.yaml` (gitignored)
-
-```yaml
-models:
-  planner: opus
-  executor: sonnet
-```
-
-Repo-local config is discovered by walking up from the current directory to the git root. If found, it's deep-merged with global config.
-
-**Priority:** CLI flags > env vars > repo config > global config > defaults
-
-### Database
-
-Default: `~/.claude_orchestrator/db.sqlite`
-
-### Project Scoping
-
-Sessions are tagged with project identity (`project_id` = repo root path). The `list` command filters by current project by default; use `--all-projects` to see all sessions. Other commands (`status`, `resume`, `reset`) accept any session ID.
-
-### Telegram Notifications
-
-Receive workflow notifications via Telegram (workflow start, milestone completion, blockers, completion/errors).
-
-**Setup:**
-
-1. Create a bot via [@BotFather](https://t.me/BotFather) and get your bot token
-2. Start a chat with your bot and get your chat ID (send a message, then check `https://api.telegram.org/bot<TOKEN>/getUpdates`)
-3. Install the optional dependency: `pip install httpx`
-
-**Config file** (`~/.claude_orchestrator/config.yaml` or `<repo>/.claude_orchestrator/config.yaml`):
-
-```yaml
-telegram:
-  enabled: true
-  bot_token: "123456789:ABCdefGHIjklMNOpqrsTUVwxyz"
-  chat_id: "YOUR_CHAT_ID"
-  stuck_sessions:
-    enabled: true
-    inactive_minutes: 20
-```
-
-**Environment variables** (override config file):
-
-```bash
-export ORCHESTRATOR_TELEGRAM_BOT_TOKEN="your-bot-token"
-export ORCHESTRATOR_TELEGRAM_CHAT_ID="your-chat-id"
-export ORCHESTRATOR_TELEGRAM_ENABLED="true"
-export ORCHESTRATOR_TELEGRAM_STUCK_MINUTES="20"
-```
-
-**Stuck Session Detection:** Automatically notifies when sessions in planning/execution phase have no heartbeat for the configured threshold. Uses `heartbeat_at` timestamp updated during agent activity (not just state transitions).
-
-**Two-Way Messaging (Phase 2):** Run `orchestrator telegram listen` to receive blocker answers via Telegram. When you reply to a blocker notification, the listener resolves the blocker. Recommended: use one Telegram bot per project (via repo-local config) to avoid cross-project routing issues.
-
-**Priority:** CLI flags > env vars > repo config > global config
-
-### Smart Auto-Commit
-
-When `--auto-commit` is enabled, Smart Auto-Commit uses AI to analyze actual code changes and generate meaningful commit messages following [Conventional Commits](https://www.conventionalcommits.org/) format.
-
-**Features:**
-- Analyzes `git diff` to understand changes
-- Generates semantic commit messages (`feat:`, `fix:`, `refactor:`, etc.)
-- Supports Conventional Commits scopes and breaking markers (e.g. `feat(cli):`, `feat!:`)
-- Enforces a 72-character subject line (first line)
-- Automatic secrets detection (blocks sensitive data from being sent to AI)
-- Graceful fallback to static messages on any error
-- **Never pushes** - only creates local commits
-
-**Commit Message Format:**
-```
-<type>: <description>
-
-- bullet point for significant change
-- another bullet point
-```
-
-Also accepted (when appropriate):
-- Scoped commits: `<type>(<scope>): <description>` (e.g. `feat(cli): add flag`)
-- Breaking changes: `<type>!: <description>` or `<type>(<scope>)!: <description>`
-
-Smart commit enforces a 72-character subject line (first line) and truncates safely if needed.
-
-| Type | When Used |
-|------|-----------|
-| `feat` | New user-visible functionality |
-| `fix` | Bug correction |
-| `refactor` | Code restructuring (no behavior change) |
-| `docs` | Documentation only |
-| `test` | Test files only |
-| `chore` | Config, build, dependencies |
-| `style` | Formatting only |
-| `perf` | Performance optimization |
-
-**Config file** (`~/.claude_orchestrator/config.yaml` or `<repo>/.claude_orchestrator/config.yaml`):
-
-```yaml
-auto_commit:
-  smart: true  # Enable AI-generated messages (default: true)
-```
-
-**Environment variable:**
-
-```bash
-export ORCHESTRATOR_SMART_COMMIT="true"  # or "false", "yes", "1"
-```
-
-**CLI flags:**
-
-```bash
-# Enable smart commit (default when --auto-commit is used)
-orchestrator start -f "My feature" --auto-commit --smart-commit
-
-# Disable smart commit (use static messages)
-orchestrator start -f "My feature" --auto-commit --no-smart-commit
-
-# Use a specific model for commit message generation
-orchestrator start -f "My feature" --auto-commit --auto-commit-model haiku
-```
-
-**Model Selection:**
-
-By default, Smart Auto-Commit uses the same model as the executor (typically Sonnet). You can override this to use a faster/cheaper model:
-
-```yaml
-# Config file: .claude_orchestrator/config.yaml
-auto_commit:
-  smart: true
-  model: haiku  # Use Haiku for commit messages
-```
-
-```bash
-# Environment variable
-export ORCHESTRATOR_AUTO_COMMIT_MODEL="haiku"
-
-# CLI flag (highest priority)
-orchestrator start -f "My feature" --auto-commit --auto-commit-model haiku
-```
-
-**Priority:** CLI `--auto-commit-model` > env var > config file > executor model
-
-**Secrets Detection:** Before sending any diff to the AI, Smart Auto-Commit scans for potential secrets:
-- API keys and tokens (generic patterns)
-- Passwords and secrets in assignments
-- Private keys (RSA, EC, DSA, OpenSSH)
-- AWS credentials
-- GitHub Personal Access Tokens (`ghp_...`)
-- OpenAI API keys (`sk-...`)
-- Anthropic API key patterns
-
-If secrets are detected, the feature falls back to static message generation and logs a warning (showing pattern names, never values).
-
-**Priority:** CLI flags > env vars > repo config > global config > default (enabled)
-
-### MCP Tool Support
-
-Enable external tools like Playwright browser automation in executor agents via MCP (Model Context Protocol) server configuration.
-
-**Setup:**
-
-1. Create `.mcp.json` in your project root:
-
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@anthropic/mcp-server-playwright"]
-    }
-  }
-}
-```
-
-2. Install the MCP server:
-
-```bash
-npm install -g @anthropic/mcp-server-playwright
-```
-
-3. Run orchestrator with MCP config:
-
-```bash
-# Explicit path
-orchestrator start -f "E2E tests" --mcp-config .mcp.json
-
-# Auto-discovery (if .mcp.json exists in project root)
-orchestrator start -f "E2E tests"
-```
-
-**Verify Playwright MCP Access (Planner + Executor):**
-
-This repo includes a committed local test site plus a CLI verification command.
-
-```bash
-# Terminal 1: start the test site
-cd orchestrator-auto/fixtures/playwright-test-site
-npm ci
-npm run dev -- --port <PORT>
-
-# Terminal 2: run verification
-orchestrator test-playwright planner --test-url http://localhost:<PORT>/
-orchestrator test-playwright executor --test-url http://localhost:<PORT>/
-orchestrator test-playwright both --test-url http://localhost:<PORT>/
-
-# Artifacts will be written under:
-# .orchestrator_artifacts/playwright-test/<timestamp>/
-#
-# Note: Playwright MCP often writes files into a sandbox folder:
-# .orchestrator_artifacts/playwright-test/<timestamp>/.playwright-mcp/
-```
-
-**Per-Agent Scoping:**
-
-Configure different MCP servers for planner vs executor:
-
-```json
-{
-  "mcpServers": {
-    "playwright": {
-      "command": "npx",
-      "args": ["@anthropic/mcp-server-playwright"]
-    },
-    "figma": {
-      "command": "npx",
-      "args": ["@anthropic/mcp-server-figma"],
-      "env": {
-        "FIGMA_ACCESS_TOKEN": "${FIGMA_ACCESS_TOKEN}"
-      }
-    }
-  },
-  "orchestrator": {
-    "planner": {
-      "mcpServers": ["figma"],
-      "tools": ["mcp__figma__*"]
-    },
-    "executor": {
-      "mcpServers": ["playwright"],
-      "tools": ["mcp__playwright__*"]
-    }
-  }
-}
-```
-
-**Environment Variable Expansion:**
-
-Use `${VAR}` syntax in `.mcp.json` for secrets. Variables are expanded at runtime (not stored in database).
-
-**Session Persistence:**
-
-MCP configuration is persisted per-session. On `resume` or `respond`, the saved config is restored automatically. Use `--mcp-config` to override.
-
-**Available MCP Tools (when configured):**
-
-| Tool Pattern | Description |
-|--------------|-------------|
-| `mcp__playwright__browser_navigate` | Navigate to URL |
-| `mcp__playwright__browser_click` | Click element |
-| `mcp__playwright__browser_type` | Type text |
-| `mcp__playwright__browser_snapshot` | Get page accessibility snapshot |
-| `mcp__playwright__browser_close` | Close browser |
-| `mcp__figma__*` | Figma design tools |
-
-### Auth Source Detection
-
-At startup, orchestrator displays the detected authentication source:
-
-| Source | Display |
-|--------|---------|
-| API Key | `Auth: ANTHROPIC_API_KEY (sk-ant-api03-...)` |
-| OAuth Token | `Auth: CLAUDE_CODE_OAUTH_TOKEN (sk-ant-oat01-...)` |
-| AWS Bedrock | `Auth: AWS Bedrock (CLAUDE_CODE_USE_BEDROCK)` |
-| Google Vertex | `Auth: Google Vertex AI (CLAUDE_CODE_USE_VERTEX)` |
-| Azure Foundry | `Auth: Azure Foundry (CLAUDE_CODE_USE_FOUNDRY)` |
-| Credentials File | `Auth: Credentials file (~/.claude/.credentials.json)` |
-| Multiple | Warning listing all detected sources |
-| Unknown | Note that keychain/other methods may still work |
-
-**Limitations:**
-- macOS Keychain credentials cannot be detected
-- Credentials file format (~/.claude/.credentials.json) is best-effort
-- When multiple sources detected, Claude Code chooses (we don't assert priority)
+### Cost Optimization
+
+| Setup | Command | Cost | Use Case |
+|-------|---------|------|----------|
+| Default | `orchestrator start -f "Feature"` | ~$1-5/feature | Most accurate |
+| Budget | `orchestrator start -f "Feature" -pm sonnet -em haiku` | ~$0.3-1/feature | Simple features |
+| Complex | `orchestrator start -f "Feature" -pm opus -em opus` | ~$5-15/feature | Hard problems |
 
 ---
 
-## Workflow Phases
-
-1. **Discovery** - Refine requirements with planner
-2. **Planning** - Create implementation plan with milestones
-3. **Execution** - Execute milestones, planner reviews each
-4. **Completed** - All milestones approved
-5. **Paused** - Waiting for human input
-
----
-
-## Architecture
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    orchestrator-auto                          │
-│  ┌────────────────┐         ┌─────────────────┐             │
-│  │  Planner Agent │ ◄─────► │ Executor Agent  │             │
-│  │  (Opus 4.5)    │         │ (Sonnet 4.5)    │             │
-│  └────────────────┘         └─────────────────┘             │
-│         ▲                            ▲                        │
-│         │                            │                        │
-│  ┌──────┴────────────────────────────┴─────┐                │
-│  │       Orchestrator Engine                │                │
-│  │  • State machine                         │                │
-│  │  • Message routing                       │                │
-│  │  • Blocker handling                      │                │
-│  └──────────────────┬───────────────────────┘                │
-│                     │                                         │
-│              ┌──────▼──────┐                                 │
-│              │  SQLite DB   │                                 │
-│              └──────────────┘                                 │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-## Response Tags
-
-### Planner
-- `[PLAN_READY]` - Plan created
-- `[MILESTONE_APPROVED]` - Proceed to next
-- `[CHANGES_REQUESTED]` - Revisions needed
-- `[HUMAN_INPUT_NEEDED]` - Blocker
-
-### Executor
-- `[PROGRESS_REPORT]` - Milestone report
-- `[CLARIFICATION_NEEDED]` - Need info
-- `[BLOCKED]` - External dependency
-
----
-
-## Code Architecture & Design
-
-**For developers and agents exploring the codebase.**
-
-### Where to Start (Entry Points)
-
-If you want to understand how orchestrator-auto works at the code level, start here:
-
-**User-facing entry:** `orchestrator_auto/cli.py`
-- Click command definitions
-- Parses CLI flags
-- Calls `Orchestrator` class to start/resume sessions
-- Handles output and signal handling
-
-**Core orchestration:** `orchestrator_auto/engine.py:Orchestrator`
-- Main state machine and workflow controller
-- Routes messages between Planner and Executor agents
-- Manages transitions: discovery → planning → execution → completion
-- Handles blockers (human input needed)
-
-**Session state:** `orchestrator_auto/state.py:StateMachine`
-- Defines phases (discovery, planning, execution, completed, paused)
-- Defines statuses (active, paused, completed, failed)
-- Manages valid transitions
-- Persists state to database
-
-**Response parsing:** `orchestrator_auto/parser.py`
-- Detects `[PLAN_READY]`, `[PROGRESS_REPORT]`, `[BLOCKED]` tags
-- Extracts data from responses
-- Detects truncated responses (auto-continue on incomplete)
-
-**Agent wrappers:** `orchestrator_auto/agents.py`
-- `PlannerAgent` - Claude Opus, creates plans, reviews reports
-- `ExecutorAgent` - Claude Sonnet/Haiku, implements milestones
-- Converts messages to Agent SDK format
-
-### Session Lifecycle (Birth → Death)
-
-Every session follows this path through the code:
-
-```
-1. CLI ENTRY (cli.py)
-   User runs: orchestrator start -f "Feature"
-        ↓
-   cli.py calls: Orchestrator.__init__(feature_description)
-   Orchestrator calls: db.create_session()
-   Status: DISCOVERY / ACTIVE
-
-2. DISCOVERY PHASE (engine.py:_run_discovery)
-   Planner asks clarifying questions
-   User responds
-   Planner says "/ready" or similar
-   Transition: discovery → planning
-   Status: PLANNING / ACTIVE
-
-3. PLANNING PHASE (engine.py:_run_planning)
-   Planner creates milestone plan
-   Planner sends: [PLAN_READY] with plan content
-   parser.py detects: parse_planner_response() → PLANNER_PLAN_READY
-   Plan saved to file, stored in db
-   User approves plan
-   Transition: planning → execution
-   Status: EXECUTION / ACTIVE
-
-4. EXECUTION PHASE (engine.py:_run_execution)
-   For each milestone (M1, M2, ...):
-
-   a) Executor implements milestone M_n
-      executor.py:query() → runs agent with MILESTONE_PROMPT
-      Executor sends: [PROGRESS_REPORT] with code/tests
-      parser.py detects: parse_executor_response() → EXECUTOR_REPORT
-      db.create_message() stores response
-
-   b) Display report to user
-      user_input = prompt_with_paste_support()
-
-   c) User approves / requests changes
-      - Approve: state.transition(MILESTONE_APPROVED)
-      - Changes: executor re-runs with CHANGES_REQUESTED_TEMPLATE
-      - Block: state.transition(HUMAN_INPUT_NEEDED) → paused
-
-   d) Repeat for next milestone
-
-   All milestones done?
-   Transition: execution → completed
-   Status: COMPLETED / COMPLETED (or FAILED)
-
-5. COMPLETION (cli.py, engine.py)
-   Optional: auto-commit changes
-   Optional: Telegram notification
-   session marked complete
-   Exit
-
-If paused (blocker): cli.py:resume → inject_pending_response → continue from paused phase
-```
-
-### State Machine & Transitions
-
-The `state.py:StateMachine` controls all phase transitions. Valid transitions:
-
-```
-discovery  →[user /ready]→  planning
-planning   →[user approve]→ execution
-execution  →[all done]→     completed
-execution  →[milestone ok]→ execution (stays, milestone counter increments)
-
-ANY phase  →[blocker]→      paused (saves previous_phase)
-paused     →[response]→     previous_phase (resumes)
-
-ANY phase  →[error]→        completed (status=failed)
-```
-
-**Key insight:** Executor STOPS after each milestone. Planner reviews the report. User approves/rejects. This is enforced by `engine.py:_route_to_planner()` which requires explicit approval before proceeding.
-
-### High-Level Data Flow
-
-```
-User Input (CLI)
-    ↓
-cli.py:start() → Orchestrator.__init__()
-    ↓
-Orchestrator.run() → Main loop
-    ├─ _run_discovery()    [planner ↔ user until /ready]
-    ├─ _run_planning()     [planner creates plan]
-    ├─ _run_execution()    [for each milestone:
-    │                        executor implements
-    │                        planner reviews
-    │                        user approves/rejects]
-    └─ _cleanup()          [close agents, persist state]
-    ↓
-state.py:StateMachine → db.update_session()
-    ↓
-SQLite Database (~/.claude_orchestrator/db.sqlite)
-    ├─ sessions (workflow metadata)
-    ├─ messages (all agent/user messages)
-    ├─ blockers (questions waiting for answers)
-    ├─ milestones (plan structure)
-    └─ queue_items (for batch execution)
-```
-
-### Module Interaction Diagram
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        cli.py                               │
-│              (Click CLI commands, parsing)                  │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-┌────────────────▼────────────────────────────────────────────┐
-│                   engine.py:Orchestrator                    │
-│         (Main state machine, message routing)               │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  state.py:StateMachine                               │  │
-│  │  (Manages valid transitions, persists to db)         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  agents.py:PlannerAgent / ExecutorAgent              │  │
-│  │  (Wraps Claude Agent SDK for Opus/Sonnet)           │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  parser.py                                           │  │
-│  │  (Detects tags: [PLAN_READY], [PROGRESS_REPORT])   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-         ┌───────┼────────┬──────────┬──────────┐
-         │       │        │          │          │
-    ┌────▼─┐ ┌──▼──┐ ┌───▼──┐ ┌───▼───┐ ┌───▼──┐
-    │ db  │ │git  │ │config│ │auth   │ │telegram
-    │ .py │ │.py  │ │.py   │ │.py    │ │.py
-    └─────┘ └─────┘ └──────┘ └───────┘ └──────┘
-         │
-    ┌────▼──────────────────────────┐
-    │  SQLite Database               │
-    │  ~/.claude_orchestrator/db.sqlite
-    └───────────────────────────────┘
-```
-
-### Key Classes & Responsibilities
-
-| Class | File | Responsibility |
-|-------|------|-----------------|
-| `Orchestrator` | engine.py | Main loop: runs discovery → planning → execution. Routes messages between planner/executor. Handles blockers. |
-| `StateMachine` | state.py | Validates phase transitions. Persists state to database. Tracks current milestone. |
-| `WorkflowState` | state.py | Data class: current phase, status, milestone count, feature description. |
-| `PlannerAgent` | agents.py | Wraps Claude Opus. Creates plans, reviews executor reports, requests changes. |
-| `ExecutorAgent` | agents.py | Wraps Claude Sonnet/Haiku. Implements milestones, runs tests, generates reports. |
-| `TelegramNotifier` | telegram.py | Sends workflow notifications (start, milestone, blocker, complete). |
-| `OrchestratorError` | exceptions.py | Custom exception for orchestrator-specific errors. |
-
-### Database Schema (Key Tables)
-
-```
-sessions
-├─ id (TEXT, primary key)                  # Unique session identifier
-├─ feature_description (TEXT)              # "Add user authentication"
-├─ phase (TEXT)                            # discovery | planning | execution | completed | paused
-├─ status (TEXT)                           # active | paused | completed | failed
-├─ current_milestone (INT)                 # Current milestone being executed (0 = not in execution)
-├─ total_milestones (INT)                  # Total number of milestones in plan
-├─ planner_session_id (TEXT)               # Claude Agent SDK session ID for planner
-├─ executor_session_id (TEXT)              # Claude Agent SDK session ID for executor
-├─ plan_path (TEXT)                        # Path to saved plan file
-├─ previous_phase (TEXT)                   # Phase before pause (for resume)
-├─ project_id (TEXT)                       # Git repo root (for project scoping)
-├─ created_at, updated_at (TIMESTAMP)      # Metadata
-
-messages
-├─ session_id (FK sessions)                # Which session this message belongs to
-├─ phase (TEXT)                            # Which phase the message was sent in
-├─ agent (TEXT)                            # "planner" | "executor" | "user"
-├─ role (TEXT)                             # "user" | "assistant" (for agent SDK)
-├─ content (TEXT)                          # Full message content
-├─ token_count (INT)                       # Token count of message
-
-blockers
-├─ session_id (FK sessions)
-├─ phase (TEXT)                            # Phase when blocker occurred
-├─ agent (TEXT)                            # "planner" | "executor"
-├─ question (TEXT)                         # The question asked
-├─ response (TEXT)                         # Human's answer (null until answered)
-├─ created_at, resolved_at (TIMESTAMP)
-
-milestones
-├─ session_id (FK sessions)
-├─ milestone_number (INT)                  # 1, 2, 3, ...
-├─ title (TEXT)                            # "User model + migrations"
-├─ description (TEXT)                      # Milestone description from plan
-├─ status (TEXT)                           # pending | in_progress | approved | rejected
-```
-
-### Response Tag Parsing & Routing
-
-The `parser.py` module detects tags in agent responses and routes them:
-
-**Planner Tags:**
-```
-[PLAN_READY] Path: plan.md Milestones: 5
-[PLAN_CONTENT]...[/PLAN_CONTENT]
-  └─ Returns: (PLANNER_PLAN_READY, {"path": "...", "milestones": 5, "content": "..."})
-  └─ engine.py receives → saves plan, transitions to execution
-
-[MILESTONE_APPROVED] Milestone 2 is good!
-  └─ Returns: (PLANNER_APPROVED, {"milestone": 2})
-  └─ engine.py receives → approval, proceed to next milestone
-
-[CHANGES_REQUESTED] Milestone 3 needs:
-  - Better error handling
-  - Add logging
-  └─ Returns: (PLANNER_CHANGES_REQUESTED, {"issues": [...]})
-  └─ engine.py receives → re-run executor with feedback
-
-[HUMAN_INPUT_NEEDED] Should we use Redis or in-memory cache?
-  └─ Returns: (PLANNER_BLOCKED, {"question": "..."})
-  └─ engine.py receives → create blocker, pause workflow
-```
-
-**Executor Tags:**
-```
-[PROGRESS_REPORT] Milestone 1 complete
-Code: ...
-Tests: ...
-  └─ Returns: (EXECUTOR_REPORT, {...})
-  └─ engine.py receives → display to user, wait for approval
-
-[CLARIFICATION_NEEDED] What database should I use, PostgreSQL or SQLite?
-  └─ Returns: (EXECUTOR_CLARIFICATION, {"question": "..."})
-  └─ engine.py receives → create blocker, pause workflow
-
-[BLOCKED] Cannot run tests, pytest not installed
-  └─ Returns: (EXECUTOR_BLOCKED, {"reason": "..."})
-  └─ engine.py receives → create blocker, pause workflow
-
-Truncated Response: (ends with "Let me continue..." or "Thinking about...")
-  └─ parser.py:is_response_truncated() detects incomplete response
-  └─ engine.py receives → sends APPROVAL_CONTINUATION_TEMPLATE
-  └─ Agent continues from where it left off (token limit recovery)
-```
-
-### Blocker Mechanics
-
-When an agent needs human input:
-
-1. **Agent sends** `[HUMAN_INPUT_NEEDED]` or `[BLOCKED]` tag
-2. **Parser detects** it → `parse_planner_response()` or `parse_executor_response()`
-3. **Engine creates blocker** → `db.create_blocker(session_id, question)`
-4. **Engine pauses** → `state.transition(HUMAN_INPUT_NEEDED)` → phase=paused, previous_phase saved
-5. **User sees prompt** with the question
-6. **User responds** → `orchestrator respond <session-id> "answer"`
-7. **CLI resumes** → `Orchestrator.run(session_id=...)`
-8. **Engine injects response** → `_inject_pending_response()` adds answer to agent's conversation
-9. **Agent continues** from where it paused
-10. **State transitions** back to previous_phase
-
-**Key code locations:**
-- Create blocker: `db.py:create_blocker()`
-- Pause workflow: `state.py:transition(HUMAN_INPUT_NEEDED)`
-- Resume: `engine.py:_inject_pending_response()`
-
-### Design Patterns Used
-
-1. **State Machine Pattern** (`state.py`)
-   - Validates transitions, prevents invalid states
-   - Single source of truth for phase/status
-
-2. **Message Queue Pattern** (`db.py:messages table`)
-   - All messages stored persistently
-   - Conversation history available for resume
-   - Agents load history on resume for context
-
-3. **Context Manager Pattern** (`db.py:get_connection()`)
-   - Automatic connection cleanup
-   - Transaction handling (commit/rollback)
-
-4. **Adapter Pattern** (`agents.py`)
-   - Wraps Claude Agent SDK for planner/executor
-   - Abstracts away SDK complexity
-
-5. **Factory Pattern** (`agents.py:create_planner_agent()`, `create_executor_agent()`)
-   - Creates agents with proper configuration
-   - Handles model selection, MCP tools, etc.
-
-6. **Template Method Pattern** (`prompts.py`)
-   - Standard prompts for discovery, planning, milestone execution
-   - Templates injected with variables (feature, milestone number, etc.)
-
-7. **Command Pattern** (`cli.py`)
-   - Click commands encapsulate workflow actions
-   - Each command (start, resume, respond) is self-contained
+## Documentation
+
+| Document | Content |
+|----------|---------|
+| [CLI Reference](docs/CLI_REFERENCE.md) | Full command reference with all options |
+| [Configuration](docs/CONFIGURATION.md) | Models, Telegram, MCP tools, auth, smart commit |
+| [Architecture](docs/ARCHITECTURE.md) | Code design, data flow, patterns, database schema |
+| [Troubleshooting](docs/TROUBLESHOOTING.md) | Detailed issue resolution and debugging |
+| [Changelog](CHANGELOG.md) | Version history |
 
 ---
 
@@ -1596,15 +534,16 @@ orchestrator-auto/
 │   ├── agents.py            # Agent wrappers
 │   ├── config.py            # Model config
 │   ├── git.py               # Auto-commit
-│   ├── secrets.py           # Secrets detection for smart commit
-│   ├── commit_ai.py         # AI commit message generation
+│   ├── secrets.py           # Secrets detection
+│   ├── commit_ai.py         # AI commit messages
 │   ├── telegram.py          # Telegram notifications
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
 │   ├── db.py                # Database ops
 │   ├── logging_config.py    # Per-session logging
-│   └── exceptions.py        # Custom exception hierarchy
+│   └── exceptions.py        # Custom exceptions
 ├── tests/
+├── docs/
 └── README.md
 ```
 
@@ -1614,334 +553,6 @@ orchestrator-auto/
 pytest tests/ -v
 pytest tests/ --cov=orchestrator_auto
 ```
-
----
-
-## Model Selection Guide
-
-**Planner** (breaks feature into milestones) should be smart → **Use Opus**
-
-**Executor** (builds one milestone) → **Choose based on complexity:**
-
-| Executor Model | Cost | Best For | Example |
-|---|---|---|---|
-| **Opus** | ~3x Sonnet | Complex logic, hard problems | Refactor legacy code, security features |
-| **Sonnet** (default) | ~1x baseline | General purpose, most tasks | Building features, APIs, components |
-| **Haiku** | ~0.3x Sonnet | Simple tasks, speed priority | Format fixes, simple CRUD endpoints, documentation |
-
-### Cost Optimization
-
-**Default setup (most accurate):**
-```bash
-orchestrator start -f "Feature"
-# Uses: Planner=Opus, Executor=Sonnet (~$1-5 per feature)
-```
-
-**Budget setup (70% cheaper):**
-```bash
-orchestrator start -f "Feature" -pm sonnet -em haiku
-# Uses: Planner=Sonnet, Executor=Haiku (~$0.3-1 per feature)
-# Good for: simple features, known patterns
-```
-
-**Complex task setup (most accurate):**
-```bash
-orchestrator start -f "Feature" -pm opus -em opus
-# Uses: Both Opus (~$5-15 per feature)
-# For: challenging algorithms, security, critical logic
-```
-
-**Remember:** You can always restart with different models if a workflow isn't going well. The code written is independent of the model.
-
----
-
-## Troubleshooting
-
-| Error | Solution |
-|-------|----------|
-| Session not found | Run `orchestrator list` to find valid IDs |
-| Database locked | Close other orchestrator instances |
-| Agent timeout | Check internet/API key |
-| Workflow error | Check log file at `~/.claude_orchestrator/logs/error_<session_id>_*.log` |
-
-### Error Handling
-
-When a workflow fails, the orchestrator:
-1. Logs full stack trace to `~/.claude_orchestrator/logs/error_<session_id>_<timestamp>.log`
-2. Marks the session as failed with error context
-3. Shows user-friendly message with log file path
-
-Use `--debug` flag for immediate stack trace output:
-```bash
-orchestrator start -f "My feature" --debug
-orchestrator resume <session-id> --debug
-```
-
-Use `orchestrator status <session-id>` to view error details for failed sessions.
-
-### MCP Process Cleanup
-
-If a session crashes while using Playwright MCP, browser/server processes may be left running.
-
-**Detect potential orphans:**
-```bash
-orchestrator check
-```
-
-**Clean up MCP server processes:**
-```bash
-orchestrator cleanup --dry-run   # Preview first!
-orchestrator cleanup             # Interactive cleanup
-orchestrator cleanup -f          # Force without confirmation
-```
-
-**Include browser processes (use with caution):**
-```bash
-orchestrator cleanup --all --dry-run  # Preview
-orchestrator cleanup --all            # Kill servers + browsers
-```
-
-> **Warning**: The `--all` flag may kill Playwright processes from other applications
-> (e.g., if you're running `npx playwright test` in another terminal). Always preview
-> with `--dry-run` first.
-
-**Common crash cause:** Using `browser_snapshot` on complex pages (dashboards, large tables)
-can exceed the 1MB response buffer limit. The executor is instructed to prefer
-`browser_take_screenshot` for safety.
-
----
-
-## TODO
-
-- [x] **MCP Tool Support** - Enable external tools (Playwright, Figma) in executor/planner agents via `.mcp.json` configuration
-- [x] **Plan Queue** - Queue multiple plan files (`--queue plan1.md plan2.md ...`), auto-start next session on completion
-- [x] **Direct Chat Mode** - Chat directly with Claude without orchestration (`orchestrator chat`), useful for quick questions or ad-hoc tasks
-- [ ] **Post Feedback** - User feedback at milestones/completion
-- [x] **Plan Conversion** - Convert regular markdown plans into orchestrator-compatible format (`orchestrator convert plan.md`)
-- [x] **Plan Completion Rename** - Automatically rename completed plan files to `*_done.md` suffix
-- [x] **Smart Feature Flag** - Auto-extract feature description from plan content (enabled by default), eliminating need for `-f "description"` when using `--plan`
-- [x] **Watch Mode** - Monitor a designated plans directory for new `.md` files, auto-convert to orchestrator format, execute, rename to `_done.md` on completion, and continue listening (`orchestrator watch ./plans/`)
-- [x] **Auth Source Detection** - Determine if Claude is accessed via API key or Claude Code login (OAuth)
-- [x] **Telegram Ping-Pong** - Verify 2-way communication with `orchestrator telegram ping` command
-- [x] **Smart Auto-Commit** - AI-generated commit messages based on code diff (Conventional Commits format, secrets detection, no push)
-- [x] **Telegram Phase 2** - Inbound blocker responses via Telegram polling (`orchestrator telegram listen`)
-- [x] **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete)
-- [x] **Auto-Commit** - `--auto-commit` flag for git commit on completion
-- [x] **Model Selection** - `-pm`/`-em` flags with aliases
-- [x] **Activity Indicator** - Streaming feedback with token count
-- [x] **Import Plan** - `--plan` flag to skip discovery/planning
-
----
-
-## Next Priorities (Personal/Droplet Use)
-
-1. **Retries (transport-level only):** automatic retry/backoff for transient API/network failures; keep semantic retries gated by planner/human.
-2. **Observability shortcuts:** add lightweight CLI helpers like `orchestrator status <id> --tail N` / `--since 10m` to quickly see what changed without exporting.
-3. **Safety controls for unattended runs:** quiet hours for non-blocker notifications, and caps per milestone (runtime/token/tool-call limits).
-4. **Plan templates:** `orchestrator start --template <name>` to standardize repeatable workflows and reduce setup overhead.
-
----
-
-## Droplet/Vacation Ops (1 Project = 1 Droplet)
-
-- Recommended deployment model: install `orchestrator` globally on the droplet, `cd` into the project repo, and run sessions from that repo (matches local workflow).
-- Persistence: rely on `~/.claude_orchestrator/db.sqlite` for session continuity; use `tmux` or `systemd` for process continuity.
-- Auto-start on reboot (safe mode): run a dedicated command (e.g. `orchestrator daemon --auto-resume`) that:
-    - acquires a single-instance lock
-    - checks for `status=active` sessions in `planning`/`execution`
-    - does nothing if heartbeat is recent (runner still alive)
-    - force-resumes only if heartbeat is stale (default 20 min)
-    - never auto-resumes `paused` (needs blocker answer) or `discovery` (human-driven)
-- Multiple active sessions: resume only the most recently active session; alert/log if more exist.
-
----
-
-## Changelog
-
-### v0.11.2 - Improved Truncation Detection
-
-**Fixes:**
-
-- **Unclosed tag detection** - `[PROGRESS_REPORT]` without closing `[/PROGRESS_REPORT]` is now correctly detected as truncated, triggering auto-continue instead of pausing
-- **Planner auto-continue** - Extended auto-continue support to planner responses (previously executor-only)
-- **Empty issues fallback** - When `[CHANGES_REQUESTED]` has no parsed issues, executor receives helpful fallback message instead of empty feedback
-- **CLI: `--headless` on `respond`** - Added missing `--headless` flag to `respond` command for continuing paused sessions
-
-**Technical:**
-
-- Added 25+ unit tests for truncation detection and continuation flow
-- Refactored `_route_to_executor()` to include truncation handling for consistency with `_route_to_planner()`
-
-### v0.11.1 - Headless Mode & Auto-Continue
-
-**New Features:**
-
-- **CLI: `--headless`** - Run Playwright MCP browser in headless mode (no browser window). Available on `start`, `resume`, `watch`, and `respond` commands.
-- **Auto-continue on truncated responses** - Automatically detects when planner or executor responses are truncated (e.g., hitting token limits mid-stream) and prompts the agent to continue, preventing unnecessary pauses.
-
-**Technical:**
-
-- **New function: `inject_headless_mode()`** - Automatically injects `--headless` into Playwright MCP server args
-- **New function: `is_response_truncated()`** - Heuristic detection of incomplete responses (ends with `:`, "Let me...", etc.)
-- **Improved error handling** - Better error messages when continuation also fails
-
-### v0.11.0 - MCP Tool Support
-
-- **MCP Tool Support** - Enable external tools (Playwright, Figma, etc.) in executor/planner agents
-- **Per-agent scoping** - Configure different MCP servers for planner vs executor via `orchestrator` section
-- **Environment variable expansion** - Support `${VAR}` syntax in `.mcp.json` configs (expanded at runtime, not stored)
-- **Session persistence** - MCP config persisted in database for resume/respond continuity
-- **Auto-discovery** - Automatically loads `.mcp.json` from project root or `~/.mcp.json`
-- **CLI: `--mcp-config`** - Flag on `start`, `resume`, `respond`, and `watch` commands
-- **Queue/watch mode support** - MCP config propagated to all sessions in batch workflows
-- **New config functions** - `load_mcp_config_raw()`, `expand_env_vars()` in `config.py`
-- **New helper** - `build_allowed_tools()` in `agents.py` for clean MCP tool integration
-- **DB: `mcp_config_json` column** - Store raw MCP config per session
-- **Documentation** - Investigation report and solution proposal in `docs/orchestrator-auto/`
-
-### v0.10.1 - Error Handling & Logging
-
-- **Graceful error handling** - User-friendly error messages with log file paths
-- **Per-session logging** - Stack traces logged to `~/.claude_orchestrator/logs/error_<session_id>_<timestamp>.log`
-- **Lazy file creation** - Log files only created when errors occur (no empty files)
-- **CLI: `--debug`** - Flag for immediate stack trace output on `start` and `resume` commands
-- **CLI: `status`** - Shows error details (type, message, log path) for failed sessions
-- **Custom exceptions** - `OrchestratorError`, `AgentError`, `SessionStateError`, `PlanParseError` with session context
-- **DB: `session_errors` table** - Persist error details for debugging and retry guidance
-- **New modules** - `logging_config.py` (per-session loggers), `exceptions.py` (exception hierarchy)
-
-### v0.10.0 - Watch Mode
-
-- **Watch Mode** - Monitor a directory for new plan files (`orchestrator watch ./plans/`)
-- **Automatic processing** - Plans processed oldest-first (by mtime), one at a time
-- **Auto-conversion** - Invalid plans converted to orchestrator format (with quarantine of originals)
-- **Terminal state renaming** - Files renamed to `*_done.md`, `*_failed.md`, or `*_paused.md` on completion
-- **Pause handling** - Queue halts on blocker; resumes after `orchestrator resume <id> --answer`
-- **Post-resume reconciliation** - Paused files renamed to final terminal state after external resume
-- **CLI: `--poll-interval`** - Configure poll interval (default: 2 seconds)
-- **CLI: `--convert/--no-convert`** - Toggle auto-conversion (default: enabled)
-- **CLI: `--auto-commit`** - Auto-commit on completion
-- **CLI: `--telegram`** - Enable Telegram notifications
-- **File conventions** - `_orchestrator-skip__*` (quarantined), `*_done.md`, `*_failed.md`, `*_paused.md`
-
-### v0.9.1 - Bug Fixes
-
-**Critical Fixes:**
-
-- **Fix: Blocker response not sent to agent** - When humans responded to blockers, the answer was logged but never actually sent to the agent that raised the blocker. Added `_inject_pending_response()` method that delivers human responses to the appropriate agent's conversation on resume, ensuring continuity.
-
-- **Fix: BLOCKED tag parser too strict** - The `[BLOCKED]` response parser required exact text `Cannot proceed:` after the tag, causing valid blocker responses like `[BLOCKED] Cannot execute tests...` to be parsed as "Unexpected response format". Parser now accepts any text after `[BLOCKED]`.
-
-- **Fix: MILESTONE_APPROVED parser too strict** - The `[MILESTONE_APPROVED]` parser required "Milestone N approved" text. Now accepts the tag alone and extracts milestone number if present in the response.
-
-- **Fix: Unrecognized response creates proper blocker** - When planner/executor responses didn't match expected tags, the code returned "blocked" without creating a blocker record, leaving sessions in an inconsistent state. Now creates proper blocker with descriptive message.
-
-**Medium Fixes:**
-
-- **Fix: Infinite loop prevention in changes_requested** - Added retry counter (max 3 attempts) for milestone changes. After max retries, pauses for human intervention instead of looping indefinitely. Also fixed `_route_to_planner` to return executor's response to feedback, avoiding duplicate milestone prompts.
-
-**Minor Fixes:**
-
-- **Fix: Event loop conflicts in agents** - Removed global event loop setting (`asyncio.set_event_loop()`) that caused conflicts when planner and executor agents were both active. Each agent now manages its own event loop without global side effects.
-
-- **Fix: current_milestone falsy check** - Changed `current_milestone or 1` to explicit None check (`if current_milestone is not None`) to properly handle edge case where milestone could be 0.
-
-- **Fix: Truncated diff warning to AI** - When large diffs are truncated for AI commit message generation, the AI is now informed with a `[DIFF TRUNCATED]` marker so it doesn't make assumptions about unseen code changes.
-
-**New Features:**
-
-- **CLI: `complete`** - Force-complete stuck sessions that have finished all work but are blocked due to incorrect milestone counts or unresolvable blockers. Supports `--auto-commit` for committing changes.
-
-**UX Improvements:**
-
-- **Blocker message shows CLI command** - When a blocker occurs, the message now shows a copy-paste ready CLI command (`orchestrator respond <id> "answer"`) instead of Python code.
-
-### v0.9.0 - Auth Source Detection & Health Check
-
-- **Auth Source Detection** - Display detected auth method at startup (API key, OAuth, cloud providers)
-- **Multi-signal detection** - Detects env vars + credentials file (~/.claude/.credentials.json on Linux)
-- **Session tracking** - Auth source stored in database per session
-- **CLI: `check`** - Health check command for dependencies, permissions, auth, and API connection
-- **CLI: `check` OAuth support** - Tests OAuth tokens via Claude Agent SDK, API keys via Anthropic SDK
-- **CLI: `status`** - Shows auth method used for session
-- **CLI: `export`** - Includes auth method in markdown export
-- **New module** - `auth.py` with `detect_auth()`, `format_auth_display()`
-- **DB schema** - Added `auth_source`, `auth_signals`, `auth_detected_at` columns
-
-### v0.8.0 - Smart Auto-Commit
-
-- **Smart Auto-Commit** - AI-generated commit messages using Claude Haiku
-- **Conventional Commits** - Messages follow `feat:`, `fix:`, `refactor:` etc. format
-- **Secrets Detection** - Blocks diffs with API keys, tokens, or private keys from AI
-- **Graceful Fallback** - Falls back to static messages on secrets, AI errors, or timeout
-- **CLI: `--smart-commit/--no-smart-commit`** - Enable/disable AI commit messages
-- **CLI: `--auto-commit-model`** - Override model for commit message generation (default: executor model)
-- **Config: `auto_commit.smart`** - Configure via config file or `ORCHESTRATOR_SMART_COMMIT` env var
-- **Config: `auto_commit.model`** - Configure commit model via config file or `ORCHESTRATOR_AUTO_COMMIT_MODEL` env var
-- **New modules** - `secrets.py` (9 secret patterns), `commit_ai.py` (async generation)
-- **Security** - Never logs secret values, only pattern names
-
-### v0.7.0 - Plan Queue
-
-- **Plan Queue** - Queue multiple plan files for sequential execution (`--queue plan1.md plan2.md`)
-- **Queue resume** - Resume existing queue with `orchestrator start --queue` (no args)
-- **Queue reset** - Overwrite existing queue with `--queue-reset`
-- **Feature extraction** - Auto-extract feature description from plan headers (YAML frontmatter, `# Feature:`, H1)
-- **Crash recovery** - Reconcile queue state on restart; handles running/paused/orphaned items
-- **Fail-forward** - Failed plans are recorded but don't stop the queue
-- **Auto-commit per session** - `--auto-commit` applies to each completed plan in queue
-- **CLI: `resume --auto-commit`** - Resume with auto-commit for queue continuation
-- **Queue visibility** - `orchestrator list` shows queue position for queued sessions
-- **Telegram queue notifications** - Queue start, item progress, completion summary
-- **DB: `queue_items` table** - Persist queue state with project scoping
-
-### v0.6.0 - Telegram Two-Way & Project Scoping
-
-- **Telegram Phase 2** - Inbound blocker responses via `orchestrator telegram listen`
-- **Project scoping** - Sessions tagged with `project_id`; CLI commands filter by current project
-- **Repo-local config** - Support for `<repo>/.claude_orchestrator/config.yaml` with deep merge
-- **CLI: `--all-projects`** - Show sessions from all projects in `list` command
-- **CLI: `telegram listen`** - Poll for Telegram replies to blocker notifications
-- **DB: `telegram_state` table** - Persist polling cursor across restarts
-- **DB: `telegram_message_id`** - Track blocker notification messages for reply routing
-
-### v0.5.0 - Telegram Integration
-
-- **Telegram Phase 1** - Outbound notifications (start, milestone, blocker, complete) (`9211393`)
-- **Heartbeat hardening** - Stuck session detection with `heartbeat_at` timestamp (`3bc0537`)
-- **CLI: `--telegram/--no-telegram`** - Enable/disable notifications
-- **CLI: `orchestrator telegram test`** - Validate bot configuration
-- **CLI: `orchestrator reset`** - Reset orphaned sessions
-- **CLI: `--force` flag** - Force resume with guardrails
-- **Config: `stuck_sessions.inactive_minutes`** - Configurable threshold (default 20 min)
-
-### v0.4.0 - Model Selection & Auto-Commit
-
-- **Model selection** - `-pm`/`-em` flags with aliases (opus/sonnet/haiku) (`0b10daf`)
-- **Auto-commit** - `--auto-commit` flag for git commit on completion (`64c7e5a`)
-- **Config file** - `~/.claude_orchestrator/config.yaml` for default models
-
-### v0.3.0 - UX Improvements
-
-- **Conversation continuity** - ClaudeSDKClient for persistent agent sessions (`61a179b`)
-- **Multi-line paste** - Support for pasting multi-line input with preview (`1223e61`)
-- **Discovery UX** - Wait for user input, improved `/ready` detection (`df7a7e8`, `89b84ae`)
-- **Response handling** - Fixed ResultMessage termination (`e55a9ef`)
-
-### v0.2.0 - Plan Import & Activity Indicator
-
-- **`--plan` flag** - Import existing plan files, skip discovery/planning (`59d8c26`)
-- **Activity indicator** - Streaming snippets with token count (`0a2c95c`)
-- **Plan saving** - Engine saves plan file from `PLAN_CONTENT` tags (`c2a742e`)
-
-### v0.1.0 - Initial Release
-
-- **Two-agent orchestration** - Planner (Opus) + Executor (Sonnet) workflow (`b6b8256`)
-- **Milestone-gated execution** - Planner reviews each milestone before proceeding
-- **Session persistence** - SQLite database for workflow state and history
-- **CLI commands** - `start`, `resume`, `respond`, `list`, `status`, `export`
-- **Blocker handling** - Pause workflow for human input
-- **Agent SDK integration** - Async query pattern with auto-approve (`761267c`, `52b5134`)
 
 ---
 
