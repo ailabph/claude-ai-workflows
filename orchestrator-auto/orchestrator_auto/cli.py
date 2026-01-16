@@ -248,6 +248,64 @@ def _handle_watch_event(event: WatchEvent, data: dict) -> None:
         click.secho(f"⚠ {message}", fg="yellow")
 
 
+def _start_watch_tui(
+    plans_dir: str,
+    poll_interval: int,
+    auto_convert: bool,
+    db_path: Optional[str],
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    auto_commit: bool,
+    smart_commit: Optional[bool],
+) -> None:
+    """
+    Start watch mode with TUI dashboard.
+
+    Launches the Textual-based WatchTUI app for rich visual feedback.
+
+    Args:
+        plans_dir: Directory to watch for plan files
+        poll_interval: Seconds between directory polls
+        auto_convert: Whether to auto-convert invalid plans
+        db_path: Optional database path
+        planner_model: Model for planner agent
+        executor_model: Model for executor agent
+        auto_commit: Whether to auto-commit on completion
+        smart_commit: Whether to use AI-generated commit messages
+    """
+    try:
+        from .tui import get_watch_app_class, check_textual_available
+        check_textual_available()
+    except ImportError as e:
+        click.secho("Error: Textual is not installed.", fg="red", bold=True)
+        click.echo()
+        click.echo("Install TUI support with:")
+        click.secho('  pip install -e ".[tui]"', fg="cyan")
+        click.echo()
+        click.echo("Or install textual directly:")
+        click.secho("  pip install textual", fg="cyan")
+        sys.exit(1)
+
+    # Initialize database before TUI starts
+    db.init_db(db_path)
+
+    # Get the WatchTUI class and instantiate
+    WatchTUI = get_watch_app_class()
+    app = WatchTUI(
+        plans_dir=plans_dir,
+        db_path=db_path,
+        poll_interval=poll_interval,
+        auto_convert=auto_convert,
+        planner_model=planner_model,
+        executor_model=executor_model,
+        auto_commit=auto_commit,
+        smart_commit=smart_commit,
+    )
+
+    # Run the TUI app (blocking)
+    app.run()
+
+
 def _handle_orchestrator_error(
     e: OrchestratorError,
     debug: bool = False,
@@ -3218,6 +3276,7 @@ def _rename_to_terminal(
 @click.option('--show-activity/--no-activity', default=True, help='Show streaming activity indicator')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file for all watched sessions')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
+@click.option('--tui/--no-tui', default=False, help='Launch Textual TUI dashboard')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -3231,6 +3290,7 @@ def watch(
     show_activity: bool,
     mcp_config: Optional[str],
     headless: bool,
+    tui: bool,
 ):
     """Watch a directory for new plan files and execute them.
 
@@ -3248,7 +3308,21 @@ def watch(
         orchestrator watch ./plans/ --poll-interval 5
         orchestrator watch ./plans/ --no-convert
         orchestrator watch ./plans/ --auto-commit
+        orchestrator watch ./plans/ --tui
     """
+    # Handle TUI mode
+    if tui:
+        _start_watch_tui(
+            plans_dir=plans_dir,
+            poll_interval=poll_interval,
+            auto_convert=auto_convert,
+            db_path=db_path,
+            planner_model=planner_model,
+            executor_model=executor_model,
+            auto_commit=auto_commit,
+            smart_commit=smart_commit,
+        )
+        return
     plans_path = Path(plans_dir).resolve()
 
     # Initialize database
