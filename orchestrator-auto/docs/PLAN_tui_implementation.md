@@ -1,6 +1,6 @@
 # TUI Implementation Plan for orchestrator-auto
 
-**Version:** 2.0
+**Version:** 2.1
 **Date:** 2026-01-16
 **Status:** Planning (Revised)
 
@@ -206,32 +206,56 @@ class CLIInputProvider(InputProvider):
 
 
 class TUIInputProvider(InputProvider):
-    """TUI-based input that signals the app for input."""
+    """
+    TUI-based input that signals the app for input.
+
+    IMPORTANT: Uses threading primitives (not asyncio) because this runs
+    in a worker thread while the TUI runs in the main thread.
+    """
 
     def __init__(self, app: "OrchestratorTUI"):
+        import threading
         self.app = app
-        self._pending_input = None
-        self._input_event = asyncio.Event()
+        self._pending_input: Optional[str] = None
+        self._input_event = threading.Event()  # Thread-safe, not asyncio.Event
+        self._lock = threading.Lock()
 
     def prompt(self, prompt_text: str) -> Tuple[str, str]:
-        """Block until TUI provides input."""
-        # Signal TUI to show input widget
-        self.app.post_message(InputRequestedMessage(prompt_text))
+        """
+        Block until TUI provides input.
 
-        # Wait for input (blocking - runs in worker thread)
-        import asyncio
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(self._input_event.wait())
+        Called from worker thread - uses threading.Event for cross-thread sync.
+        Uses call_from_thread() to safely signal TUI on main thread.
+        """
+        # Clear any previous state
         self._input_event.clear()
+        with self._lock:
+            self._pending_input = None
 
-        result = self._pending_input
-        self._pending_input = None
+        # Signal TUI to show input widget (thread-safe via call_from_thread)
+        self.app.call_from_thread(
+            self.app.post_message,
+            InputRequestedMessage(prompt_text)
+        )
+
+        # Block until TUI calls submit_input() - runs in worker thread
+        self._input_event.wait()
+
+        with self._lock:
+            result = self._pending_input
+            self._pending_input = None
+
         return (result, result)
 
     def submit_input(self, text: str) -> None:
-        """Called by TUI when user submits input."""
-        self._pending_input = text
-        self._input_event.set()
+        """
+        Called by TUI (main thread) when user submits input.
+
+        Thread-safe: uses lock for shared state, Event for signaling.
+        """
+        with self._lock:
+            self._pending_input = text
+        self._input_event.set()  # Unblock the worker thread
 ```
 
 ### 4.2 Streaming Callback (on_chunk)
@@ -337,13 +361,23 @@ display_text, user_input = self.input_provider.prompt("\nYou: ")
 
 Extract queue and watch logic from cli.py into reusable library modules.
 
+**IMPORTANT:** Controllers MUST port existing helper functions from `cli.py` rather than reimplementing them. This ensures behavioral parity with current CLI behavior.
+
 ### 5.1 Queue Controller
+
+**Existing Helpers to Port (from cli.py):**
+
+| Helper | Line | Must Preserve |
+|--------|------|---------------|
+| `_reconcile_queue_head()` | 576 | halt_active, halt_orphaned, halt_paused logic |
+| `_check_stuck_sessions()` | - | Orphan detection with configurable timeout |
+| `_do_smart_auto_commit()` | - | Smart commit message generation |
 
 ```python
 # orchestrator_auto/controllers/queue_controller.py
 
 from dataclasses import dataclass
-from typing import Optional, Callable, Iterator
+from typing import Optional, Callable, List, Tuple
 from enum import Enum
 
 class QueueEvent(Enum):
@@ -353,7 +387,8 @@ class QueueEvent(Enum):
     ITEM_FAILED = "item_failed"
     ITEM_PAUSED = "item_paused"
     COMPLETED = "completed"
-    HALTED = "halted"
+    HALTED = "halted"              # Halted due to pause/active/orphan
+    RECONCILED = "reconciled"      # Item status reconciled (crash recovery)
 
 @dataclass
 class QueueItem:
@@ -366,7 +401,7 @@ class QueueItem:
 
 @dataclass
 class QueueState:
-    items: list[QueueItem]
+    items: List[QueueItem]
     current_index: int
     is_running: bool
     completed_count: int
@@ -378,7 +413,13 @@ class QueueController:
     """
     Reusable queue runner for sequential plan execution.
 
-    Can be used by both CLI and TUI.
+    IMPORTANT: This controller MUST use the existing helper functions
+    from cli.py to ensure behavioral parity:
+    - _reconcile_queue_head(): Handles halt_active, halt_orphaned, halt_paused
+    - Fail-forward behavior: Continue to next item after failure
+    - Auto-commit with smart_commit option
+    - Telegram notifications at queue/item boundaries
+    - Heartbeat/orphan detection for crash recovery
     """
 
     def __init__(
@@ -393,6 +434,8 @@ class QueueController:
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
         auto_commit: bool = False,
+        smart_commit: Optional[bool] = None,
+        auto_commit_model: Optional[str] = None,
         telegram_notifier: Optional["TelegramNotifier"] = None,
     ):
         self.project_id = project_id
@@ -405,10 +448,33 @@ class QueueController:
         self.planner_model = planner_model
         self.executor_model = executor_model
         self.auto_commit = auto_commit
+        self.smart_commit = smart_commit
+        self.auto_commit_model = auto_commit_model
         self.telegram_notifier = telegram_notifier
 
         self._current_orchestrator: Optional[Orchestrator] = None
         self._should_stop = False
+
+    def reconcile_head(self) -> Tuple[str, Optional[dict]]:
+        """
+        Reconcile queue head using existing helper.
+
+        MUST use _reconcile_queue_head() from cli.py which handles:
+        - "ready": Safe to run pending item
+        - "empty": No active items
+        - "halt_paused": Queue halted on paused item
+        - "halt_active": Another runner is active (recent heartbeat)
+        - "halt_orphaned": Session orphaned (stale heartbeat)
+        """
+        from ..cli import _reconcile_queue_head
+        return _reconcile_queue_head(
+            self.project_id,
+            self.db_path,
+            self.auto_commit,
+            self.telegram_notifier,
+            self.smart_commit,
+            self.auto_commit_model,
+        )
 
     def get_state(self) -> QueueState:
         """Get current queue state."""
@@ -427,16 +493,21 @@ class QueueController:
         Run queue to completion or until halted.
 
         This is a blocking call - run in a worker thread for TUI.
+
+        Behavior matches cli.py _run_queue():
+        - Fail-forward: continues after item failure
+        - Halts on: pause, active session, orphaned session
+        - Auto-commits if enabled
         """
         self.on_event(QueueEvent.STARTED, {"item_count": len(self.get_state().items)})
 
         while not self._should_stop:
-            action, next_item = self._reconcile_head()
+            action, next_item = self.reconcile_head()
 
             if action == "empty":
                 break
             if action in ("halt_paused", "halt_active", "halt_orphaned"):
-                self.on_event(QueueEvent.HALTED, {"reason": action})
+                self.on_event(QueueEvent.HALTED, {"reason": action, "item": next_item})
                 break
             if action != "ready":
                 break
@@ -483,12 +554,38 @@ class QueueController:
 
 ### 5.2 Watch Controller
 
+**IMPORTANT:** The WatchController MUST port the existing helper functions from `cli.py` rather than reimplementing them. This ensures parity with current watch mode behavior.
+
+#### 5.2.1 Existing Helpers to Port (from cli.py)
+
+| Helper | Line | Must Preserve |
+|--------|------|---------------|
+| `_is_watch_candidate()` | 3059 | Quarantine prefix check, terminal suffix check |
+| `_get_pending_plans()` | 3094 | Race-condition-safe mtime sorting |
+| `_rename_to_terminal()` | 3162 | Strip existing suffix, add new suffix, update DB |
+| `_strip_terminal_suffix()` | 3149 | Handle `_paused` → `_done` transitions |
+| `_quarantine_and_convert()` | 3414 | Auto-convert non-.md, quarantine with prefix |
+
+#### 5.2.2 Filename Conventions (MUST MATCH)
+
+```
+Terminal suffixes (stem-based, not extension-based):
+  *_done.md       # Completed successfully (e.g., feature_done.md)
+  *_failed.md     # Failed execution
+  *_paused.md     # Paused on blocker (queue halted)
+
+Quarantine prefix (not suffix):
+  _orchestrator-skip__*  # Quarantined files (e.g., _orchestrator-skip__bad-plan.md)
+```
+
+#### 5.2.3 Controller Specification
+
 ```python
 # orchestrator_auto/controllers/watch_controller.py
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Callable
+from typing import Optional, Callable, List, Tuple
 from enum import Enum
 import time
 
@@ -496,9 +593,10 @@ class WatchEvent(Enum):
     STARTED = "started"
     FILE_DETECTED = "file_detected"
     FILE_PROCESSING = "file_processing"
-    FILE_COMPLETED = "file_completed"
-    FILE_QUARANTINED = "file_quarantined"
-    FILE_SKIPPED = "file_skipped"
+    FILE_COMPLETED = "file_completed"      # Renamed to *_done.md
+    FILE_FAILED = "file_failed"            # Renamed to *_failed.md
+    FILE_PAUSED = "file_paused"            # Renamed to *_paused.md
+    FILE_QUARANTINED = "file_quarantined"  # Prefixed with _orchestrator-skip__
     STOPPED = "stopped"
 
 @dataclass
@@ -507,10 +605,13 @@ class WatchState:
     poll_interval: int
     is_running: bool
     auto_convert: bool
-    pending_files: list[Path]
+    pending_files: List[Path]
     current_file: Optional[Path]
-    last_result: Optional[str]  # "success", "failed", "quarantined"
+    last_result: Optional[str]  # "completed", "failed", "paused", "quarantined"
+    last_result_path: Optional[Path]
     processed_count: int
+    failed_count: int
+    paused_count: int
     quarantined_count: int
 
 
@@ -518,11 +619,18 @@ class WatchController:
     """
     Directory watcher for .plans folder processing.
 
-    Handles:
-    - File detection (oldest-first)
-    - Auto-conversion of non-.md files
-    - Quarantine on failure
-    - Rename on success
+    IMPORTANT: This controller MUST use the existing helper functions
+    from cli.py to ensure behavioral parity:
+    - _is_watch_candidate(): Check quarantine prefix + terminal suffixes
+    - _get_pending_plans(): Race-safe mtime sorting
+    - _rename_to_terminal(): Suffix management with DB update
+    - _quarantine_and_convert(): Auto-convert and quarantine
+
+    Filename conventions:
+    - Completed: *_done.md (suffix on stem, not extension)
+    - Failed: *_failed.md
+    - Paused: *_paused.md
+    - Quarantined: _orchestrator-skip__* (prefix, not suffix)
     """
 
     def __init__(
@@ -531,32 +639,92 @@ class WatchController:
         poll_interval: int = 10,
         auto_convert: bool = True,
         on_event: Optional[Callable[[WatchEvent, dict], None]] = None,
-        queue_controller: Optional[QueueController] = None,
+        on_output: Optional[Callable[[str], None]] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,
+        on_state_change: Optional[Callable, None]] = None,
+        input_provider: Optional["InputProvider"] = None,
+        planner_model: Optional[str] = None,
+        executor_model: Optional[str] = None,
+        auto_commit: bool = False,
+        db_path: Optional[str] = None,
     ):
         self.plans_dir = plans_dir
         self.poll_interval = poll_interval
         self.auto_convert = auto_convert
         self.on_event = on_event or (lambda e, d: None)
-        self.queue_controller = queue_controller
+        self.on_output = on_output
+        self.on_chunk = on_chunk
+        self.on_state_change = on_state_change
+        self.input_provider = input_provider
+        self.planner_model = planner_model
+        self.executor_model = executor_model
+        self.auto_commit = auto_commit
+        self.db_path = db_path
 
         self._is_running = False
         self._current_file: Optional[Path] = None
+        self._last_result: Optional[str] = None
+        self._last_result_path: Optional[Path] = None
         self._processed_count = 0
+        self._failed_count = 0
+        self._paused_count = 0
         self._quarantined_count = 0
 
-    def get_state(self) -> WatchState:
-        """Get current watcher state."""
-        return WatchState(
-            directory=self.plans_dir,
-            poll_interval=self.poll_interval,
-            is_running=self._is_running,
-            auto_convert=self.auto_convert,
-            pending_files=self._scan_pending(),
-            current_file=self._current_file,
-            last_result=None,  # Track separately
-            processed_count=self._processed_count,
-            quarantined_count=self._quarantined_count,
-        )
+    def get_pending_files(self) -> List[Path]:
+        """
+        Get pending plan files using existing helper.
+
+        MUST use _get_pending_plans() from cli.py which handles:
+        - Race conditions (file deleted between glob and stat)
+        - Proper mtime + filename sorting for deterministic order
+        """
+        from ..cli import _get_pending_plans
+        return _get_pending_plans(self.plans_dir)
+
+    def is_watch_candidate(self, path: Path) -> bool:
+        """
+        Check if file should be processed using existing helper.
+
+        MUST use _is_watch_candidate() from cli.py which checks:
+        - Quarantine prefix: _orchestrator-skip__*
+        - Terminal suffixes: _done, _failed, _paused
+        """
+        from ..cli import _is_watch_candidate
+        return _is_watch_candidate(path)
+
+    def rename_to_terminal(
+        self,
+        plan_path: Path,
+        suffix: str,
+        session_id: Optional[str] = None
+    ) -> Tuple[bool, Optional[Path]]:
+        """
+        Rename plan to terminal state using existing helper.
+
+        MUST use _rename_to_terminal() from cli.py which:
+        - Strips existing terminal suffix before adding new one
+        - Updates DB with new plan_path
+        - Returns (success, new_path)
+
+        Args:
+            plan_path: Current path to plan file
+            suffix: One of '_done', '_failed', '_paused'
+            session_id: Session ID for DB update
+        """
+        from ..cli import _rename_to_terminal
+        return _rename_to_terminal(plan_path, suffix, session_id, self.db_path)
+
+    def quarantine_and_convert(self, plan_path: Path) -> Optional[Path]:
+        """
+        Quarantine file (and optionally convert) using existing helper.
+
+        MUST use _quarantine_and_convert() from cli.py which:
+        - Renames to _orchestrator-skip__<filename>
+        - If auto_convert enabled, attempts markdown conversion
+        - Returns converted path or None
+        """
+        from ..cli import _quarantine_and_convert
+        return _quarantine_and_convert(plan_path, self.auto_convert)
 
     def start(self) -> None:
         """
@@ -568,7 +736,7 @@ class WatchController:
         self.on_event(WatchEvent.STARTED, {"directory": str(self.plans_dir)})
 
         while self._is_running:
-            pending = self._scan_pending()
+            pending = self.get_pending_files()
 
             if pending:
                 self._process_file(pending[0])
@@ -578,68 +746,93 @@ class WatchController:
         self.on_event(WatchEvent.STOPPED, {})
 
     def stop(self) -> None:
-        """Stop the watcher."""
+        """Stop the watcher after current file completes."""
         self._is_running = False
 
-    def skip_file(self, path: Path) -> None:
-        """Skip a pending file (rename to .skipped)."""
-        new_path = path.with_suffix(path.suffix + ".skipped")
-        path.rename(new_path)
-        self.on_event(WatchEvent.FILE_SKIPPED, {"path": str(path)})
-
-    def _scan_pending(self) -> list[Path]:
-        """Scan for pending plan files, oldest first."""
-        candidates = []
-        for p in self.plans_dir.glob("*.md"):
-            if self._is_watch_candidate(p):
-                candidates.append(p)
-        # Sort by modification time (oldest first)
-        return sorted(candidates, key=lambda p: p.stat().st_mtime)
-
-    def _is_watch_candidate(self, path: Path) -> bool:
-        """Check if file should be processed."""
-        name = path.name.lower()
-        # Skip already-processed files
-        if any(name.endswith(s) for s in [".done.md", ".failed.md", ".skipped.md"]):
-            return False
-        return True
-
     def _process_file(self, path: Path) -> None:
-        """Process a single plan file."""
+        """Process a single plan file with full lifecycle."""
         self._current_file = path
         self.on_event(WatchEvent.FILE_PROCESSING, {"path": str(path)})
 
         try:
-            # Add to queue and run
-            # ... implementation details ...
-            self._processed_count += 1
-            self.on_event(WatchEvent.FILE_COMPLETED, {"path": str(path)})
+            result = self._execute_plan(path)
+
+            if result == "completed":
+                success, new_path = self.rename_to_terminal(path, "_done")
+                self._processed_count += 1
+                self._last_result = "completed"
+                self._last_result_path = new_path
+                self.on_event(WatchEvent.FILE_COMPLETED, {
+                    "path": str(path),
+                    "new_path": str(new_path)
+                })
+
+            elif result == "failed":
+                success, new_path = self.rename_to_terminal(path, "_failed")
+                self._failed_count += 1
+                self._last_result = "failed"
+                self._last_result_path = new_path
+                self.on_event(WatchEvent.FILE_FAILED, {
+                    "path": str(path),
+                    "new_path": str(new_path)
+                })
+
+            elif result == "paused":
+                success, new_path = self.rename_to_terminal(path, "_paused")
+                self._paused_count += 1
+                self._last_result = "paused"
+                self._last_result_path = new_path
+                self.on_event(WatchEvent.FILE_PAUSED, {
+                    "path": str(path),
+                    "new_path": str(new_path)
+                })
+                # Paused file halts the watcher
+                self._is_running = False
 
         except Exception as e:
-            self._quarantine_file(path, str(e))
+            # Quarantine on unexpected error
+            self.quarantine_and_convert(path)
+            self._quarantined_count += 1
+            self._last_result = "quarantined"
+            self.on_event(WatchEvent.FILE_QUARANTINED, {
+                "path": str(path),
+                "error": str(e)
+            })
 
         finally:
             self._current_file = None
 
-    def _quarantine_file(self, path: Path, error: str) -> None:
-        """Move failed file to quarantine."""
-        new_path = path.with_suffix(".failed.md")
-        path.rename(new_path)
-        self._quarantined_count += 1
-        self.on_event(WatchEvent.FILE_QUARANTINED, {
-            "path": str(path),
-            "error": error
-        })
+    def _execute_plan(self, path: Path) -> str:
+        """Execute a plan file and return result status."""
+        # Implementation creates Orchestrator, runs it, returns status
+        # ... detailed implementation ...
+        pass
 ```
 
-### 5.3 Deliverables for Phase 1
+### 5.3 Parity Requirements Checklist
+
+Controllers MUST preserve these CLI behaviors:
+
+| Behavior | QueueController | WatchController |
+|----------|-----------------|-----------------|
+| `_reconcile_queue_head()` logic | ✓ halt_active, halt_orphaned, halt_paused | N/A |
+| Fail-forward (continue after failure) | ✓ Continue to next item | ✓ Continue to next file |
+| Rename on completion | ✓ Via plan_path in queue item | ✓ `_rename_to_terminal()` |
+| Auto-commit with smart_commit | ✓ Optional flag | ✓ Optional flag |
+| Telegram notifications | ✓ Optional notifier | ✓ Optional notifier |
+| Heartbeat/orphan detection | ✓ Check stale heartbeats | N/A |
+| Quarantine with prefix | N/A | ✓ `_orchestrator-skip__*` |
+| Terminal suffix stripping | N/A | ✓ `_strip_terminal_suffix()` |
+
+### 5.4 Deliverables for Phase 1
 
 | File | Change |
 |------|--------|
 | `controllers/__init__.py` | New package |
-| `controllers/queue_controller.py` | QueueController class |
-| `controllers/watch_controller.py` | WatchController class |
-| `cli.py` | Refactor to use controllers (maintain backward compatibility) |
+| `controllers/queue_controller.py` | QueueController class with full parity |
+| `controllers/watch_controller.py` | WatchController class using existing helpers |
+| `cli.py` | Extract helpers to module level, refactor to use controllers |
+| Tests | Integration tests verifying parity with current behavior |
 
 ---
 
@@ -692,7 +885,21 @@ This mirrors CLI semantics and avoids issues with reusing closed agent instances
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.4 Implementation
+### 6.4 Scope Decision: Blocker-Driven Pause Only (MVP)
+
+**For MVP, manual pause is OUT OF SCOPE.** The TUI only handles blocker-driven pauses:
+
+| Pause Type | MVP Support | Notes |
+|------------|-------------|-------|
+| Blocker-driven (agent hits `[BLOCKED]`) | ✓ Yes | Session pauses, TUI shows input |
+| Manual pause (user presses P) | ✗ No | Would require new engine flag + safe checkpoints |
+
+To add manual pause later, the engine would need:
+- `Orchestrator.request_pause()` method
+- Safe checkpoint detection (between milestones)
+- DB state transition to "paused"
+
+### 6.5 Implementation (Blocker-Driven Only)
 
 ```python
 class OrchestratorTUI(App):
@@ -700,34 +907,48 @@ class OrchestratorTUI(App):
     def __init__(self):
         super().__init__()
         self._orchestrator: Optional[Orchestrator] = None
-        self._worker_task: Optional[asyncio.Task] = None
+        self._current_session_id: Optional[str] = None
+        self._adapter: Optional[TUIOutputAdapter] = None
 
     async def _run_orchestrator(self, orchestrator: Orchestrator) -> None:
         """Run orchestrator in background worker."""
         self._orchestrator = orchestrator
+        self._current_session_id = orchestrator.session_id
         try:
             await asyncio.to_thread(orchestrator.start)
         except Exception as e:
-            self.post_message(OrchestratorErrorMessage(str(e)))
+            self.call_from_thread(
+                self.post_message,
+                OrchestratorErrorMessage(str(e))
+            )
         finally:
             self._orchestrator = None
             # Orchestrator has cleaned up, agents are closed
-            self.post_message(OrchestratorStoppedMessage())
+            self.call_from_thread(
+                self.post_message,
+                OrchestratorStoppedMessage()
+            )
 
-    def action_pause(self) -> None:
-        """Request pause - orchestrator will stop at next safe point."""
-        if self._orchestrator:
-            # Signal pause (orchestrator checks this flag)
-            self._orchestrator.request_pause()
-            self.notify("Pause requested...")
+    # NOTE: No action_pause() - manual pause is out of scope for MVP
+    # Pause only happens when orchestrator hits a blocker
 
-    async def action_resume(self, answer: Optional[str] = None) -> None:
-        """Resume paused session with optional answer."""
-        session_id = self.current_session_id
+    async def action_resume(self, answer: str) -> None:
+        """
+        Resume paused session with blocker answer.
+
+        Called when user submits answer in the TUI input widget.
+        Creates a NEW Orchestrator instance (agents are closed after pause).
+        """
+        session_id = self._current_session_id
         if not session_id:
+            self.notify("No session to resume", severity="error")
             return
 
+        # Create adapter for new orchestrator
+        self._adapter = TUIOutputAdapter(self)
+
         # Create NEW orchestrator instance for resume
+        # (previous instance's agents are closed)
         orchestrator = Orchestrator(
             session_id=session_id,
             on_output=self._adapter.on_output,
@@ -736,12 +957,39 @@ class OrchestratorTUI(App):
             input_provider=TUIInputProvider(self),
         )
 
-        # Resume with answer if provided
-        if answer:
-            orchestrator.set_blocker_response(answer)
+        # The answer will be provided via input_provider when orchestrator
+        # calls input_provider.prompt() during resume
+        # Pre-populate the answer so it's returned immediately
+        self._adapter.input_provider.prefill_answer(answer)
 
         # Run in worker
         self.run_worker(self._run_orchestrator(orchestrator))
+```
+
+### 6.6 Blocker Response Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 1. Orchestrator hits [BLOCKED] or [HUMAN_INPUT_NEEDED]                      │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 2. Engine calls input_provider.prompt("Blocker: <question>")                │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 3. TUIInputProvider.prompt() signals TUI via call_from_thread()             │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 4. TUI shows InputModal with blocker question                               │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 5. User types answer, presses Enter                                         │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 6. TUI calls input_provider.submit_input(answer)                            │
+│         │                                                                    │
+│         ▼                                                                    │
+│ 7. Worker thread unblocks, orchestrator continues with answer               │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -760,7 +1008,7 @@ class OrchestratorTUI(App):
 │  │  - Message processing                                                │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
 │         ▲                                                                    │
-│         │ post_message() - THREAD-SAFE                                      │
+│         │ call_from_thread() - SAFE cross-thread API                        │
 │         │                                                                    │
 │  ┌──────┴──────────────────────────────────────────────────────────────┐   │
 │  │  Worker Thread (asyncio.to_thread)                                   │   │
@@ -776,10 +1024,27 @@ class OrchestratorTUI(App):
 
 1. **Orchestrator runs in worker thread** via `asyncio.to_thread()` or `run_worker()`
 2. **Callbacks (on_chunk, on_state_change) execute in worker thread**
-3. **Widget updates MUST use `app.post_message()`** - never update widgets directly from callbacks
-4. **Input from TUI to worker** uses thread-safe primitives (Event, Queue)
+3. **Cross-thread messaging MUST use `app.call_from_thread()`** - Textual's documented thread-safe API
+4. **Never call `post_message()` directly from worker thread** - use `call_from_thread(app.post_message, msg)`
+5. **Input from TUI to worker** uses `threading.Event` or `queue.Queue` (not asyncio primitives)
 
-### 7.3 TUI Output Adapter
+### 7.3 Textual Thread-Safety Note
+
+**IMPORTANT:** Verify Textual's supported cross-thread API before implementation.
+
+As of Textual 0.80+, the recommended pattern for cross-thread communication is:
+
+```python
+# FROM WORKER THREAD - use call_from_thread()
+app.call_from_thread(app.post_message, SomeMessage(data))
+
+# NOT THIS - may not be thread-safe:
+app.post_message(SomeMessage(data))  # Called from worker thread
+```
+
+If Textual's API changes, update the adapter accordingly. The key requirement is that widget updates must be marshaled to the main thread.
+
+### 7.4 TUI Output Adapter
 
 ```python
 # orchestrator_auto/tui/adapter.py
@@ -806,7 +1071,8 @@ class TUIOutputAdapter:
     """
     Bridges Orchestrator callbacks to TUI messages.
 
-    All methods are called from worker thread - must use post_message().
+    IMPORTANT: All methods are called from worker thread.
+    MUST use call_from_thread() for thread-safe message posting.
     """
 
     def __init__(self, app: "OrchestratorTUI"):
@@ -816,19 +1082,28 @@ class TUIOutputAdapter:
 
     def on_output(self, message: str) -> None:
         """Handle orchestrator output - RUNS IN WORKER THREAD."""
-        # Thread-safe: post_message marshals to main thread
-        self.app.post_message(OutputMessage(message))
+        # Must use call_from_thread for cross-thread safety
+        self.app.call_from_thread(
+            self.app.post_message,
+            OutputMessage(message)
+        )
 
     def on_chunk(self, chunk: str) -> None:
         """Handle streaming chunk - RUNS IN WORKER THREAD."""
         self._token_count += len(chunk.split())
-        # Thread-safe
-        self.app.post_message(ChunkMessage(chunk))
+        # Must use call_from_thread for cross-thread safety
+        self.app.call_from_thread(
+            self.app.post_message,
+            ChunkMessage(chunk)
+        )
 
     def on_state_change(self, state: "WorkflowState") -> None:
         """Handle state transition - RUNS IN WORKER THREAD."""
-        # Thread-safe
-        self.app.post_message(StateChangeMessage(state))
+        # Must use call_from_thread for cross-thread safety
+        self.app.call_from_thread(
+            self.app.post_message,
+            StateChangeMessage(state)
+        )
 ```
 
 ### 7.4 Message Handlers in TUI
@@ -942,14 +1217,14 @@ class OrchestratorTUI(App):
 | | [ ] 003_orders.md            |  | > Creating user model...              | |
 | +------------------------------+  | > Added validation logic              | |
 | +-- LAST RESULT ----------------+  | > Writing migration...               | |
-| | 000_init.md -> .done.md      |  +---------------------------------------+ |
+| | 000_init.md -> 000_init_done.md |  +-------------------------------------+ |
 | | Completed in 2m 34s          |                                          |
 | +------------------------------+                                            |
 |                                                                              |
 | +-- LOGS (tail) ----------------------------------------------------------+ |
 | | [14:28:00] Watcher started: ./plans/                                    | |
 | | [14:28:05] Detected: 000_init.md                                        | |
-| | [14:30:39] Completed: 000_init.md -> 000_init.done.md                   | |
+| | [14:30:39] Completed: 000_init.md -> 000_init_done.md                   | |
 | | [14:30:42] Detected: 001_users.md                                       | |
 | +-------------------------------------------------------------------------+ |
 |                                                                              |
@@ -1366,5 +1641,13 @@ orchestrator resume abc123 --tui
 ---
 
 **Document Author:** Claude (Backend Architect)
-**Version:** 2.0 (Revised per architectural review)
+**Version:** 2.1 (Revised per concurrency/parity review)
 **Review Status:** Ready for implementation review
+
+### Revision History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-01-16 | Initial plan |
+| 2.0 | 2026-01-16 | Added Phase 0 (Engine I/O), controller extraction, lifecycle design |
+| 2.1 | 2026-01-16 | Fixed filename conventions, thread-safety (call_from_thread), controller parity requirements, removed manual pause from MVP |
