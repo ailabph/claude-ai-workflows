@@ -33,6 +33,13 @@ def get_app_class():
     return OrchestratorTUI
 
 
+def get_queue_app_class():
+    """Get the QueueTUI app class."""
+    check_textual_available()
+    from .queue_app import QueueTUI
+    return QueueTUI
+
+
 def get_adapter_classes():
     """Get the TUI adapter classes."""
     check_textual_available()
@@ -44,5 +51,6 @@ __all__ = [
     "TEXTUAL_AVAILABLE",
     "check_textual_available",
     "get_app_class",
+    "get_queue_app_class",
     "get_adapter_classes",
 ]

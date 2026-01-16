@@ -9,6 +9,7 @@ from .milestone_list import MilestoneList
 from .agent_output import AgentOutput
 from .log_panel import LogPanel
 from .input_modal import InputModal
+from .queue_panel import QueuePanel
 
 __all__ = [
     "StatusPanel",
@@ -16,4 +17,5 @@ __all__ = [
     "AgentOutput",
     "LogPanel",
     "InputModal",
+    "QueuePanel",
 ]

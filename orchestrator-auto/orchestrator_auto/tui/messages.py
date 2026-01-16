@@ -96,11 +96,46 @@ class MilestoneUpdated(Message):
 class QueueItemUpdated(Message):
     """A queue item status was updated."""
 
-    def __init__(self, position: int, status: str, feature: str, error: Optional[str] = None) -> None:
+    def __init__(self, position: int, status: str, feature: str, session_id: Optional[str] = None, error: Optional[str] = None) -> None:
         self.position = position
         self.status = status
         self.feature = feature
+        self.session_id = session_id
         self.error = error
+        super().__init__()
+
+
+class QueueStarted(Message):
+    """Queue processing has started."""
+
+    def __init__(self, total_items: int, items: list) -> None:
+        """
+        Args:
+            total_items: Total number of items in the queue
+            items: List of dicts with 'position', 'feature', 'status'
+        """
+        self.total_items = total_items
+        self.items = items
+        super().__init__()
+
+
+class QueueCompleted(Message):
+    """Queue processing has completed."""
+
+    def __init__(self, completed: int, failed: int, paused: int, total: int) -> None:
+        self.completed = completed
+        self.failed = failed
+        self.paused = paused
+        self.total = total
+        super().__init__()
+
+
+class QueueHalted(Message):
+    """Queue processing was halted (e.g., due to failure)."""
+
+    def __init__(self, reason: str, position: int) -> None:
+        self.reason = reason
+        self.position = position
         super().__init__()
 
 

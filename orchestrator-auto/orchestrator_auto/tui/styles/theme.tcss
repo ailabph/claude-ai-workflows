@@ -174,26 +174,95 @@ MilestoneItem.milestone-failed .milestone-title {
 QueuePanel {
     border: solid $secondary;
     background: $surface;
+    padding: 0 1;
+    height: auto;
+    min-height: 6;
 }
 
-QueuePanel .item-pending {
-    color: $text-muted;
-}
-
-QueuePanel .item-running {
+QueuePanel .title {
     color: $primary;
     text-style: bold;
 }
 
-QueuePanel .item-completed {
+QueuePanel .empty-message {
+    color: $text-muted;
+    text-style: italic;
+}
+
+QueuePanel .progress-label {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+QueuePanel ListView {
+    background: transparent;
+    height: auto;
+    max-height: 10;
+}
+
+/* Queue list items */
+QueueListItem {
+    height: 1;
+    padding: 0;
+}
+
+QueueListItem .queue-item-row {
+    height: 1;
+    width: 100%;
+}
+
+QueueListItem .queue-position {
+    width: 3;
+    color: $text-muted;
+}
+
+QueueListItem .queue-marker {
+    width: 2;
+}
+
+QueueListItem .queue-feature {
+    width: 1fr;
+}
+
+QueueListItem.queue-pending .queue-marker {
+    color: $text-muted;
+}
+
+QueueListItem.queue-pending .queue-feature {
+    color: $text-muted;
+}
+
+QueueListItem.queue-running .queue-marker {
+    color: $primary;
+    text-style: bold;
+}
+
+QueueListItem.queue-running .queue-feature {
+    color: $primary;
+    text-style: bold;
+}
+
+QueueListItem.queue-completed .queue-marker {
     color: $accent;
 }
 
-QueuePanel .item-failed {
+QueueListItem.queue-completed .queue-feature {
+    color: $accent;
+}
+
+QueueListItem.queue-failed .queue-marker {
     color: $error;
 }
 
-QueuePanel .item-paused {
+QueueListItem.queue-failed .queue-feature {
+    color: $error;
+}
+
+QueueListItem.queue-paused .queue-marker {
+    color: $warning;
+}
+
+QueueListItem.queue-paused .queue-feature {
     color: $warning;
 }
 
