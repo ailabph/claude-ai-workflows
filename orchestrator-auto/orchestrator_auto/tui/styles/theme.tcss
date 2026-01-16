@@ -266,6 +266,77 @@ QueueListItem.queue-paused .queue-feature {
     color: $warning;
 }
 
+/* Git status panel */
+GitStatusPanel {
+    border: solid $warning;
+    background: $surface;
+    padding: 0 1;
+    height: auto;
+    min-height: 12;
+}
+
+GitStatusPanel .title {
+    color: $warning;
+    text-style: bold;
+}
+
+GitStatusPanel .git-info {
+    height: auto;
+}
+
+GitStatusPanel .stat-row {
+    height: 1;
+}
+
+GitStatusPanel .stat-label {
+    color: $text-muted;
+    width: 10;
+}
+
+GitStatusPanel .stat-value {
+    color: $text;
+}
+
+GitStatusPanel .git-diff-stats {
+    color: $primary;
+}
+
+GitStatusPanel .section-title {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+GitStatusPanel .spacer {
+    height: 1;
+}
+
+GitStatusPanel ListView {
+    background: transparent;
+    height: auto;
+    max-height: 6;
+}
+
+/* Git file items */
+GitFileItem {
+    height: 1;
+    padding: 0;
+}
+
+GitFileItem .git-file-row {
+    height: 1;
+    width: 100%;
+}
+
+GitFileItem .git-status-marker {
+    width: 3;
+    color: $warning;
+}
+
+GitFileItem .git-filename {
+    width: 1fr;
+    color: $text;
+}
+
 /* Watch panel */
 WatchPanel {
     border: solid $secondary;

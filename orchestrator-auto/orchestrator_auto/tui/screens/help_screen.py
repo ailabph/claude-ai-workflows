@@ -108,6 +108,7 @@ class HelpScreen(ModalScreen):
                 yield Label("Watch Mode", classes="help-section")
                 yield self._binding_row("r", "Refresh display")
                 yield self._binding_row("c", "Clear file list")
+                yield self._binding_row("g", "Show git diff")
 
             # Input mode
             yield Label("Input Modal", classes="help-section")

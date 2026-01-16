@@ -153,7 +153,7 @@ class TestWatchControllerInit:
 
         assert controller.plans_dir == tmp_path.resolve()
         assert controller.poll_interval == 2
-        assert controller.auto_convert is True
+        assert controller.auto_convert is False  # Default changed to disabled
         assert controller._should_stop is False
 
     def test_init_with_custom_values(self, tmp_path):
@@ -386,7 +386,7 @@ class TestWatchState:
         state = WatchState()
 
         assert state.poll_interval == 2
-        assert state.auto_convert is True
+        assert state.auto_convert is False  # Default changed to disabled
         assert state.is_running is False
         assert state.is_paused is False
         assert state.completed_count == 0

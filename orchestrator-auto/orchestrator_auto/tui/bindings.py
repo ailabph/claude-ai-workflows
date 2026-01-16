@@ -33,6 +33,7 @@ QUEUE_BINDINGS = [
 WATCH_BINDINGS = [
     Binding("r", "refresh", "Refresh"),
     Binding("c", "clear", "Clear"),
+    Binding("g", "show_git_diff", "Git Diff"),
 ]
 
 # Input modal bindings

@@ -35,6 +35,7 @@ class WatchEvent(Enum):
     CONVERSION_FAILED = "conversion_failed"
     RESUMED_COMPLETED = "resumed_completed"
     RESUMED_FAILED = "resumed_failed"
+    TOKEN_USAGE = "token_usage"  # Actual token usage from API
     STOPPED = "stopped"
     INFO = "info"
     WARNING = "warning"
@@ -125,6 +126,18 @@ class WatchController:
         self.auto_convert = auto_convert
         self.on_event = on_event or (lambda e, d: None)
         self.on_output = on_output
+
+        # Token usage callback that emits events
+        def _on_token_usage(agent_name: str, usage_data: dict) -> None:
+            self.on_event(WatchEvent.TOKEN_USAGE, {
+                "agent": agent_name,
+                "input_tokens": usage_data.get("input_tokens", 0),
+                "output_tokens": usage_data.get("output_tokens", 0),
+                "cache_read_tokens": usage_data.get("cache_read_input_tokens", 0),
+                "model": usage_data.get("model", ""),
+                "cost_usd": usage_data.get("cost_usd", 0.0),
+            })
+        self._on_token_usage = _on_token_usage
         self.on_chunk = on_chunk
         self.on_state_change = on_state_change
         self.input_provider = input_provider
@@ -365,6 +378,8 @@ class WatchController:
             )
 
         feature = parse_result.get('feature') or executed_path.stem
+        milestone_count = parse_result.get('milestones', 0)
+        milestone_names = parse_result.get('milestone_names', [])
 
         # Create and run orchestrator
         try:
@@ -375,6 +390,7 @@ class WatchController:
                 on_output=self.on_output,
                 on_chunk=self.on_chunk,
                 on_state_change=self.on_state_change,
+                on_token_usage=self._on_token_usage,
                 input_provider=self.input_provider,
                 show_activity=self.show_activity,
                 planner_model=self.planner_model,
@@ -386,11 +402,15 @@ class WatchController:
 
             orch.start()
 
-            # Emit session started event with session info
+            # Emit session started event with session info and milestones
             self.on_event(WatchEvent.SESSION_STARTED, {
                 "session_id": orch.session_id,
                 "planner_model": orch.planner_model or "opus",
                 "executor_model": orch.executor_model or "sonnet",
+                "phase": orch.state.phase if orch.state else "execution",
+                "feature": feature,
+                "milestone_count": milestone_count,
+                "milestone_names": milestone_names,
             })
 
             # Check final state

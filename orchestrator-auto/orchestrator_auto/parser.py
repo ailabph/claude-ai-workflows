@@ -134,6 +134,7 @@ def parse_plan_file(plan_path: str) -> Dict[str, Any]:
         - valid: bool - whether plan is valid
         - milestones: int - number of milestones
         - milestone_names: List[str] - milestone names
+        - feature: str - extracted feature name
         - error: Optional[str] - error message if invalid
     """
     from pathlib import Path
@@ -153,10 +154,14 @@ def parse_plan_file(plan_path: str) -> Dict[str, Any]:
 
     milestone_names = [name.strip() for _, name in matches]
 
+    # Extract feature name using existing utility
+    feature = extract_feature_from_plan(plan_path)
+
     return {
         "valid": True,
         "milestones": len(matches),
         "milestone_names": milestone_names,
+        "feature": feature,
         "error": None
     }
 

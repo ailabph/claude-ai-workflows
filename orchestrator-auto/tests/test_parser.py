@@ -536,6 +536,30 @@ Final tasks
             "Third with double hash again"
         ]
 
+    def test_parse_plan_file_extracts_feature(self, tmp_path):
+        """Test that parse_plan_file extracts feature name."""
+        from orchestrator_auto.parser import parse_plan_file
+
+        plan_content = """# Feature: Enhanced Watch TUI Statistics
+
+Add useful developer statistics to the Watch TUI.
+
+## Milestone 1: Fix Milestones Panel
+Tasks here
+
+## Milestone 2: Add Stats
+More tasks
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        result = parse_plan_file(str(plan_file))
+
+        assert result["valid"] is True
+        assert result["milestones"] == 2
+        assert result["feature"] == "Enhanced Watch TUI Statistics"
+        assert "Fix Milestones Panel" in result["milestone_names"][0]
+
 
 class TestMilestonePattern:
     """Test the shared MILESTONE_PATTERN constant."""

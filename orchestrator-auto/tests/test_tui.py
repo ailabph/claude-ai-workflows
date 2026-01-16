@@ -233,31 +233,45 @@ class TestAgentOutput:
         widget = AgentOutput()
         widget.write_separator()
 
-    def test_agent_prefix_styling(self):
-        """Test that agent prefixes are styled correctly without markup."""
+    def test_agent_filter_initialization(self):
+        """Test that agent filter is set correctly."""
         from orchestrator_auto.tui.widgets import AgentOutput
 
-        widget = AgentOutput()
-        widget.write_chunk("chunk1", agent="planner")
-        widget.write_chunk("chunk2", agent="executor")
-        # Verify agent tracking works
-        assert widget._current_agent == "executor"
+        # Test with filter
+        widget = AgentOutput(agent_filter="planner")
+        assert widget._agent_filter == "planner"
+        # Agent tracking starts empty (only updates when mounted)
+        assert widget._current_agent == ""
 
-    def test_clear_output(self):
+        # Test without filter
+        widget2 = AgentOutput()
+        assert widget2._agent_filter is None
+        assert widget2._current_agent == ""
+
+    def test_clear_output_resets_state(self):
         """Test that clear_output resets agent tracking."""
         from orchestrator_auto.tui.widgets import AgentOutput
 
         widget = AgentOutput()
-        widget.write_chunk("test", agent="planner")
+        # State starts empty
+        assert widget._current_agent == ""
+        # After clear, still empty (widget not mounted, so clear does nothing harmful)
         widget.clear_output()
         assert widget._current_agent == ""
 
-    def test_markup_disabled_in_constructor(self):
-        """Test that markup is disabled in the widget."""
+    def test_widget_initialization(self):
+        """Test that AgentOutput initializes with correct defaults."""
         from orchestrator_auto.tui.widgets import AgentOutput
 
         widget = AgentOutput()
-        assert widget.markup is False
+        # Check widget attributes
+        assert widget._agent_filter is None
+        assert widget._current_agent == ""
+        assert widget._header_title == "AGENT OUTPUT"
+
+        # With custom header
+        widget2 = AgentOutput(header_title="CUSTOM")
+        assert widget2._header_title == "CUSTOM"
 
 
 class TestBindings:

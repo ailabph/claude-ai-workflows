@@ -197,10 +197,44 @@ class WatchPendingUpdated(Message):
 class WatchSessionStarted(Message):
     """A new session has started in watch mode."""
 
-    def __init__(self, session_id: str, planner_model: str, executor_model: str) -> None:
+    def __init__(
+        self,
+        session_id: str,
+        planner_model: str,
+        executor_model: str,
+        phase: str = "execution",
+        feature: Optional[str] = None,
+        milestone_count: int = 0,
+        milestone_names: Optional[list] = None,
+    ) -> None:
         self.session_id = session_id
         self.planner_model = planner_model
         self.executor_model = executor_model
+        self.phase = phase
+        self.feature = feature
+        self.milestone_count = milestone_count
+        self.milestone_names = milestone_names or []
+        super().__init__()
+
+
+class TokenUsageReceived(Message):
+    """Actual token usage received from API."""
+
+    def __init__(
+        self,
+        agent: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_read_tokens: int = 0,
+        model: str = "",
+        cost_usd: float = 0.0,
+    ) -> None:
+        self.agent = agent
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_read_tokens = cache_read_tokens
+        self.model = model
+        self.cost_usd = cost_usd
         super().__init__()
 
 
@@ -243,4 +277,41 @@ class MilestonesLoaded(Message):
             milestones: List of dicts with 'id', 'title', 'status'
         """
         self.milestones = milestones
+        super().__init__()
+
+
+class TokensUsed(Message):
+    """
+    Token usage from an agent API call.
+
+    Contains actual token counts from the Claude API response.
+    """
+
+    def __init__(
+        self,
+        agent: str,
+        input_tokens: int,
+        output_tokens: int,
+        cache_creation_input_tokens: int = 0,
+        cache_read_input_tokens: int = 0,
+        model: Optional[str] = None,
+        cost_usd: Optional[float] = None
+    ) -> None:
+        """
+        Args:
+            agent: Agent name ("planner" or "executor")
+            input_tokens: Number of input tokens used
+            output_tokens: Number of output tokens generated
+            cache_creation_input_tokens: Tokens used for cache creation
+            cache_read_input_tokens: Tokens read from cache
+            model: Model used (e.g., "claude-opus-4-5-20251101")
+            cost_usd: Cost of the API call in USD
+        """
+        self.agent = agent
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
+        self.cache_creation_input_tokens = cache_creation_input_tokens
+        self.cache_read_input_tokens = cache_read_input_tokens
+        self.model = model
+        self.cost_usd = cost_usd
         super().__init__()

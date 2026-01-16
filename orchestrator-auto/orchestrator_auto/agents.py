@@ -69,6 +69,7 @@ class BaseAgent:
         hooks: Optional[Dict[str, Any]] = None,
         cwd: Optional[Path] = None,
         mcp_servers: Optional[Union[McpServersConfig, str]] = None,
+        on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """
         Initialize the agent.
@@ -81,6 +82,7 @@ class BaseAgent:
             hooks: Optional hooks configuration
             cwd: Working directory for agent (default: current directory)
             mcp_servers: MCP server configuration dict or path to .mcp.json file
+            on_token_usage: Optional callback for token usage reporting
         """
         self.system_prompt = system_prompt
         self.allowed_tools = allowed_tools or DEFAULT_TOOLS
@@ -89,6 +91,7 @@ class BaseAgent:
         self.hooks = hooks
         self.cwd = cwd or Path.cwd()
         self.mcp_servers = mcp_servers
+        self.on_token_usage = on_token_usage
         self._options: Optional[ClaudeAgentOptions] = None
 
         # Client for conversation continuity
@@ -167,7 +170,17 @@ class BaseAgent:
                         if on_chunk:
                             on_chunk(block.text)
             elif isinstance(message, ResultMessage):
-                # Response complete - break out of loop
+                # Response complete - extract token usage
+                if self.on_token_usage and message.usage:
+                    usage_data = {
+                        "input_tokens": message.usage.get("input_tokens", 0),
+                        "output_tokens": message.usage.get("output_tokens", 0),
+                        "cache_creation_input_tokens": message.usage.get("cache_creation_input_tokens", 0),
+                        "cache_read_input_tokens": message.usage.get("cache_read_input_tokens", 0),
+                        "model": self.model,
+                        "cost_usd": message.total_cost_usd,
+                    }
+                    self.on_token_usage(usage_data)
                 break
 
         return response_text
@@ -351,6 +364,7 @@ def create_planner_agent(
     cwd: Optional[Path] = None,
     mcp_servers: Optional[Union[McpServersConfig, str]] = None,
     allowed_tools: Optional[List[str]] = None,
+    on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> PlannerAgent:
     """
     Factory function to create a Planner agent.
@@ -362,6 +376,7 @@ def create_planner_agent(
         cwd: Working directory
         mcp_servers: MCP server configuration dict or path to .mcp.json file
         allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
+        on_token_usage: Optional callback for token usage reporting
 
     Returns:
         PlannerAgent instance
@@ -377,6 +392,8 @@ def create_planner_agent(
         kwargs["mcp_servers"] = mcp_servers
     if allowed_tools:
         kwargs["allowed_tools"] = allowed_tools
+    if on_token_usage:
+        kwargs["on_token_usage"] = on_token_usage
 
     return PlannerAgent(**kwargs)
 
@@ -388,6 +405,7 @@ def create_executor_agent(
     cwd: Optional[Path] = None,
     mcp_servers: Optional[Union[McpServersConfig, str]] = None,
     allowed_tools: Optional[List[str]] = None,
+    on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> ExecutorAgent:
     """
     Factory function to create an Executor agent.
@@ -399,6 +417,7 @@ def create_executor_agent(
         cwd: Working directory
         mcp_servers: MCP server configuration dict or path to .mcp.json file
         allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
+        on_token_usage: Optional callback for token usage reporting
 
     Returns:
         ExecutorAgent instance
@@ -414,6 +433,8 @@ def create_executor_agent(
         kwargs["mcp_servers"] = mcp_servers
     if allowed_tools:
         kwargs["allowed_tools"] = allowed_tools
+    if on_token_usage:
+        kwargs["on_token_usage"] = on_token_usage
 
     return ExecutorAgent(**kwargs)
 

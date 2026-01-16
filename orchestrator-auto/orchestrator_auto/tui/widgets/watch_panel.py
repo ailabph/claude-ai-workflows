@@ -79,6 +79,8 @@ class WatchPanel(Static):
     - Directory being watched
     - Poll interval
     - Auto-convert setting
+    - Watch status (watching/paused/stopped)
+    - Pending files count
     - Status counts (completed/failed/paused)
     - List of recent files with their status
     """
@@ -93,6 +95,7 @@ class WatchPanel(Static):
         self._completed: int = 0
         self._failed: int = 0
         self._paused: int = 0
+        self._pending_count: int = 0
         self._files: Dict[str, WatchFileItem] = {}
 
     def compose(self) -> ComposeResult:
@@ -110,6 +113,9 @@ class WatchPanel(Static):
             with Horizontal(classes="stat-row"):
                 yield Label("Status:", classes="stat-label")
                 yield Label("Watching", id="watch-status", classes="stat-value")
+            with Horizontal(classes="stat-row"):
+                yield Label("Pending:", classes="stat-label")
+                yield Label(self._format_pending_count(), id="watch-pending", classes="stat-value")
         yield Label("", classes="spacer")
         with Horizontal(classes="counts-row"):
             yield Label(f"✓ {self._completed}", id="count-completed", classes="count-completed")
@@ -270,3 +276,23 @@ class WatchPanel(Static):
                 # Only remove if it was pending (not processing/completed/etc)
                 if item and item.file_status == "pending":
                     self.remove_file(filename)
+
+        # Update pending count
+        self._pending_count = len(pending_files)
+        self._update_pending_display()
+
+    def _format_pending_count(self) -> str:
+        """Format pending count as 'N files' or '0'."""
+        if self._pending_count == 0:
+            return "0"
+        elif self._pending_count == 1:
+            return "1 file"
+        else:
+            return f"{self._pending_count} files"
+
+    def _update_pending_display(self) -> None:
+        """Update the pending count display."""
+        try:
+            self.query_one("#watch-pending", Label).update(self._format_pending_count())
+        except Exception:
+            pass

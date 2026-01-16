@@ -69,6 +69,7 @@ class Orchestrator:
         on_output: Optional[Callable[[str], None]] = None,
         on_chunk: Optional[Callable[[str, str], None]] = None,
         on_state_change: Optional[Callable[[WorkflowState], None]] = None,
+        on_token_usage: Optional[Callable[[str, Dict[str, Any]], None]] = None,
         input_provider: Optional[InputProvider] = None,
         show_activity: bool = True,
         planner_model: Optional[str] = None,
@@ -89,6 +90,7 @@ class Orchestrator:
             on_output: Optional callback for output messages
             on_chunk: Optional callback for streaming chunks (chunk, agent_name)
             on_state_change: Optional callback for state transitions
+            on_token_usage: Optional callback for token usage (agent_name, usage_dict)
             input_provider: Optional input provider (defaults to CLIInputProvider)
             show_activity: Whether to show streaming activity indicator (default: True)
             planner_model: Model for planner agent (optional, uses default if not specified)
@@ -102,6 +104,7 @@ class Orchestrator:
         self.on_output = on_output or print
         self.on_chunk = on_chunk
         self.on_state_change = on_state_change
+        self.on_token_usage = on_token_usage
         self.input_provider = input_provider or CLIInputProvider()
         self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
@@ -367,6 +370,10 @@ class Orchestrator:
                     mcp_tools=self.planner_mcp_config["tools"]
                 )
 
+            # Add token usage callback
+            if self.on_token_usage:
+                kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("planner", usage_dict)
+
             self.planner = create_planner_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(
@@ -392,6 +399,10 @@ class Orchestrator:
                 kwargs["allowed_tools"] = build_allowed_tools(
                     mcp_tools=self.executor_mcp_config["tools"]
                 )
+
+            # Add token usage callback
+            if self.on_token_usage:
+                kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("executor", usage_dict)
 
             self.executor = create_executor_agent(**kwargs)
             # Register recovery hook

@@ -22,8 +22,9 @@ from .widgets import (
     LogPanel,
     InputModal,
     WatchPanel,
+    GitStatusPanel,
 )
-from .screens import HelpScreen
+from .screens import HelpScreen, GitDiffScreen
 from ..config import get_project_identity
 
 if TYPE_CHECKING:
@@ -55,25 +56,21 @@ class WatchTUI(App):
     CSS_PATH = "styles/theme.tcss"
 
     CSS = """
-    #main-container {
+    #main-row {
         width: 100%;
         height: 1fr;
     }
 
-    #watch-panel {
+    /* Left column: Watch + Milestones */
+    #left-col {
         width: 1fr;
-        min-width: 30;
-    }
-
-    #middle-column {
-        width: 1fr;
-        min-width: 30;
+        min-width: 20;
+        max-width: 25;
         height: 100%;
     }
 
-    #status-panel {
+    #watch-panel {
         height: auto;
-        max-height: 12;
     }
 
     #milestone-list {
@@ -81,15 +78,49 @@ class WatchTUI(App):
         min-height: 10;
     }
 
-    #agent-output {
-        width: 2fr;
-        min-width: 40;
+    /* Middle column: Status + Git */
+    #middle-col {
+        width: 1fr;
+        min-width: 20;
+        max-width: 25;
         height: 100%;
     }
 
+    #status-panel {
+        height: auto;
+        max-height: 15;
+    }
+
+    #git-panel {
+        height: 1fr;
+        min-height: 10;
+    }
+
+    /* Right column: Agent outputs + Log */
+    #right-col {
+        width: 3fr;
+        min-width: 60;
+        height: 100%;
+    }
+
+    #output-row {
+        height: 1fr;
+        min-height: 20;
+    }
+
+    #planner-output {
+        width: 1fr;
+        min-width: 30;
+    }
+
+    #executor-output {
+        width: 1fr;
+        min-width: 30;
+    }
+
     #log-panel {
-        height: 10;
-        dock: bottom;
+        height: 12;
+        min-height: 8;
     }
     """
 
@@ -162,13 +193,26 @@ class WatchTUI(App):
     def compose(self) -> ComposeResult:
         """Compose the TUI layout with containers."""
         yield Header()
-        with Horizontal(id="main-container"):
-            yield WatchPanel(id="watch-panel")
-            with Vertical(id="middle-column"):
-                yield StatusPanel(id="status-panel")
+        with Horizontal(id="main-row"):
+            with Vertical(id="left-col"):
+                yield WatchPanel(id="watch-panel")
                 yield MilestoneList(id="milestone-list")
-            yield AgentOutput(id="agent-output")
-        yield LogPanel(id="log-panel")
+            with Vertical(id="middle-col"):
+                yield StatusPanel(id="status-panel")
+                yield GitStatusPanel(id="git-panel")
+            with Vertical(id="right-col"):
+                with Horizontal(id="output-row"):
+                    yield AgentOutput(
+                        id="planner-output",
+                        agent_filter="planner",
+                        header_title="PLANNER"
+                    )
+                    yield AgentOutput(
+                        id="executor-output",
+                        agent_filter="executor",
+                        header_title="EXECUTOR"
+                    )
+                yield LogPanel(id="log-panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -187,6 +231,11 @@ class WatchTUI(App):
 
         # Start elapsed timer
         self._timer = self.set_interval(1.0, self._update_elapsed)
+
+        # Start git status refresh timer (every 5 seconds)
+        self.set_interval(5.0, self._refresh_git_status)
+        # Do initial git status refresh
+        self._refresh_git_status()
 
         # Start watch in worker thread
         self._start_watch()
@@ -419,6 +468,10 @@ class WatchTUI(App):
                     session_id=data.get("session_id", ""),
                     planner_model=data.get("planner_model", ""),
                     executor_model=data.get("executor_model", ""),
+                    phase=data.get("phase", "execution"),
+                    feature=data.get("feature"),
+                    milestone_count=data.get("milestone_count", 0),
+                    milestone_names=data.get("milestone_names", []),
                 )
             )
 
@@ -429,6 +482,20 @@ class WatchTUI(App):
                     completed=data.get("completed", 0),
                     failed=data.get("failed", 0),
                     paused=data.get("paused", 0),
+                )
+            )
+
+        elif event == WatchEvent.TOKEN_USAGE:
+            self.call_from_thread(
+                self.post_message,
+                messages.TokensUsed(
+                    agent=data.get("agent", ""),
+                    input_tokens=data.get("input_tokens", 0),
+                    output_tokens=data.get("output_tokens", 0),
+                    cache_creation_input_tokens=data.get("cache_creation_tokens", 0),
+                    cache_read_input_tokens=data.get("cache_read_tokens", 0),
+                    model=data.get("model"),
+                    cost_usd=data.get("cost_usd"),
                 )
             )
 
@@ -446,14 +513,23 @@ class WatchTUI(App):
         """Reset UI elements for processing a new file."""
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
-            status_panel.update_phase("DISCOVERY", "ACTIVE")
+            status_panel.update_phase("STARTING", "ACTIVE")
+            status_panel.update_feature("—")  # Clear feature until session starts
+
+            # Reset stats (tokens, cost, animations) for new session
+            status_panel.reset_stats()
 
             milestone_list = self.query_one("#milestone-list", MilestoneList)
             milestone_list.set_milestones([])
 
-            agent_output = self.query_one("#agent-output", AgentOutput)
-            agent_output.clear_output()
-            agent_output.write_message(f"Processing: {filename[:50]}...", "bold")
+            # Clear both output panels
+            planner_output = self.query_one("#planner-output", AgentOutput)
+            planner_output.clear_output()
+            planner_output.write_message(f"Processing: {filename[:50]}...", "bold")
+
+            executor_output = self.query_one("#executor-output", AgentOutput)
+            executor_output.clear_output()
+            executor_output.write_message(f"Processing: {filename[:50]}...", "bold")
         except Exception:
             pass
 
@@ -470,6 +546,15 @@ class WatchTUI(App):
         try:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_running()
+        except Exception:
+            pass
+
+    def _refresh_git_status(self) -> None:
+        """Refresh the git status panel."""
+        try:
+            git_panel = self.query_one("#git-panel", GitStatusPanel)
+            # Use the plans directory for git status
+            git_panel.refresh_git_status(str(self.plans_dir))
         except Exception:
             pass
 
@@ -552,20 +637,51 @@ class WatchTUI(App):
         """Handle session started - update status panel with session info."""
         status_panel = self.query_one("#status-panel", StatusPanel)
         status_panel.update_session(message.session_id)
+        status_panel.update_feature(message.feature or "")
         status_panel.update_models(message.planner_model, message.executor_model)
+        status_panel.update_phase(message.phase.upper(), "ACTIVE")
+
+        # Update milestone progress if we have milestones
+        if message.milestone_count > 0:
+            status_panel.update_milestone_progress(0, message.milestone_count)
+
+        # Load milestones into the milestone list
+        if message.milestone_names:
+            milestone_list = self.query_one("#milestone-list", MilestoneList)
+            # Convert milestone names to the format expected by MilestoneList
+            # Status starts as "pending" for all milestones
+            milestones = [
+                {"id": i + 1, "title": name, "status": "pending"}
+                for i, name in enumerate(message.milestone_names)
+            ]
+            milestone_list.set_milestones(milestones)
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""
         try:
-            output = self.query_one("#agent-output", AgentOutput)
-            output.write_chunk(message.chunk, message.agent)
+            # Write to both output panels - they filter based on agent
+            planner_output = self.query_one("#planner-output", AgentOutput)
+            planner_output.write_chunk(message.chunk, message.agent)
+
+            executor_output = self.query_one("#executor-output", AgentOutput)
+            executor_output.write_chunk(message.chunk, message.agent)
         except Exception:
             pass
 
+        # Note: Token counting now done via on_tokens_used handler using actual API counts
+        # The chunk estimation is kept as fallback but will be replaced by actual counts
+
+    def on_tokens_used(self, message: messages.TokensUsed) -> None:
+        """Handle token usage report from agent."""
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
-            estimated_tokens = max(1, len(message.chunk) // 4)
-            status_panel.add_tokens(estimated_tokens)
+            # Add actual tokens from API
+            total_tokens = message.input_tokens + message.output_tokens
+            status_panel.add_tokens(total_tokens)
+
+            # Update cost if provided
+            if message.cost_usd is not None:
+                status_panel.add_cost(message.cost_usd)
         except Exception:
             pass
 
@@ -593,8 +709,12 @@ class WatchTUI(App):
         current_milestone = getattr(state, 'current_milestone', 0)
         total_milestones = getattr(state, 'total_milestones', 0)
 
-        if total_milestones > 0 and current_milestone > 0:
-            milestone_list.set_current_milestone(current_milestone)
+        if total_milestones > 0:
+            # Update milestone progress in status panel
+            status_panel.update_milestone_progress(current_milestone, total_milestones)
+            # Update milestone list highlighting
+            if current_milestone > 0:
+                milestone_list.set_current_milestone(current_milestone)
 
     def on_output_received(self, message: messages.OutputReceived) -> None:
         """Handle general output message."""
@@ -646,6 +766,10 @@ class WatchTUI(App):
     def action_show_help(self) -> None:
         """Show help screen."""
         self.push_screen(HelpScreen(mode="watch"))
+
+    def action_show_git_diff(self) -> None:
+        """Show git diff modal."""
+        self.push_screen(GitDiffScreen(directory=str(self.plans_dir)))
 
     def action_refresh(self) -> None:
         """Refresh the display."""
