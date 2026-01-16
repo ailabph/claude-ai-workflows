@@ -23,6 +23,8 @@ from .widgets import (
     InputModal,
     QueuePanel,
 )
+from ..config import get_project_identity
+from ..parser import extract_feature_from_plan
 
 if TYPE_CHECKING:
     from ..controllers.queue_controller import QueueController, QueueEvent
@@ -117,7 +119,11 @@ class QueueTUI(App):
         """
         super().__init__(**kwargs)
         self.plan_paths = plan_paths or []
-        self.project_id = project_id or str(Path.cwd())
+        # Use get_project_identity for consistent project_id (repo root or cwd)
+        if project_id:
+            self.project_id = project_id
+        else:
+            self.project_id, _ = get_project_identity()
         self.db_path = db_path
         self.planner_model = planner_model
         self.executor_model = executor_model
@@ -184,18 +190,18 @@ class QueueTUI(App):
         from .. import db
 
         try:
-            # Enqueue plan files
-            for plan_path in self.plan_paths:
+            # Enqueue plan files using proper db function and feature extraction
+            for position, plan_path in enumerate(self.plan_paths):
                 path = Path(plan_path)
                 if path.exists():
-                    # Read feature description from plan
-                    content = path.read_text()
-                    feature = content[:100].strip().replace("\n", " ")
-                    db.enqueue_plan(
-                        str(path.resolve()),
-                        feature,
-                        self.project_id,
-                        self.db_path
+                    # Use proper feature extraction (YAML frontmatter, headers, etc.)
+                    feature = extract_feature_from_plan(str(path.resolve()))
+                    db.create_queue_item(
+                        project_id=self.project_id,
+                        plan_path=str(path.resolve()),
+                        feature_description=feature,
+                        position=position,
+                        db_path=self.db_path
                     )
 
             # Create controller with TUI adapters
@@ -230,42 +236,47 @@ class QueueTUI(App):
         from ..controllers.queue_controller import QueueEvent
 
         if event == QueueEvent.STARTED:
-            items = data.get("items", [])
+            # QueueController emits {"item_count": N} - fetch items from DB
+            from .. import db
+            item_count = data.get("item_count", 0)
+            items = db.list_queue_items(self.project_id, self.db_path, include_completed=False)
             self.call_from_thread(
                 self.post_message,
                 messages.QueueStarted(
-                    total_items=len(items),
+                    total_items=item_count,
                     items=[
                         {
-                            "position": i.get("position", idx + 1),
+                            "position": i.get("position", 0) + 1,  # 0-based to 1-based
                             "feature": i.get("feature_description", ""),
-                            "status": "pending",
+                            "status": i.get("status", "pending"),
                         }
-                        for idx, i in enumerate(items)
+                        for i in items
                     ]
                 )
             )
 
         elif event == QueueEvent.ITEM_STARTED:
+            # QueueController emits {"position", "plan_path", "feature_description"}
+            # Note: session_id is NOT available here - it's created after engine starts
+            position = data.get("position", 0)
+            feature = data.get("feature_description", "")
             self.call_from_thread(
                 self.post_message,
                 messages.QueueItemUpdated(
-                    position=data.get("position", 0),
+                    position=position,
                     status="running",
-                    feature=data.get("feature_description", ""),
-                    session_id=data.get("session_id"),
+                    feature=feature,
+                    session_id=None,  # Session ID comes later via state change
                 )
             )
-            # Also notify workflow started for status panel
-            session_id = data.get("session_id", "")
-            if session_id:
-                self.call_from_thread(
-                    self.post_message,
-                    messages.WorkflowStarted(
-                        session_id=session_id,
-                        feature=data.get("feature_description", "")
-                    )
+            # Notify workflow starting (without session_id for now)
+            self.call_from_thread(
+                self.post_message,
+                messages.WorkflowStarted(
+                    session_id="pending",  # Placeholder until engine starts
+                    feature=feature
                 )
+            )
 
         elif event == QueueEvent.ITEM_COMPLETED:
             self.call_from_thread(
@@ -302,22 +313,30 @@ class QueueTUI(App):
             )
 
         elif event == QueueEvent.COMPLETED:
+            # QueueController emits {"completed", "failed", "paused"} - compute total
+            completed = data.get("completed", 0)
+            failed = data.get("failed", 0)
+            paused = data.get("paused", 0)
             self.call_from_thread(
                 self.post_message,
                 messages.QueueCompleted(
-                    completed=data.get("completed", 0),
-                    failed=data.get("failed", 0),
-                    paused=data.get("paused", 0),
-                    total=data.get("total", 0),
+                    completed=completed,
+                    failed=failed,
+                    paused=paused,
+                    total=completed + failed + paused,
                 )
             )
 
         elif event == QueueEvent.HALTED:
+            # QueueController emits {"reason": action, "item": head_item}
+            reason = data.get("reason", "Unknown")
+            item = data.get("item", {})
+            position = item.get("position", -1) + 1  # 0-based to 1-based
             self.call_from_thread(
                 self.post_message,
                 messages.QueueHalted(
-                    reason=data.get("reason", "Unknown"),
-                    position=data.get("position", 0),
+                    reason=reason,
+                    position=position,
                 )
             )
 
@@ -508,6 +527,32 @@ class QueueTUI(App):
         """Refresh the display."""
         log_panel = self.query_one("#log-panel", LogPanel)
         log_panel.log_info("Refreshed")
+
+    def action_clear_queue(self) -> None:
+        """Clear the queue (remove pending/paused items)."""
+        from .. import db
+
+        try:
+            cleared = db.clear_active_queue(self.project_id, self.db_path)
+            log_panel = self.query_one("#log-panel", LogPanel)
+            if cleared > 0:
+                log_panel.log_warning(f"Cleared {cleared} queue items")
+                # Refresh the queue panel
+                queue_panel = self.query_one("#queue-panel", QueuePanel)
+                items = db.list_queue_items(self.project_id, self.db_path, include_completed=False)
+                queue_panel.set_items([
+                    {
+                        "position": i.get("position", 0) + 1,
+                        "feature": i.get("feature_description", ""),
+                        "status": i.get("status", "pending"),
+                    }
+                    for i in items
+                ])
+            else:
+                log_panel.log_info("No active queue items to clear")
+        except Exception as e:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_error(f"Failed to clear queue: {e}")
 
     def action_back(self) -> None:
         """Handle escape."""

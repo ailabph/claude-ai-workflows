@@ -26,6 +26,7 @@ QUEUE_BINDINGS = [
     Binding("n", "next_item", "Next"),
     Binding("k", "skip_item", "Skip"),
     Binding("r", "refresh", "Refresh"),
+    Binding("c", "clear_queue", "Clear Queue"),
 ]
 
 # Watch mode bindings
