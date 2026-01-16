@@ -346,7 +346,12 @@ class TodoRunner:
             task.result = result.result or result.error
 
             # Write progress to file (atomic)
-            update_task_file(task_file)
+            # Warnings indicate line-number drift (agent modified file structure)
+            warnings = update_task_file(task_file)
+            if warnings and self.verbose:
+                import sys
+                for warning in warnings:
+                    print(f"Warning: {warning}", file=sys.stderr)
 
             # Callback: task complete
             if self.on_task_complete:

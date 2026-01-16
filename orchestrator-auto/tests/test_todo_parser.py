@@ -20,6 +20,7 @@ from orchestrator_auto.todo_parser import (
     CHECKBOX_PATTERN,
     CONTINUATION_PATTERN,
     FILE_REF_PATTERN,
+    _update_checkbox_marker,
 )
 
 
@@ -522,3 +523,192 @@ class TestNestedCheckboxParsing:
         assert result.tasks[3].indent == "    "
         assert result.tasks[4].indent == "  "
         assert result.tasks[5].indent == ""
+
+
+class TestWhitespacePreservation:
+    """Test that exact whitespace formatting is preserved during updates."""
+
+    def test_preserves_multiple_spaces_after_bracket(self, tmp_path):
+        """Test that multiple spaces after ] are preserved."""
+        task_file = tmp_path / "tasks.md"
+        # Write file with unusual spacing (3 spaces after ])
+        task_file.write_text("- [ ]   Triple spaced content\n")
+
+        result = parse_task_file(task_file)
+        result.tasks[0].status = TaskStatus.DONE
+        update_task_file(result)
+
+        updated = task_file.read_text()
+        # The three spaces should be preserved
+        assert "- [x]   Triple spaced content" in updated
+
+    def test_preserves_tab_after_bracket(self, tmp_path):
+        """Test that tab character after ] is preserved."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("- [ ]\tTab separated content\n")
+
+        result = parse_task_file(task_file)
+        result.tasks[0].status = TaskStatus.DONE
+        update_task_file(result)
+
+        updated = task_file.read_text()
+        assert "- [x]\tTab separated content" in updated
+
+    def test_marker_replacement_preserves_exact_line(self):
+        """Test _update_checkbox_marker preserves exact formatting."""
+        # Multiple spaces after bracket
+        line = "- [ ]   Lots of space"
+        updated, success = _update_checkbox_marker(line, TaskStatus.DONE)
+        assert success
+        assert updated == "- [x]   Lots of space"
+
+        # Tab after bracket
+        line = "- [ ]\tTabbed"
+        updated, success = _update_checkbox_marker(line, TaskStatus.FAILED)
+        assert success
+        assert updated == "- [!]\tTabbed"
+
+        # Unusual spacing before bracket
+        line = "-   [ ] Extra before bracket"
+        updated, success = _update_checkbox_marker(line, TaskStatus.DONE)
+        assert success
+        assert updated == "-   [x] Extra before bracket"
+
+    def test_preserves_trailing_whitespace(self, tmp_path):
+        """Test that trailing whitespace in content is preserved."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("- [ ] Content with trailing   \n")
+
+        result = parse_task_file(task_file)
+        result.tasks[0].status = TaskStatus.DONE
+        update_task_file(result)
+
+        updated = task_file.read_text()
+        assert "- [x] Content with trailing   " in updated
+
+
+class TestContentMatchingGuard:
+    """Test the content-matching guard against line-number drift."""
+
+    def test_guard_allows_matching_content(self):
+        """Test that update proceeds when content matches."""
+        line = "- [ ] Expected content"
+        updated, success = _update_checkbox_marker(
+            line, TaskStatus.DONE, expected_content="Expected content"
+        )
+        assert success
+        assert updated == "- [x] Expected content"
+
+    def test_guard_blocks_mismatched_content(self):
+        """Test that update is blocked when content doesn't match."""
+        line = "- [ ] Actual content"
+        updated, success = _update_checkbox_marker(
+            line, TaskStatus.DONE, expected_content="Different content"
+        )
+        assert not success
+        assert updated == "- [ ] Actual content"  # Unchanged
+
+    def test_guard_ignores_leading_trailing_whitespace(self):
+        """Test that comparison ignores leading/trailing whitespace."""
+        line = "- [ ]   Content with extra spaces   "
+        # Should match despite different whitespace in expected
+        updated, success = _update_checkbox_marker(
+            line, TaskStatus.DONE, expected_content="Content with extra spaces"
+        )
+        assert success
+
+    def test_guard_returns_warning_on_line_drift(self, tmp_path):
+        """Test that update_task_file returns warnings for drifted lines."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("- [ ] Original task\n")
+
+        result = parse_task_file(task_file)
+        # Manually change the task's first_line to simulate drift
+        result.tasks[0].content = "Different task content"
+        result.tasks[0].status = TaskStatus.DONE
+
+        warnings = update_task_file(result)
+
+        # Should have a warning about content mismatch
+        assert len(warnings) == 1
+        assert "content mismatch" in warnings[0]
+        assert "Different task content" in warnings[0]
+
+        # Original file should be unchanged (task not updated)
+        updated = task_file.read_text()
+        assert "- [ ] Original task" in updated
+
+    def test_guard_handles_line_out_of_range(self, tmp_path):
+        """Test warning when line number exceeds file length."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("- [ ] Only task\n")
+
+        result = parse_task_file(task_file)
+        # Manually set invalid line number
+        result.tasks[0].line_number = 100
+        result.tasks[0].status = TaskStatus.DONE
+
+        warnings = update_task_file(result)
+
+        assert len(warnings) == 1
+        assert "out of range" in warnings[0]
+
+    def test_simulated_agent_line_insertion(self, tmp_path):
+        """Test behavior when agent inserts lines before a task."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""# Header
+- [ ] Task A
+- [ ] Task B
+""")
+
+        result = parse_task_file(task_file)
+        # Task A at line 1, Task B at line 2
+        assert result.tasks[0].line_number == 1
+        assert result.tasks[0].content == "Task A"
+        assert result.tasks[1].line_number == 2
+        assert result.tasks[1].content == "Task B"
+
+        # Simulate agent inserting 2 lines at the top
+        new_content = """# Header
+# New line 1
+# New line 2
+- [ ] Task A
+- [ ] Task B
+"""
+        task_file.write_text(new_content)
+
+        # Mark both tasks as done (but line_numbers are now wrong)
+        result.tasks[0].status = TaskStatus.DONE
+        result.tasks[1].status = TaskStatus.DONE
+
+        warnings = update_task_file(result)
+
+        # Both tasks should warn - line 1 is now "# New line 1", line 2 is "# New line 2"
+        assert len(warnings) == 2
+        assert any("Task A" in w and "content mismatch" in w for w in warnings)
+        assert any("Task B" in w and "content mismatch" in w for w in warnings)
+
+        # Neither task should be marked done (both are now at different lines)
+        final_content = task_file.read_text()
+        assert "- [ ] Task A" in final_content
+        assert "- [ ] Task B" in final_content
+
+    def test_no_warning_when_content_matches(self, tmp_path):
+        """Test that no warnings are returned when everything matches."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] Task A
+- [ ] Task B
+""")
+
+        result = parse_task_file(task_file)
+        result.tasks[0].status = TaskStatus.DONE
+        result.tasks[1].status = TaskStatus.DONE
+
+        warnings = update_task_file(result)
+
+        assert len(warnings) == 0
+
+        # Both tasks should be updated
+        updated = task_file.read_text()
+        assert "- [x] Task A" in updated
+        assert "- [x] Task B" in updated

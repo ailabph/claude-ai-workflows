@@ -72,6 +72,9 @@ CHECKBOX_PATTERN = re.compile(r'^(\s*)-\s*\[([ xX!])\]\s*(.*)$')
 CONTINUATION_PATTERN = re.compile(r'^(\s{2,}|\t+)(\S.*)$')
 # Match @path file references (alphanumeric, dots, slashes, dashes, underscores)
 FILE_REF_PATTERN = re.compile(r'@([\w./\-_]+)')
+# Pattern for in-place marker replacement (preserves all formatting)
+# Groups: (prefix up to [)(marker)(] and everything after)
+MARKER_REPLACE_PATTERN = re.compile(r'^(\s*-\s*\[)([ xX!])(\].*)$')
 
 
 def parse_task_file(path: Path) -> TaskFile:
@@ -170,24 +173,41 @@ def render_task_line(task: Task) -> str:
     return f"{task.indent}- [{marker}] {task.first_line}"
 
 
-def _update_checkbox_marker(line: str, new_status: TaskStatus) -> str:
+def _update_checkbox_marker(
+    line: str,
+    new_status: TaskStatus,
+    expected_content: Optional[str] = None
+) -> tuple[str, bool]:
     """
-    Update only the checkbox marker in a line, preserving everything else.
+    Update only the checkbox marker character, preserving all other formatting.
+
+    Uses in-place character replacement to preserve exact whitespace and formatting
+    (e.g., multiple spaces after ] are kept as-is).
 
     Args:
-        line: Original line (must be a checkbox line)
+        line: Original line (should be a checkbox line)
         new_status: New status to set
+        expected_content: If provided, only update if line content matches.
+            This guards against line-number drift if agent modified the file.
 
     Returns:
-        Line with updated marker, or original if not a checkbox
+        Tuple of (line, updated):
+        - If successful: (updated_line, True)
+        - If not a checkbox or content mismatch: (original_line, False)
     """
-    match = CHECKBOX_PATTERN.match(line)
+    match = MARKER_REPLACE_PATTERN.match(line)
     if not match:
-        return line
+        return line, False
 
-    indent = match.group(1)
-    # Content after the checkbox (preserve exactly as-is)
-    content = match.group(3)
+    # Content verification guard: ensure this is the expected task
+    if expected_content is not None:
+        # Use CHECKBOX_PATTERN to extract normalized content for comparison
+        content_match = CHECKBOX_PATTERN.match(line)
+        if content_match:
+            actual_content = content_match.group(3).strip()
+            if actual_content != expected_content.strip():
+                # Line number drifted - this is a different task
+                return line, False
 
     marker = {
         TaskStatus.PENDING: ' ',
@@ -195,26 +215,35 @@ def _update_checkbox_marker(line: str, new_status: TaskStatus) -> str:
         TaskStatus.FAILED: '!',
     }[new_status]
 
-    return f"{indent}- [{marker}] {content}"
+    # Replace only the marker character, preserving everything else exactly
+    return f"{match.group(1)}{marker}{match.group(3)}", True
 
 
-def update_task_file(task_file: TaskFile) -> None:
+def update_task_file(task_file: TaskFile) -> List[str]:
     """
     Write updated task statuses back to file atomically.
 
     Re-reads the file from disk before applying updates to avoid clobbering
     any changes made by the agent during task execution. Only the checkbox
-    markers are updated; all other content is preserved.
+    markers are updated; all other content is preserved exactly.
+
+    Includes a content-matching guard: if a task's expected content doesn't
+    match the line at its stored position (due to line insertions/deletions
+    by the agent), that task is skipped and a warning is returned.
 
     Uses backup/temp/rename pattern to prevent data loss on crash:
     1. Re-read current file content from disk
-    2. Update only checkbox markers for tasks that changed
+    2. Update only checkbox markers for tasks whose content matches
     3. Write to temp file
     4. Atomic rename temp -> original
     5. Remove backup on success
 
     Args:
         task_file: TaskFile with updated task statuses
+
+    Returns:
+        List of warning messages for tasks that couldn't be updated due to
+        line-number drift (content mismatch). Empty list if all succeeded.
 
     Raises:
         IOError: If write fails (original file preserved from backup)
@@ -227,14 +256,30 @@ def update_task_file(task_file: TaskFile) -> None:
     current_content = path.read_text()
     current_lines = current_content.splitlines()
 
+    warnings = []
+
     # Update checkbox markers for each task
     for task in task_file.tasks:
         line_num = task.line_number
         # Safety check: ensure line number is still valid
-        if line_num < len(current_lines):
-            current_lines[line_num] = _update_checkbox_marker(
-                current_lines[line_num],
-                task.status
+        if line_num >= len(current_lines):
+            warnings.append(
+                f"Line {line_num + 1}: out of range, skipped '{task.first_line[:40]}...'"
+            )
+            continue
+
+        updated_line, success = _update_checkbox_marker(
+            current_lines[line_num],
+            task.status,
+            expected_content=task.first_line
+        )
+
+        if success:
+            current_lines[line_num] = updated_line
+        else:
+            warnings.append(
+                f"Line {line_num + 1}: content mismatch (line drift?), "
+                f"skipped '{task.first_line[:40]}...'"
             )
 
     # Atomic write
@@ -251,6 +296,8 @@ def update_task_file(task_file: TaskFile) -> None:
         if temp_path.exists():
             temp_path.unlink()
         raise
+
+    return warnings
 
 
 def get_actionable_tasks(
