@@ -1,18 +1,64 @@
 # TUI Implementation Plan for orchestrator-auto
 
-**Version:** 1.0
+**Version:** 2.0
 **Date:** 2026-01-16
-**Status:** Planning
+**Status:** Planning (Revised)
 
 ## Executive Summary
 
 This document outlines the implementation plan for an elegant Text User Interface (TUI) for orchestrator-auto. The TUI will provide a professional, hacker-aesthetic dashboard for monitoring and controlling AI agent workflows with real-time streaming output, milestone tracking, logs, and system statistics.
 
+**Key Change in v2.0:** This revision addresses critical architectural gaps identified in review:
+1. Engine I/O abstraction must be implemented BEFORE any widget work
+2. Three distinct TUI modes must be supported (single session, queue, directory watch)
+3. Queue and watch controllers must be extracted as reusable library modules
+4. Thread-safety and lifecycle management require explicit design
+
 ---
 
-## 1. Library Research and Recommendation
+## 1. Scope: Three TUI Modes
 
-### 1.1 Library Comparison
+The TUI must support three distinct operational modes, matching existing CLI capabilities:
+
+| Mode | CLI Command | TUI Behavior |
+|------|-------------|--------------|
+| **Single Session** | `orchestrator start -f "..." --tui` | Dashboard for one workflow |
+| **Explicit Queue** | `orchestrator start --queue p1.md p2.md --tui` | Queue panel + session detail |
+| **Directory Watch** | `orchestrator watch .plans --tui` | Watcher panel + queue + session |
+
+### 1.1 Mode Comparison
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        SINGLE SESSION MODE                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  [Status] [Milestones] [Agent Output]                                       │
+│  [Logs]                                                                      │
+│  User input for discovery/planning/blockers                                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        QUEUE MODE                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  [Queue List: pending/running/done] │ [Current Session Dashboard]           │
+│  Controls: skip, pause queue        │ [Agent Output] [Logs]                 │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        DIRECTORY WATCH MODE                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  [Watcher Status: dir, interval]    │                                       │
+│  [File Queue: detected files]       │ [Current Session Dashboard]           │
+│  [Last Result: success/quarantine]  │ [Agent Output] [Logs]                 │
+│  Controls: start/stop, skip file    │                                       │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 2. Library Recommendation
+
+### 2.1 Library Comparison
 
 | Library | Stars | Last Updated | Async Support | Rich Widgets | Learning Curve | Active Maintenance |
 |---------|-------|--------------|---------------|--------------|----------------|-------------------|
@@ -22,7 +68,7 @@ This document outlines the implementation plan for an elegant Text User Interfac
 | **blessed** | 1.2k+ | Bi-monthly | Manual | Minimal | Medium | Moderate |
 | **Prompt Toolkit** | 9k+ | Monthly | Native async | Input-focused | Medium | Good |
 
-### 1.2 Recommendation: Textual
+### 2.2 Recommendation: Textual
 
 **Primary Choice: Textual v0.80+**
 
@@ -30,10 +76,11 @@ Reasons:
 1. **Native async/await** - Perfect for streaming agent responses
 2. **CSS-like styling** - Easy to achieve the hacker aesthetic with dark themes and neon accents
 3. **Rich widget library** - DataTable, Tree, Log, TextArea, ProgressBar, Footer, Header
-4. **Same ecosystem as Rich** - Seamless integration with Rich formatting (already battle-tested)
+4. **Same ecosystem as Rich** - Seamless integration with Rich formatting
 5. **Active development** - Backed by Textualize, weekly releases, excellent documentation
 6. **Terminal size handling** - Built-in responsive layout system with CSS grid/flexbox
-7. **Modern Python** - Type hints, async-first design, Python 3.8+
+7. **Thread-safe messaging** - `post_message()` for cross-thread communication
+8. **Worker pattern** - Built-in `run_worker()` for background tasks
 
 **Secondary Integration: Rich**
 
@@ -42,83 +89,776 @@ Use Rich for:
 - Markdown/syntax highlighting within Textual widgets
 - Export functionality
 
-### 1.3 Why Not Others
-
-- **urwid**: Steeper learning curve, callback-based rather than async, dated API
-- **blessed**: Too low-level, requires building everything from scratch
-- **Prompt Toolkit**: Already in use for input, but not designed for full dashboards
-- **Rich alone**: No interactive widgets, display-only
-
 ---
 
-## 2. Current Codebase Analysis
+## 3. Current Architecture Analysis
 
-### 2.1 Key Integration Points
+### 3.1 Critical Integration Points
 
 ```
 orchestrator-auto/
   orchestrator_auto/
-    cli.py           # Entry point, Click commands - TUI launch point
-    engine.py        # Orchestrator class - main workflow loop
-    output.py        # StreamingIndicator - replace with TUI widgets
-    state.py         # StateMachine, WorkflowState - data source for TUI
-    agents.py        # BaseAgent.send_message() - streaming callback integration
-    db.py            # Session data - populate TUI panels
-    todo.py          # Task execution - progress tracking
-    input_handler.py # PasteAwareInput - integrate with TUI input
+    cli.py           # Entry point - contains queue/watch logic (MUST EXTRACT)
+    engine.py        # Orchestrator class - terminal-bound I/O (MUST ABSTRACT)
+    output.py        # StreamingIndicator - chunks not exposed (MUST FIX)
+    state.py         # StateMachine - no change callbacks (SHOULD ADD)
+    agents.py        # BaseAgent.send_message() - streaming via on_chunk
+    db.py            # Session/queue data - read-only for TUI
+    input_handler.py # prompt_with_paste_support() - hardcoded (MUST INJECT)
 ```
 
-### 2.2 Current Output Flow
+### 3.2 Current Problems (Why Engine Abstraction is Required)
 
-```
-engine.py::Orchestrator
-    |
-    +---> on_output callback (print by default)
-    |
-    +---> StreamingIndicator.on_chunk() for activity
-    |
-    +---> db.log_message() for persistence
-```
-
-### 2.3 Key Data Structures
+#### Problem 1: Input is Terminal-Bound
 
 ```python
-# state.py - Primary state source
-@dataclass
-class WorkflowState:
-    session_id: str
-    phase: str           # discovery, planning, execution, completed, paused
-    status: str          # active, paused, completed, failed
-    current_milestone: int
-    total_milestones: int
-    plan_path: Optional[str]
-    feature_description: Optional[str]
+# engine.py:687 - Direct terminal call, not injectable
+display_text, user_input = prompt_with_paste_support("\nYou: ")
+```
 
-# db.py - Session data
-{
-    "id": str,
-    "feature_description": str,
-    "phase": str,
-    "status": str,
-    "current_milestone": int,
-    "total_milestones": int,
-    "planner_model": str,
-    "executor_model": str,
-    "created_at": str,
-    "updated_at": str,
-    "heartbeat_at": str,
-}
+The TUI cannot supply input without modifying this. Need an `InputProvider` abstraction.
+
+#### Problem 2: Streaming Chunks Are Lost
+
+```python
+# engine.py:655-656 - When show_activity=False, chunks go nowhere
+on_chunk = self._create_heartbeat_callback(
+    indicator.on_chunk if indicator else None,  # None for TUI!
+    interval_seconds=60
+)
+```
+
+With `show_activity=False` (which TUI would set), streaming data is lost. Need an `on_chunk` callback on the Orchestrator.
+
+#### Problem 3: No State Change Events
+
+State transitions happen internally in `StateMachine`. The TUI has no way to know when phase/milestone changes without polling or parsing output.
+
+#### Problem 4: Agents Are Closed on Pause
+
+```python
+# engine.py:1380-1385
+def _cleanup(self) -> None:
+    if self.planner:
+        self.planner.close()
+    if self.executor:
+        self.executor.close()
+```
+
+After pause, agent objects are unusable. TUI cannot reuse an Orchestrator instance after pause.
+
+#### Problem 5: Queue/Watch Logic Embedded in CLI
+
+```python
+# cli.py:740 - _run_queue() is not reusable
+# cli.py:3215 - watch() command has all logic inline
+```
+
+TUI would have to duplicate this logic or call CLI functions inappropriately.
+
+---
+
+## 4. Phase 0: Engine I/O Abstraction (GATING PHASE)
+
+**This phase MUST be completed before any widget work begins.**
+
+### 4.1 Input Provider Abstraction
+
+```python
+# orchestrator_auto/io/input_provider.py
+
+from abc import ABC, abstractmethod
+from typing import Tuple, Optional
+
+class InputProvider(ABC):
+    """Abstract input provider for orchestrator."""
+
+    @abstractmethod
+    def prompt(self, prompt_text: str) -> Tuple[str, str]:
+        """
+        Get user input.
+
+        Args:
+            prompt_text: Text to display as prompt
+
+        Returns:
+            Tuple of (display_text, actual_input)
+            display_text may be truncated for long pastes
+        """
+        pass
+
+    @abstractmethod
+    def prompt_choice(self, prompt_text: str, choices: list[str]) -> str:
+        """Get user choice from options."""
+        pass
+
+
+class CLIInputProvider(InputProvider):
+    """Terminal-based input using prompt_toolkit."""
+
+    def prompt(self, prompt_text: str) -> Tuple[str, str]:
+        from ..input_handler import prompt_with_paste_support
+        return prompt_with_paste_support(prompt_text)
+
+    def prompt_choice(self, prompt_text: str, choices: list[str]) -> str:
+        import click
+        return click.prompt(prompt_text, type=click.Choice(choices))
+
+
+class TUIInputProvider(InputProvider):
+    """TUI-based input that signals the app for input."""
+
+    def __init__(self, app: "OrchestratorTUI"):
+        self.app = app
+        self._pending_input = None
+        self._input_event = asyncio.Event()
+
+    def prompt(self, prompt_text: str) -> Tuple[str, str]:
+        """Block until TUI provides input."""
+        # Signal TUI to show input widget
+        self.app.post_message(InputRequestedMessage(prompt_text))
+
+        # Wait for input (blocking - runs in worker thread)
+        import asyncio
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self._input_event.wait())
+        self._input_event.clear()
+
+        result = self._pending_input
+        self._pending_input = None
+        return (result, result)
+
+    def submit_input(self, text: str) -> None:
+        """Called by TUI when user submits input."""
+        self._pending_input = text
+        self._input_event.set()
+```
+
+### 4.2 Streaming Callback (on_chunk)
+
+```python
+# Modify Orchestrator.__init__ to accept on_chunk callback
+
+class Orchestrator:
+    def __init__(
+        self,
+        ...
+        on_output: Optional[Callable[[str], None]] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,  # NEW
+        on_state_change: Optional[Callable[[WorkflowState], None]] = None,  # NEW
+        input_provider: Optional[InputProvider] = None,  # NEW
+        ...
+    ):
+        self.on_output = on_output or print
+        self.on_chunk = on_chunk  # NEW: For streaming to TUI
+        self.on_state_change = on_state_change  # NEW: For state updates
+        self.input_provider = input_provider or CLIInputProvider()  # NEW
+```
+
+### 4.3 Modified _send_with_activity
+
+```python
+def _send_with_activity(
+    self,
+    agent,
+    message: str,
+    activity_label: str = "Working"
+) -> str:
+    indicator = self._create_activity_indicator()
+
+    if indicator:
+        self._output(f"  {activity_label}... ")
+
+    self._touch_heartbeat()
+
+    # Combine indicator callback with external on_chunk
+    def combined_chunk_handler(chunk: str):
+        # Activity indicator (if enabled)
+        if indicator:
+            indicator.on_chunk(chunk)
+        # External callback (for TUI)
+        if self.on_chunk:
+            self.on_chunk(chunk)
+
+    on_chunk = self._create_heartbeat_callback(
+        combined_chunk_handler,  # Always call, not just when indicator exists
+        interval_seconds=60
+    )
+
+    response = agent.send_message(message, on_chunk=on_chunk)
+
+    self._touch_heartbeat()
+
+    if indicator:
+        indicator.finish()
+
+    return response
+```
+
+### 4.4 State Change Notifications
+
+```python
+# In StateMachine.transition() or Orchestrator state changes
+
+def _notify_state_change(self) -> None:
+    """Notify listeners of state change."""
+    if self.on_state_change:
+        self.on_state_change(self.state)
+
+# Call after each transition:
+success, self.state, error = self.state_machine.transition(...)
+self._notify_state_change()
+```
+
+### 4.5 Replace Hardcoded Input Calls
+
+```python
+# Before (engine.py:687)
+display_text, user_input = prompt_with_paste_support("\nYou: ")
+
+# After
+display_text, user_input = self.input_provider.prompt("\nYou: ")
+```
+
+### 4.6 Deliverables for Phase 0
+
+| File | Change |
+|------|--------|
+| `io/__init__.py` | New package |
+| `io/input_provider.py` | InputProvider ABC + CLI/TUI implementations |
+| `io/events.py` | Event types for state/chunk/input |
+| `engine.py` | Add on_chunk, on_state_change, input_provider params |
+| `engine.py` | Replace all prompt_with_paste_support calls |
+| `engine.py` | Modify _send_with_activity to always call on_chunk |
+
+---
+
+## 5. Phase 1: Controller Extraction
+
+Extract queue and watch logic from cli.py into reusable library modules.
+
+### 5.1 Queue Controller
+
+```python
+# orchestrator_auto/controllers/queue_controller.py
+
+from dataclasses import dataclass
+from typing import Optional, Callable, Iterator
+from enum import Enum
+
+class QueueEvent(Enum):
+    STARTED = "started"
+    ITEM_STARTED = "item_started"
+    ITEM_COMPLETED = "item_completed"
+    ITEM_FAILED = "item_failed"
+    ITEM_PAUSED = "item_paused"
+    COMPLETED = "completed"
+    HALTED = "halted"
+
+@dataclass
+class QueueItem:
+    id: str
+    position: int
+    plan_path: str
+    feature_description: str
+    status: str  # pending, running, completed, failed, paused
+    session_id: Optional[str] = None
+
+@dataclass
+class QueueState:
+    items: list[QueueItem]
+    current_index: int
+    is_running: bool
+    completed_count: int
+    failed_count: int
+    paused_count: int
+
+
+class QueueController:
+    """
+    Reusable queue runner for sequential plan execution.
+
+    Can be used by both CLI and TUI.
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        db_path: Optional[str] = None,
+        on_event: Optional[Callable[[QueueEvent, dict], None]] = None,
+        on_output: Optional[Callable[[str], None]] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,
+        on_state_change: Optional[Callable, None]] = None,
+        input_provider: Optional["InputProvider"] = None,
+        planner_model: Optional[str] = None,
+        executor_model: Optional[str] = None,
+        auto_commit: bool = False,
+        telegram_notifier: Optional["TelegramNotifier"] = None,
+    ):
+        self.project_id = project_id
+        self.db_path = db_path
+        self.on_event = on_event or (lambda e, d: None)
+        self.on_output = on_output
+        self.on_chunk = on_chunk
+        self.on_state_change = on_state_change
+        self.input_provider = input_provider
+        self.planner_model = planner_model
+        self.executor_model = executor_model
+        self.auto_commit = auto_commit
+        self.telegram_notifier = telegram_notifier
+
+        self._current_orchestrator: Optional[Orchestrator] = None
+        self._should_stop = False
+
+    def get_state(self) -> QueueState:
+        """Get current queue state."""
+        items = db.list_queue_items(self.project_id, self.db_path)
+        return QueueState(
+            items=[QueueItem(**item) for item in items],
+            current_index=self._find_current_index(items),
+            is_running=self._current_orchestrator is not None,
+            completed_count=sum(1 for i in items if i["status"] == "completed"),
+            failed_count=sum(1 for i in items if i["status"] == "failed"),
+            paused_count=sum(1 for i in items if i["status"] == "paused"),
+        )
+
+    def run(self) -> None:
+        """
+        Run queue to completion or until halted.
+
+        This is a blocking call - run in a worker thread for TUI.
+        """
+        self.on_event(QueueEvent.STARTED, {"item_count": len(self.get_state().items)})
+
+        while not self._should_stop:
+            action, next_item = self._reconcile_head()
+
+            if action == "empty":
+                break
+            if action in ("halt_paused", "halt_active", "halt_orphaned"):
+                self.on_event(QueueEvent.HALTED, {"reason": action})
+                break
+            if action != "ready":
+                break
+
+            self._run_item(next_item)
+
+        self.on_event(QueueEvent.COMPLETED, self.get_state().__dict__)
+
+    def stop(self) -> None:
+        """Signal queue to stop after current item."""
+        self._should_stop = True
+
+    def skip_current(self) -> None:
+        """Skip the current/next pending item."""
+        # Mark as skipped in DB
+        pass
+
+    def _run_item(self, item: dict) -> None:
+        """Run a single queue item."""
+        self.on_event(QueueEvent.ITEM_STARTED, item)
+
+        try:
+            orchestrator = Orchestrator(
+                feature_description=item["feature_description"],
+                plan_path=item["plan_path"],
+                on_output=self.on_output,
+                on_chunk=self.on_chunk,
+                on_state_change=self.on_state_change,
+                input_provider=self.input_provider,
+                planner_model=self.planner_model,
+                executor_model=self.executor_model,
+            )
+            self._current_orchestrator = orchestrator
+            orchestrator.start()
+
+            self.on_event(QueueEvent.ITEM_COMPLETED, item)
+
+        except Exception as e:
+            self.on_event(QueueEvent.ITEM_FAILED, {**item, "error": str(e)})
+
+        finally:
+            self._current_orchestrator = None
+```
+
+### 5.2 Watch Controller
+
+```python
+# orchestrator_auto/controllers/watch_controller.py
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional, Callable
+from enum import Enum
+import time
+
+class WatchEvent(Enum):
+    STARTED = "started"
+    FILE_DETECTED = "file_detected"
+    FILE_PROCESSING = "file_processing"
+    FILE_COMPLETED = "file_completed"
+    FILE_QUARANTINED = "file_quarantined"
+    FILE_SKIPPED = "file_skipped"
+    STOPPED = "stopped"
+
+@dataclass
+class WatchState:
+    directory: Path
+    poll_interval: int
+    is_running: bool
+    auto_convert: bool
+    pending_files: list[Path]
+    current_file: Optional[Path]
+    last_result: Optional[str]  # "success", "failed", "quarantined"
+    processed_count: int
+    quarantined_count: int
+
+
+class WatchController:
+    """
+    Directory watcher for .plans folder processing.
+
+    Handles:
+    - File detection (oldest-first)
+    - Auto-conversion of non-.md files
+    - Quarantine on failure
+    - Rename on success
+    """
+
+    def __init__(
+        self,
+        plans_dir: Path,
+        poll_interval: int = 10,
+        auto_convert: bool = True,
+        on_event: Optional[Callable[[WatchEvent, dict], None]] = None,
+        queue_controller: Optional[QueueController] = None,
+    ):
+        self.plans_dir = plans_dir
+        self.poll_interval = poll_interval
+        self.auto_convert = auto_convert
+        self.on_event = on_event or (lambda e, d: None)
+        self.queue_controller = queue_controller
+
+        self._is_running = False
+        self._current_file: Optional[Path] = None
+        self._processed_count = 0
+        self._quarantined_count = 0
+
+    def get_state(self) -> WatchState:
+        """Get current watcher state."""
+        return WatchState(
+            directory=self.plans_dir,
+            poll_interval=self.poll_interval,
+            is_running=self._is_running,
+            auto_convert=self.auto_convert,
+            pending_files=self._scan_pending(),
+            current_file=self._current_file,
+            last_result=None,  # Track separately
+            processed_count=self._processed_count,
+            quarantined_count=self._quarantined_count,
+        )
+
+    def start(self) -> None:
+        """
+        Start watching directory.
+
+        This is a blocking call - run in a worker thread for TUI.
+        """
+        self._is_running = True
+        self.on_event(WatchEvent.STARTED, {"directory": str(self.plans_dir)})
+
+        while self._is_running:
+            pending = self._scan_pending()
+
+            if pending:
+                self._process_file(pending[0])
+            else:
+                time.sleep(self.poll_interval)
+
+        self.on_event(WatchEvent.STOPPED, {})
+
+    def stop(self) -> None:
+        """Stop the watcher."""
+        self._is_running = False
+
+    def skip_file(self, path: Path) -> None:
+        """Skip a pending file (rename to .skipped)."""
+        new_path = path.with_suffix(path.suffix + ".skipped")
+        path.rename(new_path)
+        self.on_event(WatchEvent.FILE_SKIPPED, {"path": str(path)})
+
+    def _scan_pending(self) -> list[Path]:
+        """Scan for pending plan files, oldest first."""
+        candidates = []
+        for p in self.plans_dir.glob("*.md"):
+            if self._is_watch_candidate(p):
+                candidates.append(p)
+        # Sort by modification time (oldest first)
+        return sorted(candidates, key=lambda p: p.stat().st_mtime)
+
+    def _is_watch_candidate(self, path: Path) -> bool:
+        """Check if file should be processed."""
+        name = path.name.lower()
+        # Skip already-processed files
+        if any(name.endswith(s) for s in [".done.md", ".failed.md", ".skipped.md"]):
+            return False
+        return True
+
+    def _process_file(self, path: Path) -> None:
+        """Process a single plan file."""
+        self._current_file = path
+        self.on_event(WatchEvent.FILE_PROCESSING, {"path": str(path)})
+
+        try:
+            # Add to queue and run
+            # ... implementation details ...
+            self._processed_count += 1
+            self.on_event(WatchEvent.FILE_COMPLETED, {"path": str(path)})
+
+        except Exception as e:
+            self._quarantine_file(path, str(e))
+
+        finally:
+            self._current_file = None
+
+    def _quarantine_file(self, path: Path, error: str) -> None:
+        """Move failed file to quarantine."""
+        new_path = path.with_suffix(".failed.md")
+        path.rename(new_path)
+        self._quarantined_count += 1
+        self.on_event(WatchEvent.FILE_QUARANTINED, {
+            "path": str(path),
+            "error": error
+        })
+```
+
+### 5.3 Deliverables for Phase 1
+
+| File | Change |
+|------|--------|
+| `controllers/__init__.py` | New package |
+| `controllers/queue_controller.py` | QueueController class |
+| `controllers/watch_controller.py` | WatchController class |
+| `cli.py` | Refactor to use controllers (maintain backward compatibility) |
+
+---
+
+## 6. Lifecycle and Pause/Resume Design
+
+### 6.1 The Problem
+
+The current system assumes pause/resume happens via separate CLI invocations:
+
+```bash
+# Session pauses (blocks for input)
+# User closes terminal
+# Later:
+orchestrator resume <session-id>
+```
+
+In a long-running TUI, we need different semantics.
+
+### 6.2 Design Decision: Treat Pause as Terminal
+
+**Recommended approach:** When a session pauses (blocker, human input needed), the Orchestrator instance terminates normally. To resume:
+
+1. Create a NEW Orchestrator instance with `session_id=...`
+2. Call `.resume(answer)` or `.start()` which detects the paused state
+
+This mirrors CLI semantics and avoids issues with reusing closed agent instances.
+
+### 6.3 TUI Pause/Resume Flow
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ORCHESTRATOR RUNNING                                                         │
+│                                                                              │
+│  User clicks Pause OR session hits blocker                                  │
+│         │                                                                    │
+│         ▼                                                                    │
+│  Orchestrator.pause() called → _cleanup() runs → agents closed              │
+│         │                                                                    │
+│         ▼                                                                    │
+│  TUI shows "PAUSED" state, input widget for answer                          │
+│         │                                                                    │
+│         ▼                                                                    │
+│  User provides answer and clicks Resume                                     │
+│         │                                                                    │
+│         ▼                                                                    │
+│  TUI creates NEW Orchestrator(session_id=...) → start() or resume(answer)  │
+│         │                                                                    │
+│         ▼                                                                    │
+│  New agents created, workflow continues                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 6.4 Implementation
+
+```python
+class OrchestratorTUI(App):
+
+    def __init__(self):
+        super().__init__()
+        self._orchestrator: Optional[Orchestrator] = None
+        self._worker_task: Optional[asyncio.Task] = None
+
+    async def _run_orchestrator(self, orchestrator: Orchestrator) -> None:
+        """Run orchestrator in background worker."""
+        self._orchestrator = orchestrator
+        try:
+            await asyncio.to_thread(orchestrator.start)
+        except Exception as e:
+            self.post_message(OrchestratorErrorMessage(str(e)))
+        finally:
+            self._orchestrator = None
+            # Orchestrator has cleaned up, agents are closed
+            self.post_message(OrchestratorStoppedMessage())
+
+    def action_pause(self) -> None:
+        """Request pause - orchestrator will stop at next safe point."""
+        if self._orchestrator:
+            # Signal pause (orchestrator checks this flag)
+            self._orchestrator.request_pause()
+            self.notify("Pause requested...")
+
+    async def action_resume(self, answer: Optional[str] = None) -> None:
+        """Resume paused session with optional answer."""
+        session_id = self.current_session_id
+        if not session_id:
+            return
+
+        # Create NEW orchestrator instance for resume
+        orchestrator = Orchestrator(
+            session_id=session_id,
+            on_output=self._adapter.on_output,
+            on_chunk=self._adapter.on_chunk,
+            on_state_change=self._adapter.on_state_change,
+            input_provider=TUIInputProvider(self),
+        )
+
+        # Resume with answer if provided
+        if answer:
+            orchestrator.set_blocker_response(answer)
+
+        # Run in worker
+        self.run_worker(self._run_orchestrator(orchestrator))
 ```
 
 ---
 
-## 3. TUI Design
+## 7. Thread-Safety Requirements
 
-### 3.1 Visual Layout (80x24 Minimum)
+### 7.1 Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                              MAIN THREAD                                     │
+│  ┌─────────────────────────────────────────────────────────────────────┐   │
+│  │  Textual Event Loop                                                  │   │
+│  │  - Widget rendering                                                  │   │
+│  │  - User input handling                                               │   │
+│  │  - Message processing                                                │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+│         ▲                                                                    │
+│         │ post_message() - THREAD-SAFE                                      │
+│         │                                                                    │
+│  ┌──────┴──────────────────────────────────────────────────────────────┐   │
+│  │  Worker Thread (asyncio.to_thread)                                   │   │
+│  │  - Orchestrator.start()                                              │   │
+│  │  - Agent API calls                                                   │   │
+│  │  - on_chunk callbacks                                                │   │
+│  │  - on_state_change callbacks                                         │   │
+│  └─────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.2 Rules
+
+1. **Orchestrator runs in worker thread** via `asyncio.to_thread()` or `run_worker()`
+2. **Callbacks (on_chunk, on_state_change) execute in worker thread**
+3. **Widget updates MUST use `app.post_message()`** - never update widgets directly from callbacks
+4. **Input from TUI to worker** uses thread-safe primitives (Event, Queue)
+
+### 7.3 TUI Output Adapter
+
+```python
+# orchestrator_auto/tui/adapter.py
+
+from textual.message import Message
+
+class ChunkMessage(Message):
+    def __init__(self, chunk: str):
+        super().__init__()
+        self.chunk = chunk
+
+class StateChangeMessage(Message):
+    def __init__(self, state: WorkflowState):
+        super().__init__()
+        self.state = state
+
+class OutputMessage(Message):
+    def __init__(self, text: str):
+        super().__init__()
+        self.text = text
+
+
+class TUIOutputAdapter:
+    """
+    Bridges Orchestrator callbacks to TUI messages.
+
+    All methods are called from worker thread - must use post_message().
+    """
+
+    def __init__(self, app: "OrchestratorTUI"):
+        self.app = app
+        self._token_count = 0
+        self._api_calls = 0
+
+    def on_output(self, message: str) -> None:
+        """Handle orchestrator output - RUNS IN WORKER THREAD."""
+        # Thread-safe: post_message marshals to main thread
+        self.app.post_message(OutputMessage(message))
+
+    def on_chunk(self, chunk: str) -> None:
+        """Handle streaming chunk - RUNS IN WORKER THREAD."""
+        self._token_count += len(chunk.split())
+        # Thread-safe
+        self.app.post_message(ChunkMessage(chunk))
+
+    def on_state_change(self, state: "WorkflowState") -> None:
+        """Handle state transition - RUNS IN WORKER THREAD."""
+        # Thread-safe
+        self.app.post_message(StateChangeMessage(state))
+```
+
+### 7.4 Message Handlers in TUI
+
+```python
+class OrchestratorTUI(App):
+
+    def on_chunk_message(self, message: ChunkMessage) -> None:
+        """Handle chunk - RUNS IN MAIN THREAD."""
+        # Safe to update widgets here
+        self.query_one("#agent-output", AgentOutput).write_chunk(message.chunk)
+
+    def on_state_change_message(self, message: StateChangeMessage) -> None:
+        """Handle state change - RUNS IN MAIN THREAD."""
+        state = message.state
+        status_panel = self.query_one("#status", StatusPanel)
+        status_panel.phase = state.phase
+        status_panel.status = state.status
+        # ... etc
+```
+
+---
+
+## 8. TUI Layout Design
+
+### 8.1 Single Session Mode (80x24 Minimum)
 
 ```
 +==============================================================================+
-|  ORCHESTRATOR-AUTO v0.13.0                    [Session: a1b2c3d4] [14:32:05] |
+|  ORCHESTRATOR-AUTO v0.14.0                    [Session: a1b2c3d4] [14:32:05] |
 +==============================================================================+
 |                                                                              |
 | +-- STATUS ----------------+  +-- MILESTONES --------------------------+    |
@@ -151,56 +891,84 @@ class WorkflowState:
 +==============================================================================+
 ```
 
-### 3.2 Responsive Layouts
+### 8.2 Queue Mode Layout
 
-**Large Terminal (120+ cols)**
 ```
-+============================================================================+
-| Header                                                                      |
-+============================================================================+
-| Status Panel  | Milestones Panel | Agent Output (streaming)                |
-| (20 cols)     | (30 cols)        | (remaining space)                       |
-|               |                  |                                         |
-|               |                  |                                         |
-+---------------+------------------+-----------------------------------------+
-| Logs Panel (full width, 6 lines)                                           |
-+============================================================================+
-| Footer                                                                      |
-+============================================================================+
-```
-
-**Medium Terminal (80-119 cols)**
-```
-+====================================+
-| Header                             |
-+====================================+
-| Status/Stats  | Agent Output       |
-| (25 cols)     | (remaining)        |
-+---------------+--------------------+
-| Milestones (full width, collapsible)|
-+------------------------------------+
-| Logs (3-4 lines)                   |
-+====================================+
-| Footer                             |
-+====================================+
-```
-
-**Small Terminal (80 cols, 24 lines)**
-```
-+================================+
-| Header (compact)               |
-+================================+
-| Agent Output                   |
-| (full width, scrolling)        |
-|                                |
-+--------------------------------+
-| Status bar: M3/4 | 12k tokens  |
-+================================+
-| [Q]uit [P]ause [?]Help         |
-+================================+
++==============================================================================+
+|  ORCHESTRATOR-AUTO v0.14.0  [QUEUE MODE]                         [14:32:05] |
++==============================================================================+
+|                                                                              |
+| +-- QUEUE ----------------------+  +-- CURRENT SESSION -------------------+ |
+| | [x] 1. setup-database.md     |  | Session: a1b2c3d4                     | |
+| | [x] 2. add-auth.md           |  | Phase: EXECUTION  Status: ACTIVE     | |
+| | [>] 3. api-endpoints.md      |  | Feature: Add REST API endpoints      | |
+| | [ ] 4. tests.md              |  | Milestone: 2/4                        | |
+| | [ ] 5. deploy-config.md      |  +---------------------------------------+ |
+| +------------------------------+                                            |
+| | Completed: 2  Failed: 0      |  +-- AGENT OUTPUT -----------------------+ |
+| | Remaining: 3                 |  | > Creating endpoint handlers...       | |
+| +------------------------------+  | > Added GET /users endpoint           | |
+|                                   | > Added POST /users endpoint          | |
+|                                   | > Writing tests...                    | |
+|                                   +---------------------------------------+ |
+|                                                                              |
+| +-- LOGS (tail) ----------------------------------------------------------+ |
+| | [14:30:12] Queue started: 5 items                                       | |
+| | [14:30:15] Item 1 completed: setup-database.md                          | |
+| | [14:31:02] Item 2 completed: add-auth.md                                | |
+| | [14:31:05] Item 3 started: api-endpoints.md                             | |
+| +-------------------------------------------------------------------------+ |
+|                                                                              |
++==============================================================================+
+| [Q]uit  [S]kip  [P]ause Queue  [?]Help                   Queue: 3/5 RUNNING |
++==============================================================================+
 ```
 
-### 3.3 Color Scheme (Hacker Aesthetic)
+### 8.3 Directory Watch Mode Layout
+
+```
++==============================================================================+
+|  ORCHESTRATOR-AUTO v0.14.0  [WATCH MODE]                         [14:32:05] |
++==============================================================================+
+|                                                                              |
+| +-- WATCHER --------------------+  +-- CURRENT SESSION -------------------+ |
+| | Directory: ./plans/          |  | Session: a1b2c3d4                     | |
+| | Poll: 10s  Auto-convert: ON  |  | Phase: EXECUTION  Status: ACTIVE     | |
+| | Status: WATCHING             |  | Feature: Add user endpoints          | |
+| +------------------------------+  | Milestone: 1/3                        | |
+| +-- PENDING FILES --------------+  +---------------------------------------+ |
+| | [>] 001_users.md (running)   |                                          |
+| | [ ] 002_products.md          |  +-- AGENT OUTPUT -----------------------+ |
+| | [ ] 003_orders.md            |  | > Creating user model...              | |
+| +------------------------------+  | > Added validation logic              | |
+| +-- LAST RESULT ----------------+  | > Writing migration...               | |
+| | 000_init.md -> .done.md      |  +---------------------------------------+ |
+| | Completed in 2m 34s          |                                          |
+| +------------------------------+                                            |
+|                                                                              |
+| +-- LOGS (tail) ----------------------------------------------------------+ |
+| | [14:28:00] Watcher started: ./plans/                                    | |
+| | [14:28:05] Detected: 000_init.md                                        | |
+| | [14:30:39] Completed: 000_init.md -> 000_init.done.md                   | |
+| | [14:30:42] Detected: 001_users.md                                       | |
+| +-------------------------------------------------------------------------+ |
+|                                                                              |
++==============================================================================+
+| [Q]uit  [S]kip File  [T]oggle Watch  [?]Help             Watch: ON  Files: 3|
++==============================================================================+
+```
+
+### 8.4 Responsive Layouts
+
+**Large Terminal (120+ cols):** 3-column layout with full panels
+
+**Medium Terminal (80-119 cols):** 2-column, queue/watch panel collapses
+
+**Small Terminal (80x24):** Single column, tabbed navigation between panels
+
+---
+
+## 9. Color Scheme (Hacker Aesthetic)
 
 ```css
 /* TUI CSS Theme - Matrix/Cyberpunk Style */
@@ -255,991 +1023,291 @@ Screen {
     color: #00d4ff;       /* Cyan for streaming */
 }
 
+.queue-panel {
+    border: tall #ff00ff; /* Magenta for queue */
+    background: #0d0d0d;
+}
+
+.watch-panel {
+    border: tall #ffcc00; /* Amber for watch */
+    background: #0d0d0d;
+}
+
 .log-panel {
     background: #050505;
     color: #888888;       /* Muted gray */
     border: round #333333;
 }
 
-.log-timestamp {
-    color: #666666;
-}
-
-.log-info {
-    color: #00d4ff;
-}
-
-.log-warning {
-    color: #ffcc00;
-}
-
-.log-error {
-    color: #ff0040;
+.stats-value {
+    color: #ff00ff;       /* Magenta for numbers */
 }
 
 .footer {
     background: #1a1a2e;
     color: #00ff41;
 }
-
-.stats-value {
-    color: #ff00ff;       /* Magenta for numbers */
-}
-
-.keybinding {
-    color: #00ff41;
-    text-style: bold;
-}
 ```
 
 ---
 
-## 4. Component Architecture
-
-### 4.1 Module Structure
+## 10. Module Structure
 
 ```
 orchestrator_auto/
-  tui/
-    __init__.py           # TUI entry point, TUIApp class
-    app.py                # Main Textual Application
-    screens/
-      __init__.py
-      dashboard.py        # Main dashboard screen
-      logs.py             # Full-screen logs viewer
-      help.py             # Help/keybindings screen
-      session_picker.py   # Session selection screen
-    widgets/
-      __init__.py
-      status_panel.py     # Status/stats display
-      milestone_list.py   # Milestone progress list
-      agent_output.py     # Streaming agent output panel
-      log_panel.py        # Log tail display
-      progress_bar.py     # Custom progress indicators
-      streaming_text.py   # Text with streaming animation
-    styles/
-      __init__.py
-      theme.tcss          # Main theme CSS
-      colors.py           # Color constants
-    bindings.py           # Keyboard bindings
-    events.py             # Custom event types
-    state.py              # TUI state management (reactive)
-```
-
-### 4.2 Class Hierarchy
-
-```
-TextualApp (Textual base)
-    |
-    +-- OrchestratorTUI
-            |
-            +-- DashboardScreen (main)
-            |       |
-            |       +-- StatusPanel (Static widget)
-            |       +-- MilestoneList (ListView)
-            |       +-- AgentOutput (RichLog)
-            |       +-- LogPanel (Log)
-            |       +-- Footer (Static)
-            |
-            +-- LogsScreen (full logs)
-            +-- HelpScreen (keybindings)
-            +-- SessionPickerScreen (for resume)
-```
-
-### 4.3 Key Widget Specifications
-
-#### StatusPanel
-```python
-class StatusPanel(Static):
-    """Displays session status, phase, and statistics."""
-
-    # Reactive attributes (auto-update on change)
-    phase: reactive[str] = reactive("discovery")
-    status: reactive[str] = reactive("active")
-    feature: reactive[str] = reactive("")
-    api_calls: reactive[int] = reactive(0)
-    token_count: reactive[int] = reactive(0)
-    elapsed: reactive[float] = reactive(0.0)
-
-    def compose(self) -> ComposeResult:
-        yield Static("Phase: ", classes="label")
-        yield Static(self.phase, classes="phase-value")
-        # ...
-```
-
-#### AgentOutput (Streaming)
-```python
-class AgentOutput(RichLog):
-    """Real-time streaming agent output with auto-scroll."""
-
-    def on_chunk(self, chunk: str) -> None:
-        """Handle streaming chunk from agent."""
-        # Update last line with streaming animation
-        self.write(chunk, scroll_end=True)
-
-    def on_message_complete(self) -> None:
-        """Called when agent message is complete."""
-        self.write("\n")
-```
-
-#### MilestoneList
-```python
-class MilestoneList(ListView):
-    """Displays milestone progress with visual indicators."""
-
-    milestones: reactive[list] = reactive([])
-    current_milestone: reactive[int] = reactive(0)
-
-    def compose(self) -> ComposeResult:
-        for i, milestone in enumerate(self.milestones):
-            status_icon = self._get_status_icon(i)
-            yield ListItem(
-                Static(f"{status_icon} M{i+1}: {milestone['name']}"),
-                classes=self._get_classes(i)
-            )
+    __init__.py
+    cli.py                    # Modified: --tui flags, uses controllers
+    engine.py                 # Modified: I/O abstraction
+    io/                       # NEW: I/O abstraction layer
+        __init__.py
+        input_provider.py     # InputProvider ABC + implementations
+        events.py             # Event types
+    controllers/              # NEW: Extracted business logic
+        __init__.py
+        queue_controller.py   # QueueController
+        watch_controller.py   # WatchController
+    tui/                      # NEW: TUI package
+        __init__.py           # Package exports
+        app.py                # Main OrchestratorTUI class
+        adapter.py            # TUIOutputAdapter
+        modes/
+            __init__.py
+            single.py         # Single session mode
+            queue.py          # Queue mode
+            watch.py          # Watch mode
+        screens/
+            __init__.py
+            dashboard.py      # Main dashboard screen
+            logs.py           # Full-screen logs viewer
+            help.py           # Help/keybindings screen
+            session_picker.py # Session selection screen
+        widgets/
+            __init__.py
+            status_panel.py   # Status/stats display
+            milestone_list.py # Milestone progress list
+            agent_output.py   # Streaming agent output panel
+            log_panel.py      # Log tail display
+            queue_panel.py    # Queue list display
+            watch_panel.py    # Watcher status display
+            input_modal.py    # Input dialog for blockers
+        styles/
+            __init__.py
+            theme.tcss        # Main theme CSS
+            colors.py         # Color constants
+        bindings.py           # Keyboard bindings
+tests/
+    test_io_providers.py      # Input provider tests
+    test_controllers.py       # Controller tests
+    test_tui_widgets.py       # Widget unit tests
+    test_tui_integration.py   # Integration tests
 ```
 
 ---
 
-## 5. Integration Strategy
+## 11. CLI Integration
 
-### 5.1 Engine Integration
-
-The TUI will integrate with the engine through a new output adapter:
+### 11.1 Updated Start Command
 
 ```python
-# orchestrator_auto/tui/adapter.py
-
-class TUIOutputAdapter:
-    """Bridges Orchestrator output to TUI widgets."""
-
-    def __init__(self, app: OrchestratorTUI):
-        self.app = app
-        self._token_count = 0
-        self._api_calls = 0
-
-    def on_output(self, message: str) -> None:
-        """Handle orchestrator output messages."""
-        self.app.post_message(AgentOutputMessage(message))
-
-    def on_chunk(self, chunk: str) -> None:
-        """Handle streaming chunks."""
-        self._token_count += len(chunk.split())
-        self.app.post_message(StreamingChunkMessage(chunk))
-        self.app.update_stats(tokens=self._token_count)
-
-    def on_state_change(self, state: WorkflowState) -> None:
-        """Handle state transitions."""
-        self.app.post_message(StateChangeMessage(state))
-```
-
-### 5.2 Modified Engine Initialization
-
-```python
-# In cli.py - TUI mode start
-
-def start_with_tui(feature: str, **kwargs):
-    """Start orchestrator with TUI dashboard."""
-    from .tui import OrchestratorTUI, TUIOutputAdapter
-
-    app = OrchestratorTUI()
-    adapter = TUIOutputAdapter(app)
-
-    # Create orchestrator with TUI callbacks
-    orchestrator = Orchestrator(
-        feature_description=feature,
-        on_output=adapter.on_output,
-        show_activity=False,  # TUI handles this
-        **kwargs
-    )
-
-    # Run TUI with orchestrator in background worker
-    app.set_orchestrator(orchestrator)
-    app.run()
-```
-
-### 5.3 Async Integration Pattern
-
-```python
-# TUI runs in main thread, orchestrator in worker
-
-class OrchestratorTUI(App):
-
-    def on_mount(self) -> None:
-        """Called when app is mounted."""
-        if self.orchestrator:
-            self.run_worker(self._run_orchestrator())
-
-    async def _run_orchestrator(self) -> None:
-        """Run orchestrator in background worker."""
-        try:
-            # This runs in a worker thread
-            await asyncio.to_thread(self.orchestrator.start)
-        except Exception as e:
-            self.post_message(ErrorMessage(str(e)))
-```
-
-### 5.4 CLI Flag Integration
-
-```python
-# Add to cli.py
-
 @cli.command()
-@click.option('--tui/--no-tui', default=False, help='Launch TUI dashboard')
-@click.option('--tui-mode', type=click.Choice(['full', 'compact', 'minimal']),
-              default='full', help='TUI layout mode')
-def start(feature, tui, tui_mode, **kwargs):
+@click.option('-f', '--feature', help='Feature description')
+@click.option('--plan', 'plan_path', type=click.Path(exists=True),
+              help='Path to existing plan file')
+@click.option('--queue', 'queue_plans', multiple=True, type=click.Path(exists=True),
+              help='Queue mode: plan files to run sequentially')
+@click.option('-pm', '--planner-model', help='Planner model')
+@click.option('-em', '--executor-model', help='Executor model')
+@click.option('--auto-commit', is_flag=True, help='Auto-commit on completion')
+@click.option('--tui', is_flag=True, default=False, help='Launch TUI dashboard')
+@click.option('--debug', is_flag=True, help='Enable debug logging')
+@click.pass_context
+def start(ctx, feature, plan_path, queue_plans, planner_model,
+          executor_model, auto_commit, tui, debug):
+    """Start a new orchestration workflow."""
+
     if tui:
-        start_with_tui(feature, mode=tui_mode, **kwargs)
+        if queue_plans:
+            _start_queue_tui(queue_plans, planner_model, executor_model, auto_commit)
+        elif feature:
+            _start_single_tui(feature, plan_path, planner_model, executor_model, auto_commit)
+        else:
+            click.secho("Error: --tui requires -f or --queue", fg="red")
+            sys.exit(1)
     else:
         # Existing CLI behavior
         ...
 ```
 
----
-
-## 6. Implementation Phases
-
-### Phase 1: Foundation (Week 1)
-
-**Milestone 1.1: Project Setup**
-- Add Textual to dependencies in `pyproject.toml`
-- Create `tui/` package structure
-- Set up basic App class with dark theme
-- Create initial CSS theme file
-
-**Milestone 1.2: Static Dashboard**
-- Implement Header widget with session info
-- Implement Footer with keybindings display
-- Create StatusPanel (static, no data binding yet)
-- Create placeholder panels for Agent Output and Logs
-
-**Deliverables:**
-- TUI launches with `--tui` flag
-- Static dark-themed dashboard displays
-- Basic keyboard navigation (Q to quit)
-
-### Phase 2: Data Integration (Week 2)
-
-**Milestone 2.1: State Binding**
-- Implement reactive state management
-- Create TUIOutputAdapter class
-- Bind StatusPanel to WorkflowState
-- Implement MilestoneList widget
-
-**Milestone 2.2: Engine Connection**
-- Modify Orchestrator to accept TUI callbacks
-- Implement worker pattern for background execution
-- Wire up state change events
-- Handle phase transitions visually
-
-**Deliverables:**
-- TUI updates in real-time as workflow progresses
-- Milestone list shows current progress
-- Phase/status display reflects actual state
-
-### Phase 3: Streaming Output (Week 3)
-
-**Milestone 3.1: Agent Output Panel**
-- Implement AgentOutput widget with RichLog
-- Create streaming text animation
-- Handle agent message boundaries
-- Implement auto-scroll with scroll-lock toggle
-
-**Milestone 3.2: Log Panel**
-- Implement LogPanel with timestamp formatting
-- Add log level coloring
-- Create log filtering options
-- Link to full LogsScreen
-
-**Deliverables:**
-- Real-time streaming agent output visible
-- Log panel shows recent activity
-- Smooth scrolling and updates
-
-### Phase 4: Interactivity (Week 4)
-
-**Milestone 4.1: Keyboard Controls**
-- Implement Pause/Resume functionality
-- Add Help screen with keybindings
-- Create session picker for resume mode
-- Add input handling for user responses
-
-**Milestone 4.2: User Input Integration**
-- Handle discovery phase input in TUI
-- Integrate paste support
-- Handle blocker responses
-- Implement command palette
-
-**Deliverables:**
-- Full keyboard control of workflow
-- User can respond to blockers within TUI
-- Help documentation accessible
-
-### Phase 5: Polish and Responsive Design (Week 5)
-
-**Milestone 5.1: Responsive Layouts**
-- Implement layout breakpoints
-- Create compact mode for small terminals
-- Handle terminal resize events
-- Optimize for 80x24 minimum
-
-**Milestone 5.2: Visual Polish**
-- Add subtle animations (pulse for streaming)
-- Implement progress bar animations
-- Add status transition effects
-- Final theme adjustments
-
-**Deliverables:**
-- TUI works at any terminal size
-- Professional visual appearance
-- Smooth animations and transitions
-
-### Phase 6: Advanced Features (Week 6)
-
-**Milestone 6.1: Session Management**
-- Session picker with filtering
-- Session status overview
-- Multi-session switching (future)
-
-**Milestone 6.2: Export and Utilities**
-- Export current view to file
-- Screenshot capability (save to file)
-- Integration with todo command
-
-**Deliverables:**
-- Complete TUI feature set
-- Documentation and examples
-- Performance optimization
-
----
-
-## 7. Code Examples
-
-### 7.1 Main Application
+### 11.2 Updated Watch Command
 
 ```python
-# orchestrator_auto/tui/app.py
-
-from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.widgets import Header, Footer
-from textual.containers import Container, Horizontal, Vertical
-
-from .screens import DashboardScreen, LogsScreen, HelpScreen
-from .widgets import StatusPanel, MilestoneList, AgentOutput, LogPanel
-from .styles import THEME_CSS
-
-
-class OrchestratorTUI(App):
-    """Main TUI application for orchestrator-auto."""
-
-    CSS = THEME_CSS
-
-    BINDINGS = [
-        Binding("q", "quit", "Quit"),
-        Binding("p", "pause", "Pause"),
-        Binding("r", "resume", "Resume"),
-        Binding("l", "logs", "Full Logs"),
-        Binding("?", "help", "Help"),
-        Binding("s", "scroll_toggle", "Scroll Lock"),
-    ]
-
-    def __init__(self, orchestrator=None):
-        super().__init__()
-        self.orchestrator = orchestrator
-        self._adapter = None
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        yield Container(
-            Horizontal(
-                Vertical(
-                    StatusPanel(id="status"),
-                    id="left-panel",
-                ),
-                Vertical(
-                    MilestoneList(id="milestones"),
-                    id="center-panel",
-                ),
-                Vertical(
-                    AgentOutput(id="agent-output"),
-                    id="right-panel",
-                ),
-                id="main-content",
-            ),
-            LogPanel(id="logs"),
-            id="dashboard",
-        )
-        yield Footer()
-
-    def on_mount(self) -> None:
-        """Initialize and start orchestrator when mounted."""
-        self.title = "ORCHESTRATOR-AUTO"
-        self.sub_title = f"v{__version__}"
-
-        if self.orchestrator:
-            self._start_orchestrator()
-
-    def _start_orchestrator(self) -> None:
-        """Start orchestrator in background worker."""
-        from .adapter import TUIOutputAdapter
-
-        self._adapter = TUIOutputAdapter(self)
-        self.orchestrator.on_output = self._adapter.on_output
-
-        # Run in worker thread
-        self.run_worker(self._run_orchestrator_async())
-
-    async def _run_orchestrator_async(self) -> None:
-        """Async wrapper for orchestrator execution."""
-        import asyncio
-        try:
-            await asyncio.to_thread(self.orchestrator.start)
-        except Exception as e:
-            self.notify(f"Error: {e}", severity="error")
-
-    def action_pause(self) -> None:
-        """Pause the workflow."""
-        # Implementation
-        pass
-
-    def action_resume(self) -> None:
-        """Resume the workflow."""
-        # Implementation
-        pass
-
-    def action_logs(self) -> None:
-        """Switch to full logs screen."""
-        self.push_screen(LogsScreen())
-
-    def action_help(self) -> None:
-        """Show help screen."""
-        self.push_screen(HelpScreen())
-```
-
-### 7.2 Status Panel Widget
-
-```python
-# orchestrator_auto/tui/widgets/status_panel.py
-
-from textual.widgets import Static
-from textual.reactive import reactive
-from textual.app import ComposeResult
-from rich.text import Text
-from rich.table import Table
-
-
-class StatusPanel(Static):
-    """Displays session status, phase, and statistics."""
-
-    # Reactive properties - UI updates automatically when these change
-    session_id: reactive[str] = reactive("")
-    phase: reactive[str] = reactive("discovery")
-    status: reactive[str] = reactive("active")
-    feature: reactive[str] = reactive("")
-    planner_model: reactive[str] = reactive("opus")
-    executor_model: reactive[str] = reactive("sonnet")
-    api_calls: reactive[int] = reactive(0)
-    token_count: reactive[int] = reactive(0)
-    elapsed_seconds: reactive[float] = reactive(0.0)
-
-    def render(self) -> Table:
-        """Render the status panel as a Rich Table."""
-        table = Table(show_header=False, box=None, padding=(0, 1))
-        table.add_column("Label", style="dim")
-        table.add_column("Value")
-
-        # Phase with color
-        phase_style = self._get_phase_style()
-        table.add_row("Phase:", Text(self.phase.upper(), style=phase_style))
-
-        # Status with color
-        status_style = self._get_status_style()
-        table.add_row("Status:", Text(self.status.upper(), style=status_style))
-
-        # Feature (truncated)
-        feature_display = self.feature[:30] + "..." if len(self.feature) > 30 else self.feature
-        table.add_row("Feature:", feature_display)
-
-        # Models
-        table.add_row("Models:", f"{self.planner_model}/{self.executor_model}")
-
-        # Statistics section
-        table.add_row("", "")  # Spacer
-        table.add_row("API Calls:", Text(str(self.api_calls), style="magenta"))
-        table.add_row("Tokens:", Text(f"{self.token_count:,}", style="magenta"))
-        table.add_row("Elapsed:", self._format_elapsed())
-
-        return table
-
-    def _get_phase_style(self) -> str:
-        """Get style for phase based on value."""
-        styles = {
-            "discovery": "cyan",
-            "planning": "blue",
-            "execution": "green bold",
-            "completed": "green",
-            "paused": "yellow",
-        }
-        return styles.get(self.phase, "white")
-
-    def _get_status_style(self) -> str:
-        """Get style for status based on value."""
-        styles = {
-            "active": "green bold",
-            "paused": "yellow",
-            "completed": "blue",
-            "failed": "red bold",
-        }
-        return styles.get(self.status, "white")
-
-    def _format_elapsed(self) -> str:
-        """Format elapsed time as HH:MM:SS."""
-        hours, remainder = divmod(int(self.elapsed_seconds), 3600)
-        minutes, seconds = divmod(remainder, 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-```
-
-### 7.3 Agent Output Widget
-
-```python
-# orchestrator_auto/tui/widgets/agent_output.py
-
-from textual.widgets import RichLog
-from textual.reactive import reactive
-from rich.text import Text
-
-
-class AgentOutput(RichLog):
-    """
-    Real-time streaming agent output display.
-
-    Features:
-    - Auto-scroll to bottom (toggleable)
-    - Streaming text with visual indicator
-    - Agent message boundaries
-    - Syntax highlighting for code blocks
-    """
-
-    auto_scroll: reactive[bool] = reactive(True)
-    is_streaming: reactive[bool] = reactive(False)
-
-    DEFAULT_CSS = """
-    AgentOutput {
-        background: #0a0a0a;
-        border: round #00d4ff;
-        padding: 0 1;
-    }
-
-    AgentOutput:focus {
-        border: round #00ff41;
-    }
-    """
-
-    def __init__(self, **kwargs):
-        super().__init__(highlight=True, markup=True, **kwargs)
-        self._current_line = ""
-
-    def write_chunk(self, chunk: str) -> None:
-        """
-        Write a streaming chunk from agent response.
-
-        Chunks are accumulated until a newline, then written as a line.
-        Shows streaming indicator while receiving chunks.
-        """
-        self.is_streaming = True
-        self._current_line += chunk
-
-        # Check for complete lines
-        if "\n" in self._current_line:
-            lines = self._current_line.split("\n")
-            # Write all complete lines
-            for line in lines[:-1]:
-                self._write_line(line)
-            # Keep the incomplete part
-            self._current_line = lines[-1]
-
-        # Update streaming indicator
-        self._update_streaming_indicator()
-
-    def finish_message(self) -> None:
-        """Called when agent message is complete."""
-        self.is_streaming = False
-
-        # Write any remaining content
-        if self._current_line:
-            self._write_line(self._current_line)
-            self._current_line = ""
-
-        # Add visual separator
-        self.write(Text("─" * 40, style="dim"))
-
-    def _write_line(self, line: str) -> None:
-        """Write a line with appropriate styling."""
-        # Detect agent prefixes
-        if line.startswith(">"):
-            text = Text(line, style="green")
-        elif line.startswith("!"):
-            text = Text(line, style="yellow")
-        elif line.startswith("ERROR"):
-            text = Text(line, style="red bold")
-        else:
-            text = Text(line)
-
-        self.write(text, scroll_end=self.auto_scroll)
-
-    def _update_streaming_indicator(self) -> None:
-        """Update visual streaming indicator."""
-        if self.is_streaming:
-            # Could add pulsing animation here
-            pass
-
-    def toggle_scroll(self) -> None:
-        """Toggle auto-scroll behavior."""
-        self.auto_scroll = not self.auto_scroll
-        status = "ON" if self.auto_scroll else "OFF"
-        self.notify(f"Auto-scroll: {status}")
-```
-
-### 7.4 Theme CSS
-
-```css
-/* orchestrator_auto/tui/styles/theme.tcss */
-
-/* ============================================
-   ORCHESTRATOR-AUTO TUI THEME
-   Hacker/Cyberpunk Aesthetic
-   ============================================ */
-
-/* Base screen */
-Screen {
-    background: #0a0a0a;
-}
-
-/* Header */
-Header {
-    background: #1a1a2e;
-    color: #00ff41;
-    text-style: bold;
-    dock: top;
-    height: 1;
-}
-
-Header > .header--highlight {
-    background: #1a1a2e;
-    color: #00d4ff;
-}
-
-/* Footer */
-Footer {
-    background: #1a1a2e;
-    color: #00ff41;
-}
-
-Footer > .footer--key {
-    color: #00ff41;
-    text-style: bold;
-    background: #2a2a4e;
-}
-
-Footer > .footer--description {
-    color: #888888;
-}
-
-/* Main container layout */
-#dashboard {
-    layout: grid;
-    grid-size: 1;
-    grid-rows: 1fr auto;
-}
-
-#main-content {
-    layout: horizontal;
-    height: 100%;
-}
-
-#left-panel {
-    width: 25;
-    min-width: 20;
-    max-width: 30;
-}
-
-#center-panel {
-    width: 35;
-    min-width: 25;
-}
-
-#right-panel {
-    width: 1fr;
-    min-width: 40;
-}
-
-/* Status Panel */
-#status {
-    background: #0d0d0d;
-    border: tall #00ff41;
-    padding: 1;
-    margin: 1;
-}
-
-/* Milestone List */
-#milestones {
-    background: #0d0d0d;
-    border: tall #00d4ff;
-    padding: 1;
-    margin: 1;
-}
-
-.milestone-done {
-    color: #00ff41;
-}
-
-.milestone-current {
-    color: #00d4ff;
-    text-style: bold;
-}
-
-.milestone-pending {
-    color: #666666;
-}
-
-/* Agent Output */
-#agent-output {
-    background: #0a0a0a;
-    border: round #00d4ff;
-    padding: 0 1;
-    margin: 1;
-}
-
-#agent-output:focus {
-    border: round #00ff41;
-}
-
-/* Log Panel */
-#logs {
-    background: #050505;
-    border: round #333333;
-    height: 8;
-    padding: 0 1;
-    margin: 0 1 1 1;
-}
-
-.log-timestamp {
-    color: #666666;
-}
-
-.log-info {
-    color: #00d4ff;
-}
-
-.log-warning {
-    color: #ffcc00;
-}
-
-.log-error {
-    color: #ff0040;
-    text-style: bold;
-}
-
-/* Statistics values */
-.stat-value {
-    color: #ff00ff;
-    text-style: bold;
-}
-
-/* Scrollbars */
-Scrollbar {
-    background: #1a1a1a;
-}
-
-ScrollBar > .scrollbar--bar {
-    background: #00ff41 30%;
-}
-
-ScrollBar > .scrollbar--bar-hover {
-    background: #00ff41 50%;
-}
-
-/* Input styling */
-Input {
-    background: #0d0d0d;
-    border: tall #00ff41;
-    color: #e0e0e0;
-}
-
-Input:focus {
-    border: tall #00d4ff;
-}
-
-/* Notifications */
-Toast {
-    background: #1a1a2e;
-    border: round #00ff41;
-    color: #e0e0e0;
-}
-
-/* Loading/Progress indicators */
-LoadingIndicator {
-    color: #00d4ff;
-}
-
-ProgressBar > .bar--bar {
-    color: #00ff41;
-}
-
-ProgressBar > .bar--complete {
-    color: #00ff41;
-}
-```
-
-### 7.5 CLI Integration
-
-```python
-# Add to orchestrator_auto/cli.py
-
 @cli.command()
-@click.option('-f', '--feature', required=True, help='Feature description')
+@click.argument('plans_dir', type=click.Path(exists=True, file_okay=False))
+@click.option('--poll-interval', default=10, help='Seconds between directory scans')
+@click.option('--no-convert', is_flag=True, help='Disable auto-conversion')
+@click.option('--auto-commit', is_flag=True, help='Auto-commit completed sessions')
 @click.option('--tui', is_flag=True, default=False, help='Launch TUI dashboard')
-@click.option('--tui-mode', type=click.Choice(['full', 'compact', 'minimal']),
-              default='full', help='TUI layout mode')
-@click.option('--plan', 'plan_path', type=click.Path(exists=True),
-              help='Path to existing plan file')
-@click.option('-pm', '--planner-model', help='Planner model (opus, sonnet, haiku)')
+@click.option('-pm', '--planner-model', help='Planner model')
 @click.option('-em', '--executor-model', help='Executor model')
-@click.option('--auto-commit', is_flag=True, help='Auto-commit on completion')
-@click.option('--debug', is_flag=True, help='Enable debug logging')
-@click.pass_context
-def start(ctx, feature, tui, tui_mode, plan_path, planner_model,
-          executor_model, auto_commit, debug):
-    """Start a new orchestration workflow."""
+def watch(plans_dir, poll_interval, no_convert, auto_commit, tui,
+          planner_model, executor_model):
+    """Watch a directory for plan files and process them."""
 
     if tui:
-        # Launch TUI mode
-        _start_with_tui(
-            feature=feature,
-            plan_path=plan_path,
+        _start_watch_tui(
+            plans_dir=plans_dir,
+            poll_interval=poll_interval,
+            auto_convert=not no_convert,
+            auto_commit=auto_commit,
             planner_model=planner_model,
             executor_model=executor_model,
-            auto_commit=auto_commit,
-            debug=debug,
-            mode=tui_mode,
         )
     else:
-        # Existing CLI mode
-        _start_cli_mode(ctx, feature, plan_path, planner_model,
-                       executor_model, auto_commit, debug)
-
-
-def _start_with_tui(feature: str, mode: str = 'full', **kwargs) -> None:
-    """Start orchestrator with TUI dashboard."""
-    try:
-        from .tui import OrchestratorTUI
-    except ImportError:
-        click.secho("TUI requires textual. Install with: pip install textual", fg="red")
-        sys.exit(1)
-
-    # Resolve models
-    planner_model = get_planner_model(kwargs.get('planner_model'))
-    executor_model = get_executor_model(kwargs.get('executor_model'))
-
-    # Create orchestrator (don't start yet - TUI will handle that)
-    orchestrator = Orchestrator(
-        feature_description=feature,
-        plan_path=kwargs.get('plan_path'),
-        planner_model=planner_model,
-        executor_model=executor_model,
-        show_activity=False,  # TUI handles activity display
-        debug=kwargs.get('debug', False),
-    )
-
-    # Create and run TUI
-    app = OrchestratorTUI(
-        orchestrator=orchestrator,
-        mode=mode,
-    )
-    app.run()
+        # Existing CLI behavior using WatchController
+        controller = WatchController(
+            plans_dir=Path(plans_dir),
+            poll_interval=poll_interval,
+            auto_convert=not no_convert,
+            on_event=_cli_watch_event_handler,
+        )
+        controller.start()
 ```
 
 ---
 
-## 8. Testing Strategy
+## 12. Implementation Phases (Revised)
 
-### 8.1 Unit Tests
+### Phase 0: Engine I/O Abstraction (GATING)
 
-```python
-# tests/test_tui_widgets.py
+**Must complete before any TUI work.**
 
-import pytest
-from orchestrator_auto.tui.widgets import StatusPanel, MilestoneList
+| Task | Description |
+|------|-------------|
+| Create `io/` package | InputProvider ABC, CLIInputProvider |
+| Add `on_chunk` to Orchestrator | Always emit chunks, not just when indicator exists |
+| Add `on_state_change` to Orchestrator | Emit on phase/milestone transitions |
+| Add `input_provider` to Orchestrator | Inject input handling |
+| Refactor engine.py | Replace all `prompt_with_paste_support()` calls |
+| Tests | Unit tests for new I/O layer |
 
-class TestStatusPanel:
-    def test_phase_style_mapping(self):
-        panel = StatusPanel()
-        panel.phase = "execution"
-        assert panel._get_phase_style() == "green bold"
+**Deliverables:** Engine can run headlessly with injected I/O
 
-    def test_elapsed_format(self):
-        panel = StatusPanel()
-        panel.elapsed_seconds = 3661  # 1h 1m 1s
-        assert panel._format_elapsed() == "01:01:01"
+### Phase 1: Controller Extraction
 
-class TestMilestoneList:
-    def test_milestone_status_icons(self):
-        # Test done, current, pending icons
-        pass
-```
+| Task | Description |
+|------|-------------|
+| Create `controllers/` package | Package structure |
+| Extract QueueController | From cli.py `_run_queue()` |
+| Extract WatchController | From cli.py `watch()` |
+| Add event callbacks | on_event for queue/watch state changes |
+| Refactor cli.py | Use controllers, maintain compatibility |
+| Tests | Controller unit tests |
 
-### 8.2 Integration Tests
+**Deliverables:** Queue/watch logic reusable by CLI and TUI
 
-```python
-# tests/test_tui_integration.py
+### Phase 2: Core TUI Scaffold
 
-import pytest
-from textual.pilot import Pilot
-from orchestrator_auto.tui import OrchestratorTUI
+| Task | Description |
+|------|-------------|
+| Add Textual dependency | pyproject.toml `[tui]` extra |
+| Create `tui/` package | Package structure |
+| Implement OrchestratorTUI base | App class, worker pattern |
+| Implement TUIOutputAdapter | Thread-safe message posting |
+| Implement TUIInputProvider | Blocking input from TUI widgets |
+| Create theme.tcss | Dark hacker aesthetic |
+| Add --tui flag to CLI | start and watch commands |
 
-@pytest.mark.asyncio
-async def test_tui_startup():
-    """Test TUI starts without errors."""
-    app = OrchestratorTUI()
-    async with app.run_test() as pilot:
-        assert app.title == "ORCHESTRATOR-AUTO"
+**Deliverables:** TUI launches, shows static dashboard
 
-@pytest.mark.asyncio
-async def test_quit_binding():
-    """Test Q key quits the app."""
-    app = OrchestratorTUI()
-    async with app.run_test() as pilot:
-        await pilot.press("q")
-        assert app._exit
-```
+### Phase 3: Single Session Mode
 
-### 8.3 Visual Tests
+| Task | Description |
+|------|-------------|
+| StatusPanel widget | Phase, status, models, stats |
+| MilestoneList widget | Progress tracking |
+| AgentOutput widget | Streaming with auto-scroll |
+| LogPanel widget | Tail display |
+| InputModal widget | For discovery/blockers |
+| Keyboard bindings | Quit, pause, resume, help |
+| Integration | Wire up to Orchestrator callbacks |
 
-Use Textual's snapshot testing for visual regression:
+**Deliverables:** Full single-session TUI workflow
 
-```python
-# tests/test_tui_snapshots.py
+### Phase 4: Queue Mode
 
-from textual.testing import snapshot_test
+| Task | Description |
+|------|-------------|
+| QueuePanel widget | List of items with status |
+| Queue mode screen | Layout with queue + session detail |
+| Wire to QueueController | Event handling |
+| Queue controls | Skip, pause queue |
+| Queue status footer | Running/paused, progress |
 
-@snapshot_test
-async def test_dashboard_snapshot(app):
-    """Snapshot test for dashboard layout."""
-    async with app.run_test(size=(80, 24)) as pilot:
-        # Snapshot captures the terminal state
-        pass
-```
+**Deliverables:** Queue mode TUI with live updates
+
+### Phase 5: Watch Mode
+
+| Task | Description |
+|------|-------------|
+| WatchPanel widget | Directory, interval, pending files |
+| Watch mode screen | Layout with watcher + queue + session |
+| Wire to WatchController | Event handling |
+| Watch controls | Start/stop, skip file |
+| File status display | Pending, current, last result |
+
+**Deliverables:** Watch mode TUI with directory monitoring
+
+### Phase 6: Polish and Testing
+
+| Task | Description |
+|------|-------------|
+| Responsive layouts | Breakpoints for 80/120+ cols |
+| Help screen | Keybinding reference |
+| Session picker | For resume command |
+| Visual polish | Animations, transitions |
+| Snapshot tests | Visual regression |
+| Integration tests | Full workflow tests |
+| Documentation | README, examples |
+
+**Deliverables:** Production-ready TUI
 
 ---
 
-## 9. Dependencies
+## 13. Success Metrics
 
-### 9.1 New Dependencies
+| Metric | Target |
+|--------|--------|
+| Input latency | <100ms from keypress to display |
+| Streaming latency | <50ms from chunk to display |
+| Memory usage | <100MB additional over CLI |
+| Minimum terminal | 80x24 fully functional |
+| Terminal compatibility | iTerm2, Terminal.app, VS Code, SSH, tmux |
+| Long-running stability | 24+ hours without memory growth |
+| Log retention | Configurable max lines (default 10k) |
+
+---
+
+## 14. Risks and Mitigations
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| Engine abstraction breaks existing CLI | High | Extensive tests, backward compatibility layer |
+| Textual API changes | Medium | Pin version, test on updates |
+| Thread-safety bugs | High | Strict post_message() discipline, code review |
+| Long-running memory growth | Medium | Log rotation, widget recycling |
+| Watch mode file race conditions | Medium | Preserve existing rename semantics |
+| Input blocking worker thread | Medium | Use proper threading primitives |
+| Pause/resume state corruption | High | Clear lifecycle contract, integration tests |
+| Large log files slow rendering | Medium | Virtualized log display, line limits |
+
+---
+
+## 15. Dependencies
+
+### 15.1 New Dependencies
 
 ```toml
-# Add to pyproject.toml
+# pyproject.toml
 
 [project.optional-dependencies]
 tui = [
@@ -1247,118 +1315,56 @@ tui = [
 ]
 ```
 
-### 9.2 Updated Environment
+### 15.2 Development Dependencies
 
-```yaml
-# Add to environment.yml
-dependencies:
-  - pip:
-    - textual>=0.80.0
+```toml
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+    "textual-dev>=1.0",  # For TUI development/testing
+]
 ```
 
 ---
 
-## 10. Future Enhancements
-
-### 10.1 Phase 2 Features (Post-MVP)
-
-- **Multi-session Dashboard**: Show multiple sessions in tabs
-- **Watch Mode Integration**: TUI for `orchestrator watch` command
-- **Todo Integration**: Task execution progress in TUI
-- **Telegram Bridge**: Show Telegram notifications in TUI
-- **Performance Graphs**: Token usage over time charts
-- **Session Diff View**: Compare sessions side-by-side
-
-### 10.2 Accessibility Considerations
-
-- High contrast theme option
-- Screen reader compatibility
-- Reduced motion mode
-- Keyboard-only navigation (no mouse required)
-
----
-
-## 11. Success Metrics
-
-1. **Performance**: TUI responds within 100ms to user input
-2. **Memory**: <100MB additional memory usage
-3. **Terminal Compatibility**: Works in iTerm2, Terminal.app, VS Code terminal, SSH
-4. **Minimum Size**: Fully functional at 80x24
-5. **User Satisfaction**: Professional appearance, intuitive controls
-
----
-
-## 12. Risks and Mitigations
-
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Textual API changes | Medium | Pin version, test on updates |
-| Performance with large logs | Medium | Implement log rotation/truncation |
-| Terminal compatibility issues | Low | Test across major terminals |
-| Async complexity | Medium | Clear patterns, comprehensive tests |
-| Learning curve for users | Low | Excellent help system, fallback to CLI |
-
----
-
-## Appendix A: File Structure After Implementation
-
-```
-orchestrator_auto/
-    __init__.py
-    cli.py                    # Modified: add --tui flag
-    engine.py                 # Modified: callback hooks
-    output.py                 # Unchanged (fallback)
-    state.py                  # Unchanged
-    agents.py                 # Minor: streaming callbacks
-    db.py                     # Unchanged
-    tui/
-        __init__.py           # Package exports
-        app.py                # Main OrchestratorTUI class
-        adapter.py            # TUIOutputAdapter
-        bindings.py           # Keyboard bindings
-        events.py             # Custom message types
-        screens/
-            __init__.py
-            dashboard.py      # Main dashboard
-            logs.py           # Full logs screen
-            help.py           # Help screen
-            session_picker.py # Session selection
-        widgets/
-            __init__.py
-            status_panel.py   # Status display
-            milestone_list.py # Milestone progress
-            agent_output.py   # Streaming output
-            log_panel.py      # Log tail
-            streaming_text.py # Animated text
-        styles/
-            __init__.py
-            theme.tcss        # Main theme CSS
-            colors.py         # Color constants
-tests/
-    test_tui_widgets.py
-    test_tui_integration.py
-    test_tui_snapshots.py
-```
-
----
-
-## Appendix B: Quick Start Example
+## Appendix A: Quick Start Examples
 
 ```bash
 # Install with TUI support
 pip install -e ".[tui]"
 
-# Start workflow with TUI
+# Single session with TUI
 orchestrator start -f "Add user authentication" --tui
 
-# Resume with TUI
-orchestrator resume abc123 --tui
+# Queue mode with TUI
+orchestrator start --queue plan1.md plan2.md plan3.md --tui
 
-# TUI with custom layout
-orchestrator start -f "Build API endpoints" --tui --tui-mode compact
+# Watch mode with TUI
+orchestrator watch ./plans --tui
+
+# Resume paused session with TUI
+orchestrator resume abc123 --tui
 ```
 
 ---
 
+## Appendix B: Keyboard Shortcuts
+
+| Key | Single Session | Queue Mode | Watch Mode |
+|-----|----------------|------------|------------|
+| `q` | Quit | Quit | Quit |
+| `p` | Pause session | Pause queue | - |
+| `r` | Resume session | Resume queue | - |
+| `s` | - | Skip item | Skip file |
+| `t` | - | - | Toggle watch |
+| `l` | Full logs | Full logs | Full logs |
+| `?` | Help | Help | Help |
+| `Tab` | Next panel | Next panel | Next panel |
+| `Esc` | Close modal | Close modal | Close modal |
+
+---
+
 **Document Author:** Claude (Backend Architect)
-**Review Status:** Draft - Pending Human Review
+**Version:** 2.0 (Revised per architectural review)
+**Review Status:** Ready for implementation review
