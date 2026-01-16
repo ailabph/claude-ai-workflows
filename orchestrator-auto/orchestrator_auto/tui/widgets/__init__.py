@@ -10,6 +10,7 @@ from .agent_output import AgentOutput
 from .log_panel import LogPanel
 from .input_modal import InputModal
 from .queue_panel import QueuePanel
+from .watch_panel import WatchPanel
 
 __all__ = [
     "StatusPanel",
@@ -18,4 +19,5 @@ __all__ = [
     "LogPanel",
     "InputModal",
     "QueuePanel",
+    "WatchPanel",
 ]

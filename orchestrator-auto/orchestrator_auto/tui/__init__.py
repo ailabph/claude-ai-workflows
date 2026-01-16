@@ -40,6 +40,13 @@ def get_queue_app_class():
     return QueueTUI
 
 
+def get_watch_app_class():
+    """Get the WatchTUI app class."""
+    check_textual_available()
+    from .watch_app import WatchTUI
+    return WatchTUI
+
+
 def get_adapter_classes():
     """Get the TUI adapter classes."""
     check_textual_available()
@@ -52,5 +59,6 @@ __all__ = [
     "check_textual_available",
     "get_app_class",
     "get_queue_app_class",
+    "get_watch_app_class",
     "get_adapter_classes",
 ]

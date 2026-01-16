@@ -270,6 +270,139 @@ QueueListItem.queue-paused .queue-feature {
 WatchPanel {
     border: solid $secondary;
     background: $surface;
+    padding: 0 1;
+    height: auto;
+    min-height: 12;
+}
+
+WatchPanel .title {
+    color: $primary;
+    text-style: bold;
+}
+
+WatchPanel .watch-info {
+    height: auto;
+}
+
+WatchPanel .stat-row {
+    height: 1;
+}
+
+WatchPanel .stat-label {
+    color: $text-muted;
+    width: 12;
+}
+
+WatchPanel .stat-value {
+    color: $text;
+}
+
+WatchPanel .section-title {
+    color: $text-muted;
+    margin-top: 1;
+}
+
+WatchPanel .counts-row {
+    height: 1;
+}
+
+WatchPanel .count-completed {
+    color: $accent;
+    width: 8;
+}
+
+WatchPanel .count-failed {
+    color: $error;
+    width: 8;
+}
+
+WatchPanel .count-paused {
+    color: $warning;
+    width: 8;
+}
+
+WatchPanel ListView {
+    background: transparent;
+    height: auto;
+    max-height: 8;
+}
+
+/* Watch file items */
+WatchFileItem {
+    height: 1;
+    padding: 0;
+}
+
+WatchFileItem .watch-file-row {
+    height: 1;
+    width: 100%;
+}
+
+WatchFileItem .watch-marker {
+    width: 2;
+}
+
+WatchFileItem .watch-filename {
+    width: 1fr;
+}
+
+WatchFileItem.watch-pending .watch-marker {
+    color: $text-muted;
+}
+
+WatchFileItem.watch-pending .watch-filename {
+    color: $text-muted;
+}
+
+WatchFileItem.watch-processing .watch-marker {
+    color: $primary;
+    text-style: bold;
+}
+
+WatchFileItem.watch-processing .watch-filename {
+    color: $primary;
+    text-style: bold;
+}
+
+WatchFileItem.watch-completed .watch-marker {
+    color: $accent;
+}
+
+WatchFileItem.watch-completed .watch-filename {
+    color: $accent;
+}
+
+WatchFileItem.watch-failed .watch-marker {
+    color: $error;
+}
+
+WatchFileItem.watch-failed .watch-filename {
+    color: $error;
+}
+
+WatchFileItem.watch-paused .watch-marker {
+    color: $warning;
+}
+
+WatchFileItem.watch-paused .watch-filename {
+    color: $warning;
+}
+
+WatchFileItem.watch-skipped .watch-marker {
+    color: $text-muted;
+}
+
+WatchFileItem.watch-skipped .watch-filename {
+    color: $text-muted;
+    text-style: italic;
+}
+
+WatchFileItem.watch-converted .watch-marker {
+    color: $accent;
+}
+
+WatchFileItem.watch-converted .watch-filename {
+    color: $accent;
 }
 
 /* Input modal */

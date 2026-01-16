@@ -139,6 +139,35 @@ class QueueHalted(Message):
         super().__init__()
 
 
+class WatchStarted(Message):
+    """Watch mode has started."""
+
+    def __init__(self, directory: str, poll_interval: int, auto_convert: bool) -> None:
+        self.directory = directory
+        self.poll_interval = poll_interval
+        self.auto_convert = auto_convert
+        super().__init__()
+
+
+class WatchStopped(Message):
+    """Watch mode has stopped."""
+
+    def __init__(self, completed: int, failed: int, paused: int) -> None:
+        self.completed = completed
+        self.failed = failed
+        self.paused = paused
+        super().__init__()
+
+
+class WatchPaused(Message):
+    """Watch mode is paused waiting for session resume."""
+
+    def __init__(self, session_id: str, plan_path: str) -> None:
+        self.session_id = session_id
+        self.plan_path = plan_path
+        super().__init__()
+
+
 class WatchFileUpdated(Message):
     """A watched file status was updated."""
 
