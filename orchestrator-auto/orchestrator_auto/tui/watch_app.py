@@ -190,6 +190,12 @@ class WatchTUI(App):
         # Track currently processing file to handle renames
         self._current_processing_file: Optional[str] = None
 
+        # Track paused session for in-TUI response
+        self._paused_session_id: Optional[str] = None
+
+        # Store telegram notifier for resume parity
+        self._telegram_notifier = None
+
     def compose(self) -> ComposeResult:
         """Compose the TUI layout with containers."""
         yield Header()
@@ -276,6 +282,9 @@ class WatchTUI(App):
                 except Exception:
                     # Configuration error - continue without telegram
                     pass
+
+            # Store for use in _respond_worker()
+            self._telegram_notifier = telegram_notifier
 
             # Create controller with TUI adapters
             self._controller = WatchController(
@@ -542,7 +551,8 @@ class WatchTUI(App):
             pass
 
     def _set_watch_running(self) -> None:
-        """Set watch panel to running state."""
+        """Set watch panel to running state and clear paused session."""
+        self._paused_session_id = None  # Clear paused session on resume
         try:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_running()
@@ -597,11 +607,14 @@ class WatchTUI(App):
 
     def on_watch_paused(self, message: messages.WatchPaused) -> None:
         """Handle watch paused on blocker."""
+        self._paused_session_id = message.session_id  # Track for in-TUI response
+
         watch_panel = self.query_one("#watch-panel", WatchPanel)
         watch_panel.set_paused(message.session_id, message.plan_path)
 
         log_panel = self.query_one("#log-panel", LogPanel)
         log_panel.log_warning(f"Paused on blocker: {message.plan_path}")
+        log_panel.log_info("Press 'r' to respond to blocker")
 
     def on_watch_file_updated(self, message: messages.WatchFileUpdated) -> None:
         """Handle file status update."""
@@ -786,3 +799,102 @@ class WatchTUI(App):
     def action_back(self) -> None:
         """Handle escape."""
         pass
+
+    def action_respond(self) -> None:
+        """Open input modal to respond to a paused blocker."""
+        log_panel = self.query_one("#log-panel", LogPanel)
+
+        if not self._paused_session_id:
+            log_panel.log_warning("No paused session to respond to")
+            return
+
+        # Prevent overlapping modals
+        if hasattr(self._input_provider, 'current_prompt') and self._input_provider.current_prompt:
+            log_panel.log_warning("Input already in progress")
+            return
+
+        # Start respond worker in background thread
+        self.run_worker(
+            self._respond_worker,
+            thread=True,
+            name="respond-worker",
+        )
+
+    def _respond_worker(self) -> None:
+        """
+        Worker thread to handle blocker response.
+
+        Prompts user for input, then resumes the workflow via Orchestrator.
+        """
+        from .. import db
+        from ..engine import Orchestrator
+
+        session_id = self._paused_session_id
+        if not session_id:
+            return
+
+        try:
+            # Load blocker question for context
+            question_snip = ""
+            try:
+                blockers = db.get_unresolved_blockers(session_id, self.db_path)
+                if blockers:
+                    question = blockers[0].get("question", "")
+                    # Truncate to ~100 chars for modal display
+                    question_snip = question[:100] + "..." if len(question) > 100 else question
+            except Exception:
+                pass  # Continue without question context
+
+            # Build prompt
+            prompt = f"Response ({session_id[:8]})"
+            if question_snip:
+                prompt = f"{prompt}: {question_snip}"
+
+            # Prompt user via existing modal mechanism
+            display, answer = self._input_provider.prompt(prompt)
+
+            if not answer or not answer.strip():
+                self.call_from_thread(self._log_info, "Response cancelled")
+                return
+
+            # Clear paused session ID before resuming (prevent double-trigger)
+            self._paused_session_id = None
+
+            self.call_from_thread(self._log_info, "Response submitted, resuming workflow...")
+
+            # Create Orchestrator and resume
+            orch = Orchestrator(
+                session_id=session_id,
+                db_path=self.db_path,
+                on_output=self._adapter.on_output,
+                on_chunk=self._adapter.on_chunk,
+                on_state_change=self._adapter.on_state_change,
+                input_provider=self._input_provider,
+                planner_model=self.planner_model,
+                executor_model=self.executor_model,
+                mcp_config_path=self.mcp_config,
+                headless=self.headless,
+                telegram_notifier=self._telegram_notifier,
+            )
+
+            # Resume the workflow with the answer
+            orch.resume(answer=answer.strip())
+
+        except Exception as e:
+            self.call_from_thread(self._log_error, f"Resume failed: {e}")
+
+    def _log_info(self, message: str) -> None:
+        """Helper to log info from worker thread."""
+        try:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_info(message)
+        except Exception:
+            pass
+
+    def _log_error(self, message: str) -> None:
+        """Helper to log error from worker thread."""
+        try:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_error(message)
+        except Exception:
+            pass

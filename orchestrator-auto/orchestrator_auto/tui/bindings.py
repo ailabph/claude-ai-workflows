@@ -31,7 +31,8 @@ QUEUE_BINDINGS = [
 
 # Watch mode bindings
 WATCH_BINDINGS = [
-    Binding("r", "refresh", "Refresh"),
+    Binding("r", "respond", "Respond"),
+    Binding("R", "refresh", "Refresh"),
     Binding("c", "clear", "Clear"),
     Binding("g", "show_git_diff", "Git Diff"),
 ]

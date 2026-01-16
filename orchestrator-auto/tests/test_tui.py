@@ -303,4 +303,5 @@ class TestBindings:
         from orchestrator_auto.tui.bindings import WATCH_BINDINGS
         keys = [b.key for b in WATCH_BINDINGS]
         assert "c" in keys  # Clear
-        assert "r" in keys  # Refresh
+        assert "r" in keys  # Respond
+        assert "R" in keys  # Refresh
