@@ -310,6 +310,8 @@ class WatchTUI(App):
             self.call_from_thread(self._update_watch_counts)
 
         elif event == WatchEvent.FILE_SKIPPED:
+            # Skipped files don't proceed to terminal rename, clear tracker
+            self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
@@ -320,15 +322,24 @@ class WatchTUI(App):
             )
 
         elif event == WatchEvent.FILE_CONVERTED:
+            # Conversion is a rename: update existing entry, track new filename
+            original = data.get("original", "")
+            converted = data.get("converted", "")
+            # Update tracker to converted filename (terminal rename will use this)
+            if self._current_processing_file == original:
+                self._current_processing_file = converted
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
-                    filename=data.get("converted", ""),
+                    filename=converted,
                     status="converted",
+                    original_filename=original,
                 )
             )
 
         elif event == WatchEvent.CONVERSION_FAILED:
+            # Conversion failed, file is quarantined, clear tracker
+            self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
