@@ -809,7 +809,7 @@ class WatchTUI(App):
             return
 
         # Prevent overlapping modals
-        if hasattr(self._input_provider, 'current_prompt') and self._input_provider.current_prompt:
+        if self._input_provider.current_prompt:
             log_panel.log_warning("Input already in progress")
             return
 
@@ -825,6 +825,8 @@ class WatchTUI(App):
         Worker thread to handle blocker response.
 
         Prompts user for input, then resumes the workflow via Orchestrator.
+        Note: _paused_session_id is cleared by _set_watch_running() when
+        WatchController emits RESUMED_COMPLETED or RESUMED_FAILED events.
         """
         from .. import db
         from ..engine import Orchestrator
@@ -840,7 +842,8 @@ class WatchTUI(App):
                 blockers = db.get_unresolved_blockers(session_id, self.db_path)
                 if blockers:
                     question = blockers[0].get("question", "")
-                    # Truncate to ~100 chars for modal display
+                    # Normalize whitespace and truncate for modal display
+                    question = " ".join(question.split())  # Collapse newlines/whitespace
                     question_snip = question[:100] + "..." if len(question) > 100 else question
             except Exception:
                 pass  # Continue without question context
@@ -857,12 +860,12 @@ class WatchTUI(App):
                 self.call_from_thread(self._log_info, "Response cancelled")
                 return
 
-            # Clear paused session ID before resuming (prevent double-trigger)
-            self._paused_session_id = None
-
             self.call_from_thread(self._log_info, "Response submitted, resuming workflow...")
 
             # Create Orchestrator and resume
+            # Note: Don't clear _paused_session_id here - let _set_watch_running()
+            # handle it when WatchController emits RESUMED_* events. This ensures
+            # user can retry with 'r' if resume() fails.
             orch = Orchestrator(
                 session_id=session_id,
                 db_path=self.db_path,
@@ -881,7 +884,10 @@ class WatchTUI(App):
             orch.resume(answer=answer.strip())
 
         except Exception as e:
-            self.call_from_thread(self._log_error, f"Resume failed: {e}")
+            self.call_from_thread(
+                self._log_error,
+                f"Resume failed: {e}. Press 'r' to retry or use: orchestrator resume {session_id[:8]}"
+            )
 
     def _log_info(self, message: str) -> None:
         """Helper to log info from worker thread."""
