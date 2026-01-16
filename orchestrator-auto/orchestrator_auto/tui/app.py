@@ -38,8 +38,8 @@ class StatusPanel(Static):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
         self.phase = "—"
         self.status = "—"
         self.session_id = "—"
@@ -73,8 +73,8 @@ class AgentOutput(RichLog):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__(highlight=True, markup=True, wrap=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
 
 
 class LogPanel(RichLog):
@@ -87,8 +87,8 @@ class LogPanel(RichLog):
     }
     """
 
-    def __init__(self) -> None:
-        super().__init__(highlight=True, markup=True, wrap=True)
+    def __init__(self, **kwargs) -> None:
+        super().__init__(highlight=True, markup=True, wrap=True, **kwargs)
 
 
 class OrchestratorTUI(App):
@@ -183,9 +183,9 @@ class OrchestratorTUI(App):
     def compose(self) -> ComposeResult:
         """Compose the TUI layout."""
         yield Header()
-        yield StatusPanel()
-        yield AgentOutput()
-        yield LogPanel()
+        yield StatusPanel(id="status-panel")
+        yield AgentOutput(id="agent-output")
+        yield LogPanel(id="log-panel")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -207,8 +207,8 @@ class OrchestratorTUI(App):
             name="orchestrator",
         )
 
-    async def _run_orchestrator(self) -> None:
-        """Run the orchestrator (called in worker thread)."""
+    def _run_orchestrator(self) -> None:
+        """Run the orchestrator (called in worker thread - must be sync)."""
         from ..engine import Orchestrator
 
         try:
@@ -220,6 +220,7 @@ class OrchestratorTUI(App):
                 session_id=self.session_id,
                 on_chunk=self._adapter.on_chunk,
                 on_state_change=self._adapter.on_state_change,
+                on_output=self._adapter.on_output,
                 input_provider=self._input_provider,
                 planner_model=self.planner_model,
                 executor_model=self.executor_model,

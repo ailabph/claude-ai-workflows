@@ -19,7 +19,6 @@ SESSION_BINDINGS = [
     Binding("l", "toggle_logs", "Logs"),
     Binding("m", "toggle_milestones", "Milestones"),
     Binding("s", "show_status", "Status"),
-    Binding("p", "pause", "Pause", show=False),
 ]
 
 # Queue mode bindings

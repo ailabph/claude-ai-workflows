@@ -266,7 +266,13 @@ class QueueController:
                         status="completed",
                         completed_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     )
-                    # Auto-commit if enabled would be handled here
+                    # Emit ITEM_COMPLETED so CLI can handle auto-commit/rename
+                    self.on_event(QueueEvent.ITEM_COMPLETED, {
+                        "position": head["position"] + 1,
+                        "feature_description": head["feature_description"],
+                        "session_id": session_id,
+                        "reconciled": True,  # Flag to indicate this was a reconciliation
+                    })
                     continue
 
                 if session_phase == Phase.PAUSED or session_status == Status.PAUSED:

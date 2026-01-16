@@ -989,11 +989,12 @@ def _run_queue(
                         break
 
     # Create and run the controller
+    # Note: on_output is always passed; show_activity controls the streaming indicator
     controller = QueueController(
         project_id=project_id,
         db_path=db_path,
         on_event=cli_event_handler,
-        on_output=output_callback if show_activity else None,
+        on_output=output_callback,
         planner_model=planner_model,
         executor_model=executor_model,
         auto_commit=False,  # Handled via event handler
