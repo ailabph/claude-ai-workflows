@@ -102,6 +102,7 @@ class QueueTUI(App):
         auto_commit: bool = False,
         smart_commit: Optional[bool] = None,
         no_rename: bool = False,
+        clear_before_enqueue: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -116,6 +117,7 @@ class QueueTUI(App):
             auto_commit: Whether to auto-commit on completion
             smart_commit: Whether to use AI-generated commit messages
             no_rename: Whether to skip plan file renaming
+            clear_before_enqueue: Whether to clear existing queue items before adding new ones
         """
         super().__init__(**kwargs)
         self.plan_paths = plan_paths or []
@@ -130,6 +132,7 @@ class QueueTUI(App):
         self.auto_commit = auto_commit
         self.smart_commit = smart_commit
         self.no_rename = no_rename
+        self.clear_before_enqueue = clear_before_enqueue
 
         # Create adapters
         self._adapter = TUIOutputAdapter(self)
@@ -190,6 +193,15 @@ class QueueTUI(App):
         from .. import db
 
         try:
+            # Initialize database before any operations
+            db.init_db(self.db_path)
+
+            # Clear existing queue items if requested (like CLI --queue-reset)
+            if self.clear_before_enqueue:
+                cleared = db.clear_active_queue(self.project_id, self.db_path)
+                if cleared > 0:
+                    self._adapter.on_output(f"Cleared {cleared} existing queue items", "info")
+
             # Enqueue plan files using proper db function and feature extraction
             for position, plan_path in enumerate(self.plan_paths):
                 path = Path(plan_path)
@@ -236,14 +248,13 @@ class QueueTUI(App):
         from ..controllers.queue_controller import QueueEvent
 
         if event == QueueEvent.STARTED:
-            # QueueController emits {"item_count": N} - fetch items from DB
+            # QueueController emits {"item_count": N} - fetch items from DB for truth
             from .. import db
-            item_count = data.get("item_count", 0)
             items = db.list_queue_items(self.project_id, self.db_path, include_completed=False)
             self.call_from_thread(
                 self.post_message,
                 messages.QueueStarted(
-                    total_items=item_count,
+                    total_items=len(items),  # Use fetched count as truth
                     items=[
                         {
                             "position": i.get("position", 0) + 1,  # 0-based to 1-based
@@ -258,6 +269,7 @@ class QueueTUI(App):
         elif event == QueueEvent.ITEM_STARTED:
             # QueueController emits {"position", "plan_path", "feature_description"}
             # Note: session_id is NOT available here - it's created after engine starts
+            # UI resets are handled in on_queue_item_updated when status="running"
             position = data.get("position", 0)
             feature = data.get("feature_description", "")
             self.call_from_thread(
@@ -267,14 +279,6 @@ class QueueTUI(App):
                     status="running",
                     feature=feature,
                     session_id=None,  # Session ID comes later via state change
-                )
-            )
-            # Notify workflow starting (without session_id for now)
-            self.call_from_thread(
-                self.post_message,
-                messages.WorkflowStarted(
-                    session_id="pending",  # Placeholder until engine starts
-                    feature=feature
                 )
             )
 
@@ -381,6 +385,16 @@ class QueueTUI(App):
         log_panel = self.query_one("#log-panel", LogPanel)
         if message.status == "running":
             log_panel.log_info(f"Starting item {message.position}: {message.feature[:50]}...")
+            # Reset UI for new queue item (previously done in on_workflow_started)
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_phase("DISCOVERY", "ACTIVE")
+            # Clear milestone list for new item
+            milestone_list = self.query_one("#milestone-list", MilestoneList)
+            milestone_list.set_milestones([])
+            # Clear agent output for new item
+            agent_output = self.query_one("#agent-output", AgentOutput)
+            agent_output.clear_output()
+            agent_output.write_message(f"Starting: {message.feature[:60]}...", "bold")
         elif message.status == "completed":
             log_panel.log_success(f"Item {message.position} completed")
         elif message.status == "failed":
@@ -427,6 +441,11 @@ class QueueTUI(App):
         status = getattr(state, 'status', '—')
         status_panel.update_phase(phase, status)
 
+        # Update session_id from state (avoids hacky "pending" placeholder)
+        session_id = getattr(state, 'session_id', None)
+        if session_id:
+            status_panel.update_session(session_id)
+
         status_panel.increment_api_calls()
 
         if message.previous_phase and message.previous_phase != phase:
@@ -450,19 +469,15 @@ class QueueTUI(App):
         self.push_screen(InputModal(message.prompt_text, self._input_provider))
 
     def on_workflow_started(self, message: messages.WorkflowStarted) -> None:
-        """Handle workflow started (for current queue item)."""
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.update_phase("DISCOVERY", "ACTIVE")
-        status_panel.update_session(message.session_id)
+        """Handle workflow started (for current queue item).
 
-        # Clear milestone list for new item
-        milestone_list = self.query_one("#milestone-list", MilestoneList)
-        milestone_list.set_milestones([])
-
-        # Clear agent output for new item
-        agent_output = self.query_one("#agent-output", AgentOutput)
-        agent_output.clear_output()
-        agent_output.write_message(f"Starting: {message.feature[:60]}...", "bold")
+        Note: UI resets are handled in on_queue_item_updated when status="running".
+        Session ID updates are handled in on_state_changed from the state object.
+        This handler is kept for any external WorkflowStarted messages.
+        """
+        # Session ID and phase updates now come through on_state_changed
+        # UI resets now happen in on_queue_item_updated for status="running"
+        pass
 
     def on_workflow_completed(self, message: messages.WorkflowCompleted) -> None:
         """Handle workflow completed."""
