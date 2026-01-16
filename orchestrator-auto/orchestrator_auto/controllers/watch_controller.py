@@ -25,6 +25,7 @@ class WatchEvent(Enum):
     """Events emitted by the watch controller."""
     STARTED = "started"
     PENDING_UPDATED = "pending_updated"  # Emitted each poll with current pending files
+    SESSION_STARTED = "session_started"  # Emitted when orchestrator session begins
     FILE_FOUND = "file_found"
     FILE_COMPLETED = "file_completed"
     FILE_FAILED = "file_failed"
@@ -384,6 +385,13 @@ class WatchController:
             )
 
             orch.start()
+
+            # Emit session started event with session info
+            self.on_event(WatchEvent.SESSION_STARTED, {
+                "session_id": orch.session_id,
+                "planner_model": orch.planner_model or "opus",
+                "executor_model": orch.executor_model or "sonnet",
+            })
 
             # Check final state
             final_phase = orch.state.phase

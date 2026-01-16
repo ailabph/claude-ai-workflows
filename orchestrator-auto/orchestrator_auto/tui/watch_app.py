@@ -412,6 +412,16 @@ class WatchTUI(App):
                 )
             )
 
+        elif event == WatchEvent.SESSION_STARTED:
+            self.call_from_thread(
+                self.post_message,
+                messages.WatchSessionStarted(
+                    session_id=data.get("session_id", ""),
+                    planner_model=data.get("planner_model", ""),
+                    executor_model=data.get("executor_model", ""),
+                )
+            )
+
         elif event == WatchEvent.STOPPED:
             self.call_from_thread(
                 self.post_message,
@@ -537,6 +547,12 @@ class WatchTUI(App):
         """Handle pending files list update."""
         watch_panel = self.query_one("#watch-panel", WatchPanel)
         watch_panel.sync_pending_files(message.pending_files)
+
+    def on_watch_session_started(self, message: messages.WatchSessionStarted) -> None:
+        """Handle session started - update status panel with session info."""
+        status_panel = self.query_one("#status-panel", StatusPanel)
+        status_panel.update_session(message.session_id)
+        status_panel.update_models(message.planner_model, message.executor_model)
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""

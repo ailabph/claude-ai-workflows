@@ -194,6 +194,16 @@ class WatchPendingUpdated(Message):
         super().__init__()
 
 
+class WatchSessionStarted(Message):
+    """A new session has started in watch mode."""
+
+    def __init__(self, session_id: str, planner_model: str, executor_model: str) -> None:
+        self.session_id = session_id
+        self.planner_model = planner_model
+        self.executor_model = executor_model
+        super().__init__()
+
+
 class StatsUpdated(Message):
     """Statistics were updated (API calls, tokens, etc.)."""
 
