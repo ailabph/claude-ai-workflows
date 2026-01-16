@@ -3737,5 +3737,192 @@ def test_playwright(
             sys.exit(1)
 
 
+@cli.command()
+@click.argument('file', type=click.Path(exists=True))
+@click.option('--dry-run', is_flag=True, help='Preview tasks without executing')
+@click.option('-m', '--model', default='sonnet', help='Model: opus, sonnet, haiku (default: sonnet)')
+@click.option('--timeout', default=300, type=int, help='Per-task timeout in seconds (default: 300)')
+@click.option('--retry-failed', is_flag=True, help='Retry tasks marked [!]')
+@click.option('--results', type=click.Path(), help='Write detailed results to file')
+@click.option('-v', '--verbose', is_flag=True, help='Show full agent responses')
+@click.option('--mcp-config', type=click.Path(exists=True), help='MCP config file')
+def todo(
+    file: str,
+    dry_run: bool,
+    model: str,
+    timeout: int,
+    retry_failed: bool,
+    results: Optional[str],
+    verbose: bool,
+    mcp_config: Optional[str],
+):
+    """Execute tasks from a markdown checkbox file.
+
+    Each task runs with fresh agent context (no accumulated state).
+    This is ideal for batch processing independent tasks without
+    hitting token limits.
+
+    \b
+    Task File Format:
+        - [ ] Pending task to execute
+        - [x] Already done (skipped)
+        - [!] Previously failed (use --retry-failed)
+
+    \b
+    Multi-line tasks (indent continuation lines):
+        - [ ] Analyze this file
+              Look for performance issues
+              Check for memory leaks
+
+    \b
+    File context injection (use @path):
+        - [ ] Review @src/auth.py for security issues
+
+    \b
+    Completion Tags:
+        Agent MUST output [TASK_DONE] or [TASK_FAILED] tags.
+        Tasks without completion tags are marked as failed.
+
+    \b
+    Examples:
+        orchestrator todo tasks.md
+        orchestrator todo tasks.md --dry-run
+        orchestrator todo tasks.md --model haiku
+        orchestrator todo tasks.md --retry-failed
+        orchestrator todo tasks.md --results report.md
+    """
+    from .todo_parser import parse_task_file, TaskStatus
+    from .todo import TodoRunner
+    from .config import load_mcp_config_raw, expand_env_vars
+
+    file_path = Path(file)
+    task_file = parse_task_file(file_path)
+
+    # Show summary
+    total = len(task_file.tasks)
+    pending = task_file.pending_count
+    failed = task_file.failed_count
+    done = task_file.done_count
+
+    click.echo()
+    click.secho("=" * 60, bold=True)
+    click.secho("  ORCHESTRATOR TODO", bold=True)
+    click.secho("=" * 60, bold=True)
+    click.echo()
+    click.echo(f"  File: {file}")
+    click.echo(f"  Model: {model}")
+    click.echo(f"  Timeout: {timeout}s per task")
+    click.echo()
+    click.echo(f"  Tasks: {total} total")
+    click.echo(f"    [ ] Pending: {pending}")
+    click.echo(f"    [x] Done: {done}")
+    click.echo(f"    [!] Failed: {failed}")
+    click.echo()
+
+    # Check if there's work to do
+    actionable = pending + (failed if retry_failed else 0)
+    if actionable == 0:
+        click.secho("No tasks to process.", fg="yellow")
+        if failed > 0 and not retry_failed:
+            click.echo(f"  Tip: Use --retry-failed to retry {failed} failed task(s)")
+        return
+
+    if dry_run:
+        click.secho(f"[DRY RUN] Would process {actionable} task(s)", fg="cyan")
+        click.echo()
+        return
+
+    click.echo(f"Processing {actionable} task(s)...")
+    click.echo()
+
+    # Load MCP config if provided
+    mcp_servers = None
+    if mcp_config:
+        raw_config, _, _ = load_mcp_config_raw(mcp_config)
+        if raw_config:
+            mcp_servers = expand_env_vars(raw_config)
+
+    # Callbacks for progress display
+    def on_task_start(index: int, total: int, task):
+        # Truncate long task names
+        task_name = task.first_line
+        if len(task_name) > 55:
+            task_name = task_name[:52] + "..."
+        click.echo(f"[{index}/{total}] {task_name}")
+
+    def on_task_complete(result):
+        if result.status == TaskStatus.DONE:
+            click.echo(f"      {click.style('✓', fg='green')} Done ({result.duration:.1f}s)")
+            if result.result:
+                # Truncate long results
+                result_text = result.result
+                if len(result_text) > 60:
+                    result_text = result_text[:57] + "..."
+                click.echo(f"      → {result_text}")
+        else:
+            click.echo(f"      {click.style('✗', fg='red')} Failed ({result.duration:.1f}s)")
+            if result.error:
+                click.echo(f"      → {result.error}")
+            elif result.result:
+                click.echo(f"      → {result.result}")
+        click.echo()
+
+    # Run tasks
+    runner = TodoRunner(
+        model=model,
+        timeout=timeout,
+        verbose=verbose,
+        mcp_config=mcp_servers,
+        on_task_start=on_task_start,
+        on_task_complete=on_task_complete,
+    )
+
+    try:
+        task_results = runner.run_all(
+            task_file,
+            retry_failed=retry_failed,
+            dry_run=dry_run,
+        )
+    except KeyboardInterrupt:
+        click.echo()
+        click.secho("Interrupted. Progress has been saved.", fg="yellow")
+        return
+
+    # Summary
+    completed = sum(1 for r in task_results if r.status == TaskStatus.DONE)
+    failed_count = sum(1 for r in task_results if r.status == TaskStatus.FAILED)
+
+    click.secho("-" * 60, dim=True)
+    click.secho("Summary:", bold=True)
+    click.echo(f"  {click.style('✓', fg='green')} Completed: {completed}")
+    click.echo(f"  {click.style('✗', fg='red')} Failed: {failed_count}")
+    if failed_count > 0:
+        click.echo(f"    (marked [!] in file, use --retry-failed to retry)")
+    click.echo()
+
+    # Write results file if requested
+    if results and task_results:
+        results_path = Path(results)
+        with results_path.open('w') as f:
+            f.write(f"# Task Results\n\n")
+            f.write(f"- Source: {file}\n")
+            f.write(f"- Model: {model}\n")
+            f.write(f"- Completed: {completed}\n")
+            f.write(f"- Failed: {failed_count}\n\n")
+
+            for r in task_results:
+                status_emoji = "✓" if r.status == TaskStatus.DONE else "✗"
+                f.write(f"## {status_emoji} {r.task.first_line}\n\n")
+                f.write(f"- **Status:** {r.status.value}\n")
+                f.write(f"- **Duration:** {r.duration:.1f}s\n")
+                if r.result:
+                    f.write(f"- **Result:** {r.result}\n")
+                if r.error:
+                    f.write(f"- **Error:** {r.error}\n")
+                f.write("\n")
+
+        click.echo(f"Results written to: {results}")
+
+
 if __name__ == '__main__':
     cli()
