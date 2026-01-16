@@ -3368,13 +3368,15 @@ def watch(
         _handle_watch_event(event, data, auto_commit=auto_commit)
 
     # Create and run WatchController
+    # Always pass output_callback for Click-based output routing
+    # show_activity separately controls the streaming indicator (spinner/dots)
     controller = WatchController(
         plans_dir=plans_path,
         db_path=db_path,
         poll_interval=poll_interval,
         auto_convert=auto_convert,
         on_event=on_event,
-        on_output=output_callback if show_activity else None,
+        on_output=output_callback,
         planner_model=planner_model,
         executor_model=executor_model,
         auto_commit=auto_commit,
