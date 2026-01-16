@@ -297,6 +297,14 @@ WatchPanel .stat-value {
     color: $text;
 }
 
+WatchPanel .stat-value.phase-paused {
+    color: $warning;
+}
+
+WatchPanel .stat-value.phase-completed {
+    color: $accent;
+}
+
 WatchPanel .section-title {
     color: $text-muted;
     margin-top: 1;

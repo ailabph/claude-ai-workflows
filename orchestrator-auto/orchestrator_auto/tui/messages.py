@@ -171,10 +171,18 @@ class WatchPaused(Message):
 class WatchFileUpdated(Message):
     """A watched file status was updated."""
 
-    def __init__(self, filename: str, status: str, error: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        filename: str,
+        status: str,
+        error: Optional[str] = None,
+        original_filename: Optional[str] = None,
+    ) -> None:
         self.filename = filename
         self.status = status
         self.error = error
+        # For terminal renames: the original filename before rename
+        self.original_filename = original_filename
         super().__init__()
 
 

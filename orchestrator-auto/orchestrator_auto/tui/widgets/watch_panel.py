@@ -48,8 +48,21 @@ class WatchFileItem(ListItem):
         self.file_status = status
         self.error = error
         self._update_classes()
-        # Trigger re-render
-        self.refresh()
+        self._update_display()
+
+    def update_filename(self, filename: str) -> None:
+        """Update the displayed filename (for renames)."""
+        self.filename = filename
+        self._update_display()
+
+    def _update_display(self) -> None:
+        """Update the displayed marker and filename labels."""
+        try:
+            marker = self.MARKERS.get(self.file_status, "○")
+            self.query_one(".watch-marker", Label).update(marker)
+            self.query_one(".watch-filename", Label).update(self.filename)
+        except Exception:
+            pass
 
     def compose(self) -> ComposeResult:
         marker = self.MARKERS.get(self.file_status, "○")
@@ -189,9 +202,31 @@ class WatchPanel(Static):
         except Exception:
             pass
 
-    def update_file(self, filename: str, status: str, error: Optional[str] = None) -> None:
-        """Update a file's status."""
-        if filename in self._files:
+    def update_file(
+        self,
+        filename: str,
+        status: str,
+        error: Optional[str] = None,
+        original_filename: Optional[str] = None,
+    ) -> None:
+        """Update a file's status, handling renames.
+
+        Args:
+            filename: Current filename (may be renamed)
+            status: New status
+            error: Optional error message
+            original_filename: If file was renamed, the original filename to update
+        """
+        # If this is a rename, update the original entry instead of creating new
+        if original_filename and original_filename in self._files:
+            item = self._files[original_filename]
+            # Update the status and displayed filename
+            item.update_status(status, error)
+            item.update_filename(filename)
+            # Re-key in our dict (remove old, add with new key)
+            self._files.pop(original_filename)
+            self._files[filename] = item
+        elif filename in self._files:
             self._files[filename].update_status(status, error)
         else:
             self.add_file(filename, status)

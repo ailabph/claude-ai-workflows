@@ -41,6 +41,12 @@ class WatchTUI(App):
     Usage:
         app = WatchTUI(plans_dir="/path/to/plans")
         app.run()
+
+    Known Limitations:
+        - Blocker responses must be provided via CLI (`orchestrator respond ...`).
+          The engine's blocker handling transitions to paused state and the
+          WatchController polls for external resume. A future enhancement could
+          add in-TUI blocker response via the InputModal and resume API.
     """
 
     TITLE = "Orchestrator Auto - Watch Mode"
@@ -143,6 +149,9 @@ class WatchTUI(App):
         self._failed: int = 0
         self._paused: int = 0
 
+        # Track currently processing file to handle renames
+        self._current_processing_file: Optional[str] = None
+
     def compose(self) -> ComposeResult:
         """Compose the TUI layout."""
         yield Header()
@@ -239,6 +248,7 @@ class WatchTUI(App):
 
         elif event == WatchEvent.FILE_FOUND:
             filename = data.get("plan_path", "")
+            self._current_processing_file = filename
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
@@ -251,29 +261,37 @@ class WatchTUI(App):
 
         elif event == WatchEvent.FILE_COMPLETED:
             self._completed += 1
+            original = self._current_processing_file
+            self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
                     filename=data.get("new_path", ""),
                     status="completed",
+                    original_filename=original,
                 )
             )
             self.call_from_thread(self._update_watch_counts)
 
         elif event == WatchEvent.FILE_FAILED:
             self._failed += 1
+            original = self._current_processing_file
+            self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
                 messages.WatchFileUpdated(
                     filename=data.get("new_path", ""),
                     status="failed",
                     error=data.get("error"),
+                    original_filename=original,
                 )
             )
             self.call_from_thread(self._update_watch_counts)
 
         elif event == WatchEvent.FILE_PAUSED:
             self._paused += 1
+            original = self._current_processing_file
+            self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
                 messages.WatchPaused(
@@ -286,6 +304,7 @@ class WatchTUI(App):
                 messages.WatchFileUpdated(
                     filename=data.get("new_path", ""),
                     status="paused",
+                    original_filename=original,
                 )
             )
             self.call_from_thread(self._update_watch_counts)
@@ -446,7 +465,12 @@ class WatchTUI(App):
     def on_watch_file_updated(self, message: messages.WatchFileUpdated) -> None:
         """Handle file status update."""
         watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.update_file(message.filename, message.status, message.error)
+        watch_panel.update_file(
+            message.filename,
+            message.status,
+            message.error,
+            message.original_filename,
+        )
 
         log_panel = self.query_one("#log-panel", LogPanel)
         if message.status == "processing":
