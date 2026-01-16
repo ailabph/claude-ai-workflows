@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 class WatchEvent(Enum):
     """Events emitted by the watch controller."""
     STARTED = "started"
+    PENDING_UPDATED = "pending_updated"  # Emitted each poll with current pending files
     FILE_FOUND = "file_found"
     FILE_COMPLETED = "file_completed"
     FILE_FAILED = "file_failed"
@@ -577,6 +578,11 @@ class WatchController:
                 # Get oldest pending plan
                 pending = self.get_pending_plans()
                 pending = [p for p in pending if p.name not in self._currently_processing]
+
+                # Emit pending files update for UI refresh
+                self.on_event(WatchEvent.PENDING_UPDATED, {
+                    "pending_files": [p.name for p in pending],
+                })
 
                 if not pending:
                     time.sleep(self.poll_interval)

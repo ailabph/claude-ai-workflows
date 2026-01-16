@@ -248,3 +248,25 @@ class WatchPanel(Static):
             self._files.clear()
         except Exception:
             pass
+
+    def sync_pending_files(self, pending_files: List[str]) -> None:
+        """
+        Sync the pending files list with the current directory state.
+
+        Adds new pending files and removes files that are no longer pending
+        (unless they have a non-pending status like processing, completed, etc).
+        """
+        pending_set = set(pending_files)
+
+        # Add new pending files
+        for filename in pending_files:
+            if filename not in self._files:
+                self.add_file(filename, "pending")
+
+        # Remove files that are no longer pending and were in pending state
+        for filename in list(self._files.keys()):
+            if filename not in pending_set:
+                item = self._files.get(filename)
+                # Only remove if it was pending (not processing/completed/etc)
+                if item and item.file_status == "pending":
+                    self.remove_file(filename)

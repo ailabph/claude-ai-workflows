@@ -186,6 +186,14 @@ class WatchFileUpdated(Message):
         super().__init__()
 
 
+class WatchPendingUpdated(Message):
+    """Pending files list was updated."""
+
+    def __init__(self, pending_files: list[str]) -> None:
+        self.pending_files = pending_files
+        super().__init__()
+
+
 class StatsUpdated(Message):
     """Statistics were updated (API calls, tokens, etc.)."""
 

@@ -404,6 +404,14 @@ class WatchTUI(App):
             # Clear paused state
             self.call_from_thread(self._set_watch_running)
 
+        elif event == WatchEvent.PENDING_UPDATED:
+            self.call_from_thread(
+                self.post_message,
+                messages.WatchPendingUpdated(
+                    pending_files=data.get("pending_files", []),
+                )
+            )
+
         elif event == WatchEvent.STOPPED:
             self.call_from_thread(
                 self.post_message,
@@ -524,6 +532,11 @@ class WatchTUI(App):
             log_panel.log_warning(f"Skipped: {message.filename}")
         elif message.status == "converted":
             log_panel.log_info(f"Converted: {message.filename}")
+
+    def on_watch_pending_updated(self, message: messages.WatchPendingUpdated) -> None:
+        """Handle pending files list update."""
+        watch_panel = self.query_one("#watch-panel", WatchPanel)
+        watch_panel.sync_pending_files(message.pending_files)
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""
