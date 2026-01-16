@@ -169,7 +169,7 @@ def _handle_queue_event(event: QueueEvent, data: dict) -> None:
         click.secho(f"⚠ {message}", fg="yellow")
 
 
-def _handle_watch_event(event: WatchEvent, data: dict) -> None:
+def _handle_watch_event(event: WatchEvent, data: dict, auto_commit: bool = False) -> None:
     """Handle WatchController events with CLI output."""
     if event == WatchEvent.STARTED:
         directory = data.get("directory", "")
@@ -182,6 +182,8 @@ def _handle_watch_event(event: WatchEvent, data: dict) -> None:
         click.echo(f"  Directory: {directory}")
         click.echo(f"  Poll interval: {poll_interval}s")
         click.echo(f"  Auto-convert: {'enabled' if auto_convert else 'disabled'}")
+        if auto_commit:
+            click.echo("  Auto-commit: enabled")
         click.echo()
         click.secho("Press Ctrl+C to stop", fg="yellow")
         click.echo()
@@ -266,6 +268,7 @@ def _start_watch_tui(
     Start watch mode with TUI dashboard.
 
     Launches the Textual-based WatchTUI app for rich visual feedback.
+    Uses the same WatchController as CLI mode for strict parity.
 
     Args:
         plans_dir: Directory to watch for plan files
@@ -276,26 +279,11 @@ def _start_watch_tui(
         executor_model: Model for executor agent
         auto_commit: Whether to auto-commit on completion
         smart_commit: Whether to use AI-generated commit messages
-        telegram: Whether to enable Telegram notifications (not yet supported)
+        telegram: Whether to enable Telegram notifications
         show_activity: Whether to show streaming activity (ignored in TUI)
-        mcp_config: Path to MCP configuration file (not yet supported)
-        headless: Whether to run Playwright browser headless (not yet supported)
+        mcp_config: Path to MCP configuration file
+        headless: Whether to run Playwright browser headless
     """
-    # Warn about options not yet supported in TUI mode
-    unsupported = []
-    if telegram:
-        unsupported.append("--telegram")
-    if mcp_config:
-        unsupported.append("--mcp-config")
-    if headless:
-        unsupported.append("--headless")
-
-    if unsupported:
-        click.secho(
-            f"Warning: {', '.join(unsupported)} not yet supported in TUI mode (ignored)",
-            fg="yellow"
-        )
-
     try:
         from .tui import get_watch_app_class, check_textual_available
         check_textual_available()
@@ -312,7 +300,7 @@ def _start_watch_tui(
     # Initialize database before TUI starts
     db.init_db(db_path)
 
-    # Get the WatchTUI class and instantiate
+    # Get the WatchTUI class and instantiate with all options
     WatchTUI = get_watch_app_class()
     app = WatchTUI(
         plans_dir=plans_dir,
@@ -323,6 +311,9 @@ def _start_watch_tui(
         executor_model=executor_model,
         auto_commit=auto_commit,
         smart_commit=smart_commit,
+        telegram=telegram,
+        mcp_config=mcp_config,
+        headless=headless,
     )
 
     # Run the TUI app (blocking)
@@ -3182,6 +3173,10 @@ def _get_pending_plans(plans_dir: Path) -> List[Path]:
     """
     Get candidate plans sorted by mtime ascending, then filename ascending.
 
+    .. deprecated::
+        Use WatchController.get_pending_plans() instead.
+        This function is kept for backwards compatibility.
+
     This provides deterministic oldest-first processing order.
     Handles race conditions where files may be deleted between glob() and stat().
 
@@ -3254,6 +3249,10 @@ def _rename_to_terminal(
 ) -> tuple:
     """
     Rename plan file to terminal state and update DB.
+
+    .. deprecated::
+        Use WatchController.rename_to_terminal() instead.
+        This function is kept for backwards compatibility.
 
     If the file already has a terminal suffix (_done, _failed, _paused),
     it is replaced rather than appended. For example:
@@ -3350,177 +3349,65 @@ def watch(
             headless=headless,
         )
         return
+
+    # Non-TUI mode: use WatchController for strict parity with TUI
+    from .controllers.watch_controller import WatchController
+
     plans_path = Path(plans_dir).resolve()
 
     # Initialize database
     db.init_db(db_path)
 
-    click.echo()
-    click.secho("👁️  Watch Mode", fg="cyan", bold=True)
-    click.echo()
-    click.echo(f"  Directory: {plans_path}")
-    click.echo(f"  Poll interval: {poll_interval}s")
-    click.echo(f"  Auto-convert: {'enabled' if auto_convert else 'disabled'}")
-    if auto_commit:
-        click.echo(f"  Auto-commit: enabled")
-    click.echo()
-    click.secho("Press Ctrl+C to stop", fg="yellow")
-    click.echo()
+    # Create telegram notifier if enabled
+    telegram_notifier = None
+    if telegram:
+        telegram_notifier = _create_telegram_notifier(telegram)
 
-    # State tracking
-    currently_processing: set = set()  # Fallback for rename failures
-    paused_session_id: Optional[str] = None
-    paused_plan_path: Optional[Path] = None
-    running = True
+    # Create event handler with auto_commit context
+    def on_event(event: WatchEvent, data: dict) -> None:
+        _handle_watch_event(event, data, auto_commit=auto_commit)
 
+    # Create and run WatchController
+    controller = WatchController(
+        plans_dir=plans_path,
+        db_path=db_path,
+        poll_interval=poll_interval,
+        auto_convert=auto_convert,
+        on_event=on_event,
+        planner_model=planner_model,
+        executor_model=executor_model,
+        auto_commit=auto_commit,
+        smart_commit=smart_commit,
+        telegram_notifier=telegram_notifier,
+        show_activity=show_activity,
+        mcp_config_path=mcp_config,
+        headless=headless,
+    )
+
+    # Setup signal handlers for graceful shutdown
     def handle_shutdown(signum, frame):
-        nonlocal running
-        running = False
         click.echo()
         click.secho("✓ Watch mode stopping...", fg="yellow")
+        controller.stop()
 
-    # Setup signal handlers
     original_sigint = signal.signal(signal.SIGINT, handle_shutdown)
     original_sigterm = signal.signal(signal.SIGTERM, handle_shutdown)
 
     try:
-        while running:
-            # If halted on pause, check for external resume
-            if paused_session_id:
-                session = db.get_session(paused_session_id, db_path)
-
-                if session and session.get('phase') != Phase.PAUSED:
-                    # Session was resumed externally - do post-resume reconciliation
-                    final_phase = session.get('phase')
-                    final_status = session.get('status')
-
-                    # Check status FIRST - failed status takes precedence over phase
-                    if final_status == Status.FAILED:
-                        # Session failed (regardless of phase)
-                        if paused_plan_path and paused_plan_path.exists():
-                            success, new_path = _rename_to_terminal(
-                                paused_plan_path, '_failed', paused_session_id, db_path
-                            )
-                            if success:
-                                click.secho(f"✗ Resumed session failed: {Path(new_path).name}", fg="red")
-                            else:
-                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
-
-                        if paused_plan_path:
-                            currently_processing.discard(paused_plan_path.name)
-
-                        paused_session_id = None
-                        paused_plan_path = None
-
-                    elif final_phase == Phase.COMPLETED:
-                        # Session completed successfully
-                        if paused_plan_path and paused_plan_path.exists():
-                            success, new_path = _rename_to_terminal(
-                                paused_plan_path, '_done', paused_session_id, db_path
-                            )
-                            if success:
-                                click.secho(f"✓ Resumed session completed: {Path(new_path).name}", fg="green")
-                            else:
-                                click.secho(f"⚠ Could not rename: {new_path}", fg="yellow")
-
-                        if paused_plan_path:
-                            currently_processing.discard(paused_plan_path.name)
-
-                        paused_session_id = None
-                        paused_plan_path = None
-
-                    else:
-                        # Still in progress (discovery/planning/execution) - keep waiting
-                        time.sleep(poll_interval)
-                        continue
-                else:
-                    # Still paused - keep polling
-                    time.sleep(poll_interval)
-                    continue
-
-            # Get oldest pending plan
-            pending = _get_pending_plans(plans_path)
-            pending = [p for p in pending if p.name not in currently_processing]
-
-            if not pending:
-                time.sleep(poll_interval)
-                continue
-
-            plan_path = pending[0]
-            click.echo(f"📄 Found: {plan_path.name}")
-
-            # Process the plan
-            result = _process_watch_file(
-                plan_path=plan_path,
-                auto_convert=auto_convert,
-                db_path=db_path,
-                planner_model=planner_model,
-                executor_model=executor_model,
-                auto_commit=auto_commit,
-                smart_commit=smart_commit,
-                telegram=telegram,
-                show_activity=show_activity,
-            )
-
-            # Use executed_path for rename (may differ from plan_path if converted)
-            target_path = result.executed_path or plan_path
-
-            # Handle result
-            if result.status == 'completed':
-                success, new_path = _rename_to_terminal(target_path, '_done', result.session_id, db_path)
-                if success:
-                    click.secho(f"✓ Completed: {Path(new_path).name}", fg="green")
-                else:
-                    click.secho(f"⚠ Complete but could not rename: {new_path}", fg="yellow")
-                    currently_processing.add(target_path.name)
-
-            elif result.status == 'failed':
-                success, new_path = _rename_to_terminal(target_path, '_failed', result.session_id, db_path)
-                if success:
-                    click.secho(f"✗ Failed: {Path(new_path).name}", fg="red")
-                    if result.error:
-                        click.echo(f"  Error: {result.error}")
-                else:
-                    click.secho(f"⚠ Failed but could not rename: {new_path}", fg="yellow")
-                    currently_processing.add(target_path.name)
-
-            elif result.status == 'paused':
-                success, new_path = _rename_to_terminal(target_path, '_paused', result.session_id, db_path)
-                paused_session_id = result.session_id
-                paused_plan_path = Path(new_path) if success else target_path
-
-                if not success:
-                    currently_processing.add(target_path.name)
-
-                click.echo()
-                click.secho("⏸️  Session paused (blocker)", fg="yellow", bold=True)
-                click.echo(f"  Resume with: orchestrator resume {result.session_id} --answer \"your response\"")
-                click.echo()
-
-            elif result.status == 'conversion_failed':
-                # Already quarantined in _process_watch_file
-                click.secho(f"⚠ Conversion failed (quarantined): {plan_path.name}", fg="yellow")
-
-            elif result.status == 'skipped':
-                click.secho(f"⚠ Skipped: {plan_path.name}", fg="yellow")
-                if result.error:
-                    click.echo(f"  Reason: {result.error}")
-
-            time.sleep(poll_interval)
-
-    except KeyboardInterrupt:
-        pass
+        controller.run()
     finally:
         # Restore signal handlers
         signal.signal(signal.SIGINT, original_sigint)
         signal.signal(signal.SIGTERM, original_sigterm)
-        click.echo()
-        click.secho("✓ Watch mode stopped", fg="green")
 
 
 def _quarantine_and_convert(plan_path: Path, auto_convert: bool) -> Optional[Path]:
     """
     Quarantine invalid plan and create converted copy if enabled.
+
+    .. deprecated::
+        Use WatchController.quarantine_and_convert() instead.
+        This function is kept for backwards compatibility.
 
     Args:
         plan_path: Path to the invalid plan
@@ -3578,6 +3465,10 @@ def _process_watch_file(
 ) -> WatchResult:
     """
     Process a single plan file in watch mode.
+
+    .. deprecated::
+        Use WatchController._process_file() instead.
+        This function is kept for backwards compatibility.
 
     Validates the plan, converts if needed, and runs the orchestrator.
 

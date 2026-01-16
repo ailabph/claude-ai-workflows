@@ -108,6 +108,9 @@ class WatchTUI(App):
         executor_model: Optional[str] = None,
         auto_commit: bool = False,
         smart_commit: Optional[bool] = None,
+        telegram: Optional[bool] = None,
+        mcp_config: Optional[str] = None,
+        headless: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -122,6 +125,9 @@ class WatchTUI(App):
             executor_model: Model for executor agent
             auto_commit: Whether to auto-commit on completion
             smart_commit: Whether to use AI-generated commit messages
+            telegram: Whether to enable Telegram notifications
+            mcp_config: Path to MCP configuration file
+            headless: Whether to run browsers in headless mode
         """
         super().__init__(**kwargs)
         self.plans_dir = Path(plans_dir).resolve()
@@ -132,6 +138,9 @@ class WatchTUI(App):
         self.executor_model = executor_model
         self.auto_commit = auto_commit
         self.smart_commit = smart_commit
+        self.telegram = telegram
+        self.mcp_config = mcp_config
+        self.headless = headless
 
         # Get project identity for DB operations
         self.project_id, _ = get_project_identity()
@@ -205,6 +214,21 @@ class WatchTUI(App):
             # Initialize database
             db.init_db(self.db_path)
 
+            # Create telegram notifier if enabled
+            telegram_notifier = None
+            if self.telegram:
+                try:
+                    from ..telegram import TelegramNotifier
+                    from ..config import get_telegram_config
+                    telegram_config = get_telegram_config()
+                    if telegram_config.get('bot_token') and telegram_config.get('chat_id'):
+                        telegram_notifier = TelegramNotifier(
+                            bot_token=telegram_config['bot_token'],
+                            chat_id=telegram_config['chat_id'],
+                        )
+                except Exception:
+                    pass  # Telegram not available, continue without it
+
             # Create controller with TUI adapters
             self._controller = WatchController(
                 plans_dir=self.plans_dir,
@@ -220,6 +244,9 @@ class WatchTUI(App):
                 executor_model=self.executor_model,
                 auto_commit=self.auto_commit,
                 smart_commit=self.smart_commit,
+                telegram_notifier=telegram_notifier,
+                mcp_config_path=self.mcp_config,
+                headless=self.headless,
                 show_activity=False,  # TUI handles display
             )
 
