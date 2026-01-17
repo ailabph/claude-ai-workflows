@@ -239,8 +239,8 @@ class TodoTUI(App):
             # Check if stop was requested before runner was created (race condition fix)
             if self._stop_requested:
                 self._runner.stop()
-                log_panel = self.query_one("#log-panel", LogPanel)
-                log_panel.log_warning("Stopped before execution started")
+                # Use adapter for thread-safe UI access (worker runs off main thread)
+                self._adapter.on_output("Stopped before execution started")
                 self._adapter.notify_todo_completed(
                     completed=0,
                     failed=0,
