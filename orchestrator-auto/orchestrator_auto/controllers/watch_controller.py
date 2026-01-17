@@ -598,7 +598,7 @@ class WatchController:
 
             # Take the most recent paused session
             session = paused_sessions[0]
-            session_id = session.get('session_id')
+            session_id = session.get('id')  # DB column is 'id', not 'session_id'
             plan_path_str = session.get('plan_path', '')
 
             if not session_id:
