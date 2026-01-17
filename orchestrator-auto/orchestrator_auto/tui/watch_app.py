@@ -481,6 +481,7 @@ class WatchTUI(App):
                     feature=data.get("feature"),
                     milestone_count=data.get("milestone_count", 0),
                     milestone_names=data.get("milestone_names", []),
+                    current_milestone=data.get("current_milestone", 0),
                 )
             )
 
@@ -656,17 +657,25 @@ class WatchTUI(App):
 
         # Update milestone progress if we have milestones
         if message.milestone_count > 0:
-            status_panel.update_milestone_progress(0, message.milestone_count)
+            status_panel.update_milestone_progress(
+                message.current_milestone, message.milestone_count
+            )
 
         # Load milestones into the milestone list
         if message.milestone_names:
             milestone_list = self.query_one("#milestone-list", MilestoneList)
             # Convert milestone names to the format expected by MilestoneList
-            # Status starts as "pending" for all milestones
-            milestones = [
-                {"id": i + 1, "title": name, "status": "pending"}
-                for i, name in enumerate(message.milestone_names)
-            ]
+            # Mark milestones up to current_milestone as completed
+            milestones = []
+            for i, name in enumerate(message.milestone_names):
+                milestone_num = i + 1
+                if milestone_num < message.current_milestone:
+                    status = "completed"
+                elif milestone_num == message.current_milestone:
+                    status = "active"
+                else:
+                    status = "pending"
+                milestones.append({"id": milestone_num, "title": name, "status": status})
             milestone_list.set_milestones(milestones)
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
@@ -862,6 +871,21 @@ class WatchTUI(App):
 
             self.call_from_thread(self._log_info, "Response submitted, resuming workflow...")
 
+            # Create token usage callback for accurate token tracking
+            def on_token_usage(agent_name: str, usage_data: dict) -> None:
+                self.call_from_thread(
+                    self.post_message,
+                    messages.TokensUsed(
+                        agent=agent_name,
+                        input_tokens=usage_data.get("input_tokens", 0),
+                        output_tokens=usage_data.get("output_tokens", 0),
+                        cache_creation_input_tokens=usage_data.get("cache_creation_input_tokens", 0),
+                        cache_read_input_tokens=usage_data.get("cache_read_input_tokens", 0),
+                        model=usage_data.get("model"),
+                        cost_usd=usage_data.get("cost_usd"),
+                    )
+                )
+
             # Create Orchestrator and resume
             # Note: Don't clear _paused_session_id here - let _set_watch_running()
             # handle it when WatchController emits RESUMED_* events. This ensures
@@ -872,6 +896,7 @@ class WatchTUI(App):
                 on_output=self._adapter.on_output,
                 on_chunk=self._adapter.on_chunk,
                 on_state_change=self._adapter.on_state_change,
+                on_token_usage=on_token_usage,
                 input_provider=self._input_provider,
                 planner_model=self.planner_model,
                 executor_model=self.executor_model,

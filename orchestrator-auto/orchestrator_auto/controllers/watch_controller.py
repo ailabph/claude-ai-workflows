@@ -630,9 +630,29 @@ class WatchController:
                 self._paused_plan_path = paused_file
                 self._state.paused_count = 1
 
+                # Parse plan file for milestone info
+                from ..parser import parse_plan_file
+                parse_result = parse_plan_file(str(paused_file))
+                milestone_count = parse_result.get('milestones', 0)
+                milestone_names = parse_result.get('milestone_names', [])
+                feature = session.get('feature_description', '')
+
                 self.on_event(WatchEvent.INFO, {
                     "message": f"Restored paused session: {session_id[:8]} ({paused_file.name})"
                 })
+
+                # Emit SESSION_STARTED to populate UI with session details
+                self.on_event(WatchEvent.SESSION_STARTED, {
+                    "session_id": session_id,
+                    "planner_model": session.get('planner_model', '') or self.planner_model,
+                    "executor_model": session.get('executor_model', '') or self.executor_model,
+                    "phase": session.get('phase', 'paused'),
+                    "feature": feature,
+                    "milestone_count": milestone_count,
+                    "milestone_names": milestone_names,
+                    "current_milestone": session.get('current_milestone', 0),
+                })
+
                 self.on_event(WatchEvent.FILE_PAUSED, {
                     "session_id": session_id,
                     "new_path": paused_file.name,

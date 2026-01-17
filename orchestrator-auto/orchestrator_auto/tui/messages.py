@@ -206,6 +206,7 @@ class WatchSessionStarted(Message):
         feature: Optional[str] = None,
         milestone_count: int = 0,
         milestone_names: Optional[list] = None,
+        current_milestone: int = 0,
     ) -> None:
         self.session_id = session_id
         self.planner_model = planner_model
@@ -214,6 +215,7 @@ class WatchSessionStarted(Message):
         self.feature = feature
         self.milestone_count = milestone_count
         self.milestone_names = milestone_names or []
+        self.current_milestone = current_milestone
         super().__init__()
 
 
