@@ -110,6 +110,12 @@ class HelpScreen(ModalScreen):
                 yield self._binding_row("c", "Clear file list")
                 yield self._binding_row("g", "Show git diff")
 
+            elif self.mode == "todo":
+                yield Label("Todo Mode", classes="help-section")
+                yield self._binding_row("l", "Toggle log panel")
+                yield self._binding_row("t", "Toggle task list")
+                yield self._binding_row("s", "Show status details")
+
             # Input mode
             yield Label("Input Modal", classes="help-section")
             yield self._binding_row("Enter", "Submit input")

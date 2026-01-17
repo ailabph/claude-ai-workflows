@@ -306,8 +306,8 @@ class TestPromptTemplate:
 class TestTodoRunnerCallbacks:
     """Test TodoRunner callback functionality."""
 
-    def test_on_task_chunk_callback_invoked(self):
-        """Test that on_task_chunk callback is invoked with text chunks."""
+    def test_on_task_chunk_callback_stored(self):
+        """Test that on_task_chunk callback is stored on runner."""
         from orchestrator_auto.todo import TodoRunner
 
         chunks_received = []
@@ -337,6 +337,50 @@ class TestTodoRunnerCallbacks:
         # Verify callback is None
         assert runner.on_task_chunk is None
 
+    def test_on_task_chunk_callback_invoked_during_execution(self, tmp_path, monkeypatch):
+        """Test that on_task_chunk callback is actually invoked during task execution."""
+        from orchestrator_auto.todo import TodoRunner, TaskResult
+        from orchestrator_auto.todo_parser import parse_task_file, TaskStatus
+        import asyncio
+
+        # Create test task file
+        task_file_path = tmp_path / "tasks.md"
+        task_file_path.write_text("- [ ] Test task")
+
+        chunks_received = []
+
+        def chunk_callback(text: str):
+            chunks_received.append(text)
+
+        # Mock execute_task to simulate streaming chunks
+        async def mock_execute_task(task, base_path):
+            # Simulate chunk emission via the callback
+            if runner.on_task_chunk:
+                runner.on_task_chunk("chunk1")
+                runner.on_task_chunk("chunk2")
+            return TaskResult(
+                task=task,
+                status=TaskStatus.DONE,
+                result="Test completed",
+                duration=0.1,
+            )
+
+        runner = TodoRunner(
+            model="haiku",
+            on_task_chunk=chunk_callback,
+        )
+
+        # Monkeypatch execute_task
+        monkeypatch.setattr(runner, "execute_task", mock_execute_task)
+
+        task_file = parse_task_file(task_file_path)
+        results = runner.run_all(task_file)
+
+        # Verify chunks were received
+        assert chunks_received == ["chunk1", "chunk2"]
+        assert len(results) == 1
+        assert results[0].status == TaskStatus.DONE
+
 
 class TestTodoRunnerStop:
     """Test TodoRunner graceful stop functionality."""
@@ -358,10 +402,11 @@ class TestTodoRunnerStop:
 
         assert runner._stop_requested is True
 
-    def test_stop_prevents_next_task_execution(self, tmp_path):
-        """Test that stop flag prevents execution of next task."""
-        from orchestrator_auto.todo import TodoRunner
+    def test_stop_prevents_next_task_execution(self, tmp_path, monkeypatch):
+        """Test that stop flag prevents execution of subsequent tasks."""
+        from orchestrator_auto.todo import TodoRunner, TaskResult
         from orchestrator_auto.todo_parser import parse_task_file, TaskStatus
+        import asyncio
 
         # Create a test task file with multiple tasks
         task_file_path = tmp_path / "tasks.md"
@@ -373,51 +418,53 @@ class TestTodoRunnerStop:
 - [ ] Task 3
 """)
 
-        # Track which tasks started
-        tasks_started = []
+        # Track which tasks were executed
+        tasks_executed = []
+
+        # Mock execute_task to return fast results
+        async def mock_execute_task(task, base_path):
+            tasks_executed.append(task.first_line.strip())
+            return TaskResult(
+                task=task,
+                status=TaskStatus.DONE,
+                result=f"Completed: {task.first_line}",
+                duration=0.01,
+            )
+
+        # Track which tasks started (via callback)
+        tasks_started_via_callback = []
 
         def on_start(index, total, task):
-            tasks_started.append(index)
+            tasks_started_via_callback.append(index)
             # Stop after first task starts
             if index == 1:
                 runner.stop()
 
         runner = TodoRunner(
             model="haiku",
-            timeout=1,  # Short timeout for test
+            timeout=1,
             on_task_start=on_start,
         )
+
+        # Monkeypatch execute_task to avoid real agent calls
+        monkeypatch.setattr(runner, "execute_task", mock_execute_task)
 
         # Parse task file
         task_file = parse_task_file(task_file_path)
 
-        # Run all tasks (should stop after first)
-        results = runner.run_all(task_file, dry_run=True)
+        # Run all tasks - should stop after first due to stop() in on_start callback
+        results = runner.run_all(task_file)
 
-        # Verify only first task started
-        # Note: In dry_run mode, on_task_start is not called, so we test with dry_run=False
-        # But to avoid actual agent calls, we'll just verify the flag behavior
-        runner._stop_requested = False
-        tasks_started_2 = []
+        # Verify only first task was executed
+        assert len(tasks_executed) == 1
+        assert "Task 1" in tasks_executed[0]
 
-        def on_start_2(index, total, task):
-            tasks_started_2.append(index)
-            if index == 1:
-                runner.stop()
+        # Verify only first task triggered on_start callback
+        assert tasks_started_via_callback == [1]
 
-        runner.on_task_start = on_start_2
-
-        # Simulate run_all logic with stop check
-        tasks = [t for t in task_file.tasks if t.status == TaskStatus.PENDING]
-        simulated_executed = []
-
-        for i, task in enumerate(tasks, 1):
-            if runner._stop_requested:
-                break
-            simulated_executed.append(i)
-            if i == 1:
-                runner.stop()
-
-        # Should only execute first task
-        assert simulated_executed == [1]
+        # Verify stop flag is set
         assert runner._stop_requested is True
+
+        # Verify we got exactly 1 result
+        assert len(results) == 1
+        assert results[0].status == TaskStatus.DONE

@@ -21,7 +21,6 @@ from .widgets import (
     TaskListPanel,
 )
 from .screens import HelpScreen
-from ..config import get_project_identity
 
 
 class TodoTUI(App):
@@ -225,19 +224,36 @@ class TodoTUI(App):
                 self._adapter.on_chunk(chunk, agent="executor")
 
             # Create runner
+            # Note: Force verbose=False in TUI mode to prevent print() corrupting the UI
+            # Verbose info is routed through on_task_chunk callback instead
             self._runner = TodoRunner(
                 model=self.model,
                 timeout=self.timeout,
-                verbose=self.verbose,
+                verbose=False,  # Never use verbose in TUI - prints corrupt Textual
                 mcp_config=self.mcp_config,
                 on_task_start=on_task_start,
                 on_task_complete=on_task_complete,
                 on_task_chunk=on_task_chunk,
             )
 
+            # Check if stop was requested before runner was created (race condition fix)
+            if self._stop_requested:
+                self._runner.stop()
+                log_panel = self.query_one("#log-panel", LogPanel)
+                log_panel.log_warning("Stopped before execution started")
+                self._adapter.notify_todo_completed(
+                    completed=0,
+                    failed=0,
+                    total=0,
+                    duration=0.0,
+                    stopped=True,
+                )
+                return
+
             # Emit start event
             from ..todo_parser import get_actionable_tasks
             tasks_to_run = get_actionable_tasks(self.task_file, retry_failed=self.retry_failed)
+            planned_total = len(tasks_to_run)  # Store planned count before execution
             tasks_data = [
                 {
                     "index": i,
@@ -267,14 +283,14 @@ class TodoTUI(App):
             # Calculate summary
             completed = sum(1 for r in results if r.status == TaskStatus.DONE)
             failed = sum(1 for r in results if r.status == TaskStatus.FAILED)
-            total = len(results)
             duration = time.time() - self._start_time
 
             # Emit completion event
+            # Use planned_total (not len(results)) so UI can show "Stopped 2/5" correctly
             self._adapter.notify_todo_completed(
                 completed=completed,
                 failed=failed,
-                total=total,
+                total=planned_total,
                 duration=duration,
                 stopped=self._stop_requested,
             )
