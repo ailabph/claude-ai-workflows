@@ -37,6 +37,13 @@ WATCH_BINDINGS = [
     Binding("g", "show_git_diff", "Git Diff"),
 ]
 
+# Todo mode bindings
+TODO_BINDINGS = [
+    Binding("l", "toggle_logs", "Logs"),
+    Binding("t", "toggle_tasks", "Tasks"),
+    Binding("s", "show_status", "Status"),
+]
+
 # Input modal bindings
 INPUT_BINDINGS = [
     Binding("enter", "submit", "Submit", priority=True),
@@ -50,7 +57,7 @@ def get_bindings_for_mode(mode: str) -> list:
     Get the appropriate bindings for a given mode.
 
     Args:
-        mode: One of "session", "queue", "watch", "input"
+        mode: One of "session", "queue", "watch", "todo", "input"
 
     Returns:
         List of Binding objects.
@@ -63,6 +70,8 @@ def get_bindings_for_mode(mode: str) -> list:
         bindings.extend(QUEUE_BINDINGS)
     elif mode == "watch":
         bindings.extend(WATCH_BINDINGS)
+    elif mode == "todo":
+        bindings.extend(TODO_BINDINGS)
     elif mode == "input":
         bindings.extend(INPUT_BINDINGS)
 

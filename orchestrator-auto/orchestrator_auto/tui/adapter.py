@@ -178,6 +178,76 @@ class TUIOutputAdapter:
             )
         )
 
+    def notify_todo_started(
+        self,
+        task_file: str,
+        total_tasks: int,
+        tasks: list,
+    ) -> None:
+        """Notify TUI that todo execution started."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.TodoStarted(
+                task_file=task_file,
+                total_tasks=total_tasks,
+                tasks=tasks,
+            )
+        )
+
+    def notify_todo_task_started(
+        self,
+        task_index: int,
+        total_tasks: int,
+        task_content: str,
+    ) -> None:
+        """Notify TUI that a task started."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.TodoTaskStarted(
+                task_index=task_index,
+                total_tasks=total_tasks,
+                task_content=task_content,
+            )
+        )
+
+    def notify_todo_task_completed(
+        self,
+        task_index: int,
+        status: str,
+        result: Optional[str],
+        duration: float,
+    ) -> None:
+        """Notify TUI that a task completed."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.TodoTaskCompleted(
+                task_index=task_index,
+                status=status,
+                result=result,
+                duration=duration,
+            )
+        )
+
+    def notify_todo_completed(
+        self,
+        completed: int,
+        failed: int,
+        total: int,
+        duration: float,
+        stopped: bool = False,
+    ) -> None:
+        """Notify TUI that all tasks completed."""
+        self.app.call_from_thread(
+            self.app.post_message,
+            messages.TodoCompleted(
+                completed=completed,
+                failed=failed,
+                total=total,
+                duration=duration,
+                stopped=stopped,
+            )
+        )
+
 
 class TUIInputProvider(InputProvider):
     """

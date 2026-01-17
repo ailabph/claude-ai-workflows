@@ -29,6 +29,11 @@ class TestTUIImports:
         from orchestrator_auto.tui.watch_app import WatchTUI
         assert WatchTUI is not None
 
+    def test_import_todo_app(self):
+        """Test importing TodoTUI."""
+        from orchestrator_auto.tui.todo_app import TodoTUI
+        assert TodoTUI is not None
+
     def test_import_widgets(self):
         """Test importing TUI widgets."""
         from orchestrator_auto.tui.widgets import (
@@ -39,6 +44,7 @@ class TestTUIImports:
             InputModal,
             QueuePanel,
             WatchPanel,
+            TaskListPanel,
         )
         assert StatusPanel is not None
         assert MilestoneList is not None
@@ -47,6 +53,7 @@ class TestTUIImports:
         assert InputModal is not None
         assert QueuePanel is not None
         assert WatchPanel is not None
+        assert TaskListPanel is not None
 
     def test_import_screens(self):
         """Test importing TUI screens."""
@@ -72,10 +79,18 @@ class TestTUIImports:
             WatchStopped,
             WatchPaused,
             WatchFileUpdated,
+            TodoStarted,
+            TodoTaskStarted,
+            TodoTaskCompleted,
+            TodoCompleted,
         )
         # All messages should be importable
         assert ChunkReceived is not None
         assert WatchFileUpdated is not None
+        assert TodoStarted is not None
+        assert TodoTaskStarted is not None
+        assert TodoTaskCompleted is not None
+        assert TodoCompleted is not None
 
     def test_import_adapter(self):
         """Test importing TUI adapters."""
@@ -132,6 +147,51 @@ class TestMessages:
         assert msg.filename == "plan_done.md"
         assert msg.status == "completed"
         assert msg.original_filename == "plan.md"
+
+    def test_todo_started(self):
+        """Test TodoStarted message."""
+        from orchestrator_auto.tui.messages import TodoStarted
+        tasks = [
+            {"index": 1, "content": "Task 1", "status": "pending"},
+            {"index": 2, "content": "Task 2", "status": "pending"},
+        ]
+        msg = TodoStarted(task_file="tasks.md", total_tasks=2, tasks=tasks)
+        assert msg.task_file == "tasks.md"
+        assert msg.total_tasks == 2
+        assert len(msg.tasks) == 2
+
+    def test_todo_task_started(self):
+        """Test TodoTaskStarted message."""
+        from orchestrator_auto.tui.messages import TodoTaskStarted
+        msg = TodoTaskStarted(task_index=1, total_tasks=5, task_content="Test task")
+        assert msg.task_index == 1
+        assert msg.total_tasks == 5
+        assert msg.task_content == "Test task"
+
+    def test_todo_task_completed(self):
+        """Test TodoTaskCompleted message."""
+        from orchestrator_auto.tui.messages import TodoTaskCompleted
+        msg = TodoTaskCompleted(task_index=1, status="done", result="Success", duration=5.2)
+        assert msg.task_index == 1
+        assert msg.status == "done"
+        assert msg.result == "Success"
+        assert msg.duration == 5.2
+
+    def test_todo_completed(self):
+        """Test TodoCompleted message."""
+        from orchestrator_auto.tui.messages import TodoCompleted
+        msg = TodoCompleted(completed=3, failed=1, total=5, duration=20.5, stopped=False)
+        assert msg.completed == 3
+        assert msg.failed == 1
+        assert msg.total == 5
+        assert msg.duration == 20.5
+        assert msg.stopped is False
+
+    def test_todo_completed_stopped(self):
+        """Test TodoCompleted message with stopped=True."""
+        from orchestrator_auto.tui.messages import TodoCompleted
+        msg = TodoCompleted(completed=2, failed=0, total=5, duration=10.0, stopped=True)
+        assert msg.stopped is True
 
 
 class TestHelpScreen:
@@ -305,3 +365,124 @@ class TestBindings:
         assert "c" in keys  # Clear
         assert "r" in keys  # Respond
         assert "R" in keys  # Refresh
+
+    def test_todo_bindings(self):
+        """Test todo mode bindings."""
+        from orchestrator_auto.tui.bindings import TODO_BINDINGS
+        keys = [b.key for b in TODO_BINDINGS]
+        assert "l" in keys  # Logs
+        assert "t" in keys  # Tasks
+        assert "s" in keys  # Status
+
+    def test_get_bindings_for_mode_todo(self):
+        """Test get_bindings_for_mode returns todo bindings."""
+        from orchestrator_auto.tui.bindings import get_bindings_for_mode
+        bindings = get_bindings_for_mode("todo")
+        keys = [b.key for b in bindings]
+        # Should include global bindings
+        assert "q" in keys  # Quit
+        assert "?" in keys  # Help
+        # Should include todo-specific bindings
+        assert "l" in keys  # Logs
+        assert "t" in keys  # Tasks
+        assert "s" in keys  # Status
+
+
+class TestTaskListPanel:
+    """Test TaskListPanel widget."""
+
+    def test_task_list_panel_initialization(self):
+        """Test TaskListPanel initializes correctly."""
+        from orchestrator_auto.tui.widgets import TaskListPanel
+
+        panel = TaskListPanel()
+        assert panel._total == 0
+        assert panel._completed == 0
+        assert panel._failed == 0
+        assert len(panel._tasks) == 0
+
+    def test_set_tasks(self):
+        """Test set_tasks populates task list."""
+        from orchestrator_auto.tui.widgets import TaskListPanel
+
+        panel = TaskListPanel()
+        tasks = [
+            {"index": 1, "content": "Task 1", "status": "pending"},
+            {"index": 2, "content": "Task 2", "status": "pending"},
+            {"index": 3, "content": "Task 3", "status": "pending"},
+        ]
+        panel.set_tasks(tasks)
+
+        assert panel._total == 3
+        assert panel._completed == 0
+        assert panel._failed == 0
+        assert len(panel._tasks) == 3
+
+    def test_task_item_markers(self):
+        """Test TaskItem has correct status markers."""
+        from orchestrator_auto.tui.widgets.task_list import TaskItem
+
+        assert TaskItem.MARKERS["pending"] == "○"
+        assert TaskItem.MARKERS["processing"] == "▶"
+        assert TaskItem.MARKERS["done"] == "✓"
+        assert TaskItem.MARKERS["failed"] == "✗"
+
+    def test_task_item_truncates_long_content(self):
+        """Test TaskItem truncates long task content."""
+        from orchestrator_auto.tui.widgets.task_list import TaskItem
+
+        long_content = "This is a very long task description that should be truncated to fit within the display width"
+        item = TaskItem(task_index=1, task_content=long_content, status="pending")
+
+        # Content should be truncated in compose
+        assert item.task_content == long_content  # Original stored
+        # Truncation happens during compose, not in __init__
+
+    def test_on_todo_task_started_updates_status(self):
+        """Test on_todo_task_started updates task status to processing."""
+        from orchestrator_auto.tui.widgets import TaskListPanel
+        from orchestrator_auto.tui.messages import TodoTaskStarted
+
+        panel = TaskListPanel()
+        tasks = [
+            {"index": 1, "content": "Task 1", "status": "pending"},
+        ]
+        panel.set_tasks(tasks)
+
+        # Verify initial status
+        assert panel._tasks[1].task_status == "pending"
+
+        # Simulate task started event
+        msg = TodoTaskStarted(task_index=1, total_tasks=1, task_content="Task 1")
+        panel.on_todo_task_started(msg)
+
+        # Status should be updated to processing
+        assert panel._tasks[1].task_status == "processing"
+
+    def test_on_todo_task_completed_updates_status_and_counters(self):
+        """Test on_todo_task_completed updates status and increments counters."""
+        from orchestrator_auto.tui.widgets import TaskListPanel
+        from orchestrator_auto.tui.messages import TodoTaskCompleted
+
+        panel = TaskListPanel()
+        tasks = [
+            {"index": 1, "content": "Task 1", "status": "pending"},
+            {"index": 2, "content": "Task 2", "status": "pending"},
+        ]
+        panel.set_tasks(tasks)
+
+        # Complete task 1 successfully
+        msg1 = TodoTaskCompleted(task_index=1, status="done", result="Success", duration=5.0)
+        panel.on_todo_task_completed(msg1)
+
+        assert panel._tasks[1].task_status == "done"
+        assert panel._completed == 1
+        assert panel._failed == 0
+
+        # Fail task 2
+        msg2 = TodoTaskCompleted(task_index=2, status="failed", result="Error", duration=2.0)
+        panel.on_todo_task_completed(msg2)
+
+        assert panel._tasks[2].task_status == "failed"
+        assert panel._completed == 1
+        assert panel._failed == 1

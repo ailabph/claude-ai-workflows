@@ -179,6 +179,7 @@ class TodoRunner:
         mcp_config: Optional[dict] = None,
         on_task_start: Optional[Callable[[int, int, Task], None]] = None,
         on_task_complete: Optional[Callable[[TaskResult], None]] = None,
+        on_task_chunk: Optional[Callable[[str], None]] = None,
     ):
         """
         Initialize the todo runner.
@@ -190,6 +191,7 @@ class TodoRunner:
             mcp_config: MCP server configuration (already expanded)
             on_task_start: Callback when task starts (index, total, task)
             on_task_complete: Callback when task completes (result)
+            on_task_chunk: Callback for streaming agent output chunks (text)
         """
         self.model = model
         self.model_id = get_model_id(model)
@@ -198,6 +200,12 @@ class TodoRunner:
         self.mcp_config = mcp_config
         self.on_task_start = on_task_start
         self.on_task_complete = on_task_complete
+        self.on_task_chunk = on_task_chunk
+        self._stop_requested = False
+
+    def stop(self) -> None:
+        """Request graceful stop after current task completes."""
+        self._stop_requested = True
 
     async def execute_task(self, task: Task, base_path: Path) -> TaskResult:
         """
@@ -225,7 +233,7 @@ class TodoRunner:
         try:
             # Run agent with timeout
             response = await asyncio.wait_for(
-                self._run_fresh_agent(prompt),
+                self._run_fresh_agent(prompt, on_chunk=self.on_task_chunk),
                 timeout=self.timeout
             )
 
@@ -257,7 +265,11 @@ class TodoRunner:
                 duration=time.time() - start_time,
             )
 
-    async def _run_fresh_agent(self, prompt: str) -> str:
+    async def _run_fresh_agent(
+        self,
+        prompt: str,
+        on_chunk: Optional[Callable[[str], None]] = None,
+    ) -> str:
         """
         Run agent query with completely fresh context.
 
@@ -266,6 +278,7 @@ class TodoRunner:
 
         Args:
             prompt: Full prompt to send to agent
+            on_chunk: Optional callback for streaming text chunks
 
         Returns:
             Agent's text response
@@ -295,6 +308,9 @@ class TodoRunner:
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             response_text += block.text
+                            # Emit chunk for streaming if callback provided
+                            if on_chunk:
+                                on_chunk(block.text)
                 elif isinstance(message, ResultMessage):
                     break
 
@@ -333,6 +349,10 @@ class TodoRunner:
         base_path = task_file.path.parent
 
         for i, task in enumerate(tasks, 1):
+            # Check stop flag BEFORE starting next task
+            if self._stop_requested:
+                break
+
             # Callback: task starting
             if self.on_task_start:
                 self.on_task_start(i, len(tasks), task)

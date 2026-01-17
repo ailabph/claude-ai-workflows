@@ -317,3 +317,96 @@ class TokensUsed(Message):
         self.model = model
         self.cost_usd = cost_usd
         super().__init__()
+
+
+class TodoStarted(Message):
+    """Emitted when todo execution starts."""
+
+    def __init__(
+        self,
+        task_file: str,
+        total_tasks: int,
+        tasks: list,
+    ) -> None:
+        """
+        Args:
+            task_file: Path to the task file
+            total_tasks: Total number of tasks to execute
+            tasks: List of dicts with 'index', 'content', 'status'
+        """
+        self.task_file = task_file
+        self.total_tasks = total_tasks
+        self.tasks = tasks
+        super().__init__()
+
+
+class TodoTaskStarted(Message):
+    """Emitted when a todo task starts."""
+
+    def __init__(
+        self,
+        task_index: int,
+        total_tasks: int,
+        task_content: str,
+    ) -> None:
+        """
+        Args:
+            task_index: Current task index (1-based)
+            total_tasks: Total number of tasks
+            task_content: Content/description of the task
+        """
+        self.task_index = task_index
+        self.total_tasks = total_tasks
+        self.task_content = task_content
+        super().__init__()
+
+
+class TodoTaskCompleted(Message):
+    """Emitted when a todo task completes."""
+
+    def __init__(
+        self,
+        task_index: int,
+        status: str,
+        result: Optional[str],
+        duration: float,
+    ) -> None:
+        """
+        Args:
+            task_index: Task index that completed (1-based)
+            status: Task status ("done" | "failed")
+            result: Result message or error message
+            duration: Task execution duration in seconds
+        """
+        self.task_index = task_index
+        self.status = status
+        self.result = result
+        self.duration = duration
+        super().__init__()
+
+
+class TodoCompleted(Message):
+    """Emitted when all todo tasks complete (or stopped early)."""
+
+    def __init__(
+        self,
+        completed: int,
+        failed: int,
+        total: int,
+        duration: float,
+        stopped: bool = False,
+    ) -> None:
+        """
+        Args:
+            completed: Number of completed tasks
+            failed: Number of failed tasks
+            total: Total number of tasks
+            duration: Total execution duration in seconds
+            stopped: True if stopped via q key before completion
+        """
+        self.completed = completed
+        self.failed = failed
+        self.total = total
+        self.duration = duration
+        self.stopped = stopped
+        super().__init__()

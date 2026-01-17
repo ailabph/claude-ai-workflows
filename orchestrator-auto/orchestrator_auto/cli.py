@@ -3751,6 +3751,7 @@ def test_playwright(
 @click.option('--results', type=click.Path(), help='Write detailed results to file')
 @click.option('-v', '--verbose', is_flag=True, help='Show full agent responses')
 @click.option('--mcp-config', type=click.Path(exists=True), help='MCP config file')
+@click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
 def todo(
     file: str,
     dry_run: bool,
@@ -3760,6 +3761,7 @@ def todo(
     results: Optional[str],
     verbose: bool,
     mcp_config: Optional[str],
+    tui: bool,
 ):
     """Execute tasks from a markdown checkbox file.
 
@@ -3802,6 +3804,7 @@ def todo(
         orchestrator todo tasks.md --model haiku
         orchestrator todo tasks.md --retry-failed
         orchestrator todo tasks.md --results report.md
+        orchestrator todo tasks.md --tui
     """
     from .todo_parser import parse_task_file, TaskStatus
     from .todo import TodoRunner
@@ -3809,6 +3812,31 @@ def todo(
 
     file_path = Path(file)
     task_file = parse_task_file(file_path)
+
+    # Handle TUI mode FIRST (before any click.echo() calls)
+    if tui:
+        from .tui.todo_app import TodoTUI
+
+        # Load MCP config if provided
+        mcp_servers = None
+        if mcp_config:
+            raw_config, _, _ = load_mcp_config_raw(mcp_config)
+            if raw_config:
+                mcp_servers = expand_env_vars(raw_config)
+
+        # Create and run TUI app
+        app = TodoTUI(
+            task_file=task_file,
+            model=model,
+            timeout=timeout,
+            retry_failed=retry_failed,
+            results_file=results,
+            verbose=verbose,
+            mcp_config=mcp_servers,
+            dry_run=dry_run,
+        )
+        app.run()
+        return
 
     # Show summary
     total = len(task_file.tasks)
