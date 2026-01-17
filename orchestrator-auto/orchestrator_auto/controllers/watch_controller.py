@@ -403,18 +403,19 @@ class WatchController:
                 headless=self.headless,
             )
 
-            orch.start()
-
-            # Emit session started event with session info and milestones
+            # Emit session started event BEFORE blocking start() call
+            # This ensures TUI displays milestones and feature info during execution
             self.on_event(WatchEvent.SESSION_STARTED, {
                 "session_id": orch.session_id,
                 "planner_model": orch.planner_model or "opus",
                 "executor_model": orch.executor_model or "sonnet",
-                "phase": orch.state.phase if orch.state else "execution",
+                "phase": "execution",  # Initial phase before start()
                 "feature": feature,
                 "milestone_count": milestone_count,
                 "milestone_names": milestone_names,
             })
+
+            orch.start()
 
             # Check final state
             final_phase = orch.state.phase

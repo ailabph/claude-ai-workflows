@@ -204,16 +204,18 @@ class GitStatusPanel(Static):
                     y_status = line[1]  # Unstaged status
                     filename = line[3:].strip()
 
-                    # Count staged files (X column not space)
+                    # Count staged files (X column not space or ?)
                     if x_status != ' ' and x_status != '?':
                         staged += 1
 
-                    # Count changed files (Y column not space or ?=untracked)
-                    if y_status != ' ':
-                        changed += 1
-
-                    # For untracked files (??)
+                    # Count changed files:
+                    # - Untracked files (??) count as 1 changed
+                    # - Modified/deleted in worktree (Y column M/D) count as changed
                     if x_status == '?' and y_status == '?':
+                        # Untracked file
+                        changed += 1
+                    elif y_status != ' ':
+                        # Modified or deleted in worktree
                         changed += 1
 
                     # Add to list (limit to 6 most recent)
