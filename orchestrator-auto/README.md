@@ -319,6 +319,7 @@ pip install orchestrator-auto[tui]  # Install TUI dependencies
 orchestrator start -f "Feature" --tui     # Single session TUI
 orchestrator start --queue plans/ --tui   # Queue mode TUI
 orchestrator watch ./plans/ --tui         # Watch mode TUI
+orchestrator todo tasks.md --tui          # Todo mode TUI
 ```
 
 **TUI Features:**
@@ -457,6 +458,7 @@ orchestrator test-playwright both --test-url http://localhost:3000/
 | Use TUI for single session | `orchestrator start -f "Feature" --tui` |
 | Use TUI for queue mode | `orchestrator start --queue plans/ --tui` |
 | Use TUI for watch mode | `orchestrator watch ./plans/ --tui` |
+| Use TUI for todo mode | `orchestrator todo tasks.md --tui` |
 | Verify setup | `orchestrator check` |
 
 ---
