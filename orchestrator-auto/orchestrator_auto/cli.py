@@ -3976,5 +3976,69 @@ def todo(
         click.echo(f"Results written to: {results}")
 
 
+@cli.command('helper')
+@click.argument('question', nargs=-1, required=True)
+@click.option('-m', '--model', default='haiku', help='Model: opus, sonnet, haiku (default: haiku)')
+@click.option('-v', '--verbose', is_flag=True, help='Show included documentation files')
+def helper(question: tuple, model: str, verbose: bool):
+    """Ask questions about orchestrator-auto (AI-powered).
+
+    Examples:
+        orchestrator helper "how do I use queue mode?"
+        orchestrator helper how do I resume a session
+        orchestrator helper "what models are available?" -m sonnet
+    """
+    from .resources import load_docs
+    from .config import resolve_model
+    from .agents import create_chat_agent
+    from .auth import detect_auth
+
+    # Check auth before running
+    auth_info = detect_auth()
+    if not auth_info.is_configured:
+        click.secho("✗ No authentication detected", fg='red')
+        click.echo("  Set ANTHROPIC_API_KEY or run 'claude setup-token'")
+        click.echo("  Note: macOS Keychain credentials cannot be detected")
+        return
+
+    # Load bundled documentation
+    docs_content, included_files = load_docs()
+
+    if verbose:
+        click.secho(f"Including: {', '.join(included_files)}", fg='blue')
+        click.echo()
+
+    # Join question parts for unquoted questions
+    question_text = " ".join(question)
+
+    # Resolve model alias to full model ID
+    full_model = resolve_model(model)
+
+    # Construct prompt with guardrails
+    system_prompt = """You are a helpful assistant answering questions about orchestrator-auto.
+
+Answer the user's question using ONLY the documentation provided below.
+If the answer is not found in the documentation, say so clearly and suggest
+where the user might look (e.g., --help, GitHub issues, or the docs/ folder).
+
+<documentation>
+{docs_content}
+</documentation>""".format(docs_content=docs_content)
+
+    # Create agent with no tools (docs-only safety)
+    agent = create_chat_agent(
+        model=full_model,
+        system_prompt=system_prompt,
+        allowed_tools=[],
+    )
+
+    # Send question and get response
+    try:
+        response = agent.send_message(question_text)
+        click.echo(response)
+    except Exception as e:
+        click.secho(f"Error: {e}", fg='red')
+
+
 if __name__ == '__main__':
     cli()

@@ -32,3 +32,6 @@ orchestrator = "orchestrator_auto.cli:cli"
 [tool.setuptools.packages.find]
 include = ["orchestrator_auto*"]
 exclude = ["tests*", "fixtures*", "test_plans*"]
+
+[tool.setuptools.package-data]
+orchestrator_auto = ["resources/*.md"]
