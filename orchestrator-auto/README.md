@@ -285,12 +285,27 @@ Each plan becomes its own session. When plan1 completes, plan2 starts automatica
 orchestrator start --queue
 ```
 
+**Reset queue (clear failed/paused items):**
+```bash
+orchestrator start --queue --queue-reset
+```
+
 ### Watch a Directory for New Plans
 
 **Scenario:** Continuous delivery—drop plans in a folder, they execute automatically.
 
 ```bash
 orchestrator watch ./plans/ --auto-commit
+```
+
+**With custom models and smart commits:**
+```bash
+orchestrator watch ./plans/ -pm sonnet -em haiku --auto-commit --smart-commit
+```
+
+**With MCP tools (e.g., Playwright):**
+```bash
+orchestrator watch ./plans/ --mcp-config .mcp.json --headless
 ```
 
 **What happens:**
@@ -304,9 +319,10 @@ orchestrator watch ./plans/ --auto-commit
 **Scenario:** Quick questions or ad-hoc tasks without the full workflow.
 
 ```bash
-orchestrator chat                # Default (Sonnet with tools)
-orchestrator chat -m opus        # Use Opus
-orchestrator chat --no-tools     # Pure chat mode
+orchestrator chat                              # Default (Sonnet with tools)
+orchestrator chat -m opus                      # Use Opus
+orchestrator chat --no-tools                   # Pure chat mode
+orchestrator chat -s "You are a Python expert" # Custom system prompt
 ```
 
 ### Text User Interface (TUI)
@@ -316,8 +332,6 @@ orchestrator chat --no-tools     # Pure chat mode
 ```bash
 pip install orchestrator-auto[tui]  # Install TUI dependencies
 
-orchestrator start -f "Feature" --tui     # Single session TUI
-orchestrator start --queue plans/ --tui   # Queue mode TUI
 orchestrator watch ./plans/ --tui         # Watch mode TUI
 orchestrator todo tasks.md --tui          # Todo mode TUI
 ```
@@ -361,6 +375,10 @@ orchestrator todo tasks.md --retry-failed     # Also retry [!] tasks
 orchestrator todo tasks.md --dry-run          # Preview without executing
 orchestrator todo tasks.md -m haiku           # Use cheaper model
 orchestrator todo tasks.md --verbose          # Show full agent output
+orchestrator todo tasks.md --timeout 600      # 10 min timeout per task
+orchestrator todo tasks.md --results out.md   # Write detailed results
+orchestrator todo tasks.md --mcp-config .mcp.json  # With MCP tools
+orchestrator todo tasks.md --tui              # TUI mode
 ```
 
 **Task file format:**
@@ -390,6 +408,7 @@ orchestrator todo tasks.md --verbose          # Show full agent output
 ```bash
 orchestrator complete <session-id>                    # Force-complete
 orchestrator complete <session-id> --auto-commit      # Complete and commit
+orchestrator complete <session-id> --auto-commit --smart-commit  # With AI commit message
 ```
 
 ### Convert Plans to Orchestrator Format
@@ -400,8 +419,11 @@ orchestrator complete <session-id> --auto-commit      # Complete and commit
 orchestrator convert plan.md                          # Output to stdout
 orchestrator convert plan.md -o converted.md          # Output to file
 orchestrator convert plan.md --in-place               # Modify in place (creates backup)
+orchestrator convert plan.md --in-place --no-backup   # In-place without backup
 orchestrator convert plan.md --validate-only          # Check if already valid
 orchestrator convert plan.md --dry-run                # Preview without writing
+orchestrator convert plan.md --max-milestones 7       # Limit milestone count
+orchestrator convert plan.md -m haiku                 # Use cheaper model for conversion
 ```
 
 ### Kill Orphaned MCP Processes
@@ -423,6 +445,9 @@ orchestrator cleanup -p "my-mcp"         # Custom pattern
 orchestrator test-playwright planner --test-url http://localhost:3000/
 orchestrator test-playwright executor --test-url http://localhost:3000/
 orchestrator test-playwright both --test-url http://localhost:3000/
+orchestrator test-playwright executor --test-url URL --mcp-config .mcp.json
+orchestrator test-playwright executor --test-url URL --timeout 120 --out-dir ./artifacts
+orchestrator test-playwright executor --test-url URL -m haiku -v  # Cheaper model, verbose
 ```
 
 ---
@@ -437,13 +462,18 @@ orchestrator test-playwright both --test-url http://localhost:3000/
 | Save money on API costs | `orchestrator start -f "Feature" -pm sonnet -em haiku` |
 | Auto-commit when done | `orchestrator start -f "Feature" --auto-commit` |
 | Auto-commit with AI messages | `orchestrator start -f "Feature" --auto-commit --smart-commit` |
+| Choose AI commit model | `orchestrator start -f "Feature" --auto-commit --auto-commit-model haiku` |
 | Use an existing plan file | `orchestrator start --plan docs/plan.md` |
 | Run multiple plans sequentially | `orchestrator start --queue plan1.md plan2.md plan3.md` |
+| Reset queue (clear failed items) | `orchestrator start --queue --queue-reset` |
+| Keep plan filename on completion | `orchestrator start --plan plan.md --no-rename` |
+| Debug mode (full stack traces) | `orchestrator start -f "Feature" --debug` |
 | Monitor a folder for new plans | `orchestrator watch ./plans/ --auto-commit` |
 | Get notifications via Telegram | `orchestrator start -f "Feature" --telegram` |
 | Use Playwright for browser tests | `orchestrator start -f "E2E tests" --mcp-config .mcp.json` |
 | Run headless (no browser window) | `orchestrator start -f "Feature" --mcp-config .mcp.json --headless` |
 | Resume a paused workflow | `orchestrator resume <session-id>` |
+| Resume with auto-commit | `orchestrator resume <session-id> --auto-commit --smart-commit` |
 | Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
 | See all sessions | `orchestrator list` |
 | Check session details | `orchestrator status <session-id>` |
@@ -453,12 +483,13 @@ orchestrator test-playwright both --test-url http://localhost:3000/
 | Test Playwright MCP integration | `orchestrator test-playwright executor --test-url URL` |
 | Export session to markdown | `orchestrator export <session-id> -o report.md` |
 | Direct chat (no orchestration) | `orchestrator chat` or `orchestrator chat -m opus` |
+| Chat with custom system prompt | `orchestrator chat -s "You are a security expert"` |
 | Run a checklist of tasks | `orchestrator todo tasks.md` |
 | Run tasks with cheaper model | `orchestrator todo tasks.md -m haiku` |
-| Use TUI for single session | `orchestrator start -f "Feature" --tui` |
-| Use TUI for queue mode | `orchestrator start --queue plans/ --tui` |
 | Use TUI for watch mode | `orchestrator watch ./plans/ --tui` |
 | Use TUI for todo mode | `orchestrator todo tasks.md --tui` |
+| Test Telegram config | `orchestrator telegram test` |
+| Listen for Telegram replies | `orchestrator telegram listen` |
 | Verify setup | `orchestrator check` |
 
 ---
