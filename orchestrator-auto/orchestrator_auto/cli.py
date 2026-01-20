@@ -376,6 +376,73 @@ def _start_respond_tui(
     app.run()
 
 
+def _start_session_tui(
+    feature: str,
+    db_path: Optional[str],
+    plan_path: Optional[str],
+    planner_model: Optional[str],
+    executor_model: Optional[str],
+    telegram: Optional[bool],
+    mcp_config: Optional[str],
+    headless: bool,
+) -> None:
+    """
+    Start a new workflow session with TUI dashboard.
+
+    Launches the Textual-based OrchestratorTUI app for rich visual feedback
+    when starting a new workflow.
+
+    Args:
+        feature: Feature description for the workflow
+        db_path: Optional database path
+        plan_path: Optional path to existing plan file
+        planner_model: Model for planner agent (alias or full ID)
+        executor_model: Model for executor agent (alias or full ID)
+        telegram: Telegram tri-state (True=enabled, False=disabled, None=auto from config)
+        mcp_config: Path to MCP configuration file
+        headless: Whether to run Playwright browser headless
+    """
+    try:
+        from .tui import get_app_class, check_textual_available
+        check_textual_available()
+    except ImportError:
+        click.secho("Error: Textual is not installed.", fg="red", bold=True)
+        click.echo()
+        click.echo("Install TUI support with:")
+        click.secho('  pip install -e ".[tui]"', fg="cyan")
+        click.echo()
+        click.echo("Or install textual directly:")
+        click.secho("  pip install textual", fg="cyan")
+        sys.exit(1)
+
+    # CRITICAL: Resolve model aliases to full IDs
+    # OrchestratorTUI -> Orchestrator -> agents.py passes model directly to SDK
+    # SDK does not understand aliases like "sonnet" or "haiku"
+    resolved_planner = get_planner_model(planner_model)
+    resolved_executor = get_executor_model(executor_model)
+
+    # Setup Telegram notifier if configured (tri-state: not explicitly disabled)
+    telegram_notifier = None
+    if telegram is not False:
+        telegram_notifier = _create_telegram_notifier(telegram)
+
+    # Get the OrchestratorTUI class and instantiate
+    OrchestratorTUI = get_app_class()
+    app = OrchestratorTUI(
+        feature=feature,
+        db_path=db_path,
+        plan_path=plan_path,
+        planner_model=resolved_planner,
+        executor_model=resolved_executor,
+        mcp_config_path=mcp_config,
+        headless=headless,
+        telegram_notifier=telegram_notifier,
+    )
+
+    # Run the TUI
+    app.run()
+
+
 def _handle_orchestrator_error(
     e: OrchestratorError,
     debug: bool = False,
@@ -1185,6 +1252,7 @@ def cli():
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (.mcp.json)')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
+@click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
 def start(
     feature: Optional[str],
     db_path: Optional[str],
@@ -1203,6 +1271,7 @@ def start(
     mcp_config: Optional[str],
     headless: bool,
     debug: bool,
+    tui: bool,
 ):
     """Start a new workflow session or queue."""
     global _current_orchestrator
@@ -1229,6 +1298,37 @@ def start(
 
     if not queue and not plan and not feature:
         raise click.UsageError("--feature/-f is required unless --queue or --plan is provided.")
+
+    # Handle TUI mode FIRST (before any click.echo() calls)
+    # This prevents stray terminal output before Textual takes over
+    if tui:
+        # Validate incompatible flag combinations
+        if queue or queue_plans:
+            click.secho("Error: --tui is not supported with queue mode", fg="red")
+            click.echo("Queue mode has its own TUI via 'orchestrator start --queue ...'")
+            sys.exit(1)
+
+        if auto_commit:
+            click.secho("Error: --auto-commit is not yet supported with --tui", fg="red")
+            click.echo("The TUI does not currently perform auto-commit on completion.")
+            click.echo("Run without --tui to use auto-commit, or commit manually after TUI exits.")
+            sys.exit(1)
+
+        if smart_commit is True:  # Explicitly enabled
+            click.secho("Error: --smart-commit is not yet supported with --tui", fg="red")
+            sys.exit(1)
+
+        _start_session_tui(
+            feature=feature,
+            db_path=db_path,
+            plan_path=plan,
+            planner_model=planner_model,
+            executor_model=executor_model,
+            telegram=telegram,
+            mcp_config=mcp_config,
+            headless=headless,
+        )
+        return
 
     # Queue mode handling
     if queue:
@@ -2675,7 +2775,7 @@ def check(verbose: bool):
 
                 async def test_oauth_connection():
                     options = ClaudeAgentOptions(
-                        model="claude-haiku-3-5-20241022",
+                        model="claude-3-5-haiku-20241022",
                     )
                     async with ClaudeSDKClient(options) as client:
                         await client.query("Say 'ok'")
@@ -2714,7 +2814,7 @@ def check(verbose: bool):
                 # Create client and make a minimal request
                 client = anthropic.Anthropic()
                 response = client.messages.create(
-                    model="claude-haiku-3-5-20241022",
+                    model="claude-3-5-haiku-20241022",
                     max_tokens=10,
                     messages=[{"role": "user", "content": "Say 'ok'"}],
                 )
@@ -2723,7 +2823,7 @@ def check(verbose: bool):
                 if response.content and len(response.content) > 0:
                     click.echo(f"   {click.style('✓', fg='green')} Connection successful")
                     if verbose:
-                        click.echo(f"      Model: claude-haiku-3-5-20241022")
+                        click.echo(f"      Model: claude-3-5-haiku-20241022")
                         click.echo(f"      Response: {response.content[0].text.strip()}")
                 else:
                     click.echo(f"   {click.style('✗', fg='red')} Connection failed: Empty response")

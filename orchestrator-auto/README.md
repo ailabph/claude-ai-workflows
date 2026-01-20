@@ -481,6 +481,7 @@ orchestrator test-playwright executor --test-url URL -m haiku -v  # Cheaper mode
 | Reset queue (clear failed items) | `orchestrator start --queue --queue-reset` |
 | Keep plan filename on completion | `orchestrator start --plan plan.md --no-rename` |
 | Debug mode (full stack traces) | `orchestrator start -f "Feature" --debug` |
+| Use TUI dashboard | `orchestrator start -f "Feature" --tui` |
 | Monitor a folder for new plans | `orchestrator watch ./plans/ --auto-commit` |
 | Get notifications via Telegram | `orchestrator start -f "Feature" --telegram` |
 | Use Playwright for browser tests | `orchestrator start -f "E2E tests" --mcp-config .mcp.json` |
@@ -641,7 +642,7 @@ orchestrator check
 |-------|----------|
 | `opus` | `claude-opus-4-5-20251101` |
 | `sonnet` | `claude-sonnet-4-5-20250929` |
-| `haiku` | `claude-haiku-3-5-20241022` |
+| `haiku` | `claude-3-5-haiku-20241022` |
 
 **Defaults:** Planner = Opus, Executor = Sonnet
 
@@ -721,4 +722,4 @@ pytest tests/ --cov=orchestrator_auto
 ## Future Planned Features
 
 - [ ] `orchestrator help "your question"` powered by haiku, referencing the README file
-- [ ] `orchestrator start --tui` and `orchestrator start --plan path/to/complex_plan.md --tui`
+- [x] `orchestrator start --tui` and `orchestrator start --plan path/to/complex_plan.md --tui`

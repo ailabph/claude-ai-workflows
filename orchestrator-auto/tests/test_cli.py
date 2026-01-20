@@ -191,6 +191,175 @@ class TestStartCommand:
         assert result.exit_code != 0
 
 
+class TestStartTUIFlag:
+    """Tests for --tui flag on start command."""
+
+    def test_tui_flag_exists(self, runner):
+        """Test that --tui flag is recognized."""
+        result = runner.invoke(cli, ['start', '--help'])
+        assert '--tui' in result.output
+        assert 'TUI' in result.output or 'Text User Interface' in result.output
+
+    def test_tui_with_queue_error(self, runner, temp_db):
+        """Test that --tui with --queue shows error."""
+        result = runner.invoke(cli, [
+            'start', '-f', 'Test', '--tui', '--queue',
+            '-d', temp_db
+        ])
+        assert result.exit_code != 0
+        assert 'not supported with queue mode' in result.output
+
+    def test_tui_with_auto_commit_error(self, runner, temp_db):
+        """Test that --tui with --auto-commit shows error."""
+        result = runner.invoke(cli, [
+            'start', '-f', 'Test', '--tui', '--auto-commit',
+            '-d', temp_db
+        ])
+        assert result.exit_code != 0
+        assert 'not yet supported with --tui' in result.output
+
+    def test_tui_with_smart_commit_error(self, runner, temp_db):
+        """Test that --tui with --smart-commit shows error."""
+        result = runner.invoke(cli, [
+            'start', '-f', 'Test', '--tui', '--smart-commit',
+            '-d', temp_db
+        ])
+        assert result.exit_code != 0
+        assert 'not yet supported with --tui' in result.output
+
+    @patch('orchestrator_auto.cli._start_session_tui')
+    def test_tui_calls_helper(self, mock_tui, runner, temp_db):
+        """Test that --tui flag calls _start_session_tui."""
+        runner.invoke(cli, [
+            'start', '-f', 'Test feature', '--tui',
+            '-d', temp_db
+        ])
+        mock_tui.assert_called_once()
+        call_kwargs = mock_tui.call_args.kwargs
+        assert call_kwargs['feature'] == 'Test feature'
+
+    @patch('orchestrator_auto.cli._start_session_tui')
+    def test_tui_with_plan(self, mock_tui, runner, temp_db, tmp_path):
+        """Test that --tui with --plan passes plan path."""
+        # Create a valid plan file
+        plan_file = tmp_path / "test_plan.md"
+        plan_file.write_text("""# Test Feature
+
+### Milestone 1: Setup
+Tasks here
+""")
+
+        runner.invoke(cli, [
+            'start', '--plan', str(plan_file), '--tui',
+            '-d', temp_db
+        ])
+        mock_tui.assert_called_once()
+        call_kwargs = mock_tui.call_args.kwargs
+        assert call_kwargs['plan_path'] == str(plan_file)
+        # Feature should be auto-extracted
+        assert call_kwargs['feature'] is not None
+
+    @patch('orchestrator_auto.cli._start_session_tui')
+    def test_tui_with_models(self, mock_tui, runner, temp_db):
+        """Test that --tui passes model parameters."""
+        runner.invoke(cli, [
+            'start', '-f', 'Test', '--tui',
+            '-pm', 'sonnet', '-em', 'haiku',
+            '-d', temp_db
+        ])
+        mock_tui.assert_called_once()
+        call_kwargs = mock_tui.call_args.kwargs
+        assert call_kwargs['planner_model'] == 'sonnet'
+        assert call_kwargs['executor_model'] == 'haiku'
+
+
+class TestStartSessionTUIHelper:
+    """Tests for _start_session_tui helper function."""
+
+    @patch('orchestrator_auto.tui.get_app_class')
+    @patch('orchestrator_auto.tui.check_textual_available')
+    @patch('orchestrator_auto.cli._create_telegram_notifier')
+    def test_model_aliases_resolved(self, mock_telegram, mock_check, mock_get_app, temp_db):
+        """Test that model aliases are resolved to full IDs before TUI launch."""
+        mock_app_instance = Mock()
+        mock_app_class = Mock(return_value=mock_app_instance)
+        mock_get_app.return_value = mock_app_class
+        mock_telegram.return_value = None
+
+        from orchestrator_auto.cli import _start_session_tui
+
+        _start_session_tui(
+            feature='Test feature',
+            db_path=temp_db,
+            plan_path=None,
+            planner_model='sonnet',  # Alias
+            executor_model='haiku',   # Alias
+            telegram=None,
+            mcp_config=None,
+            headless=False,
+        )
+
+        # Verify OrchestratorTUI was instantiated with resolved full model IDs
+        mock_app_class.assert_called_once()
+        call_kwargs = mock_app_class.call_args.kwargs
+        # Should be full model IDs, not bare aliases
+        # Full model IDs start with "claude-" and contain date suffix like "-20250929"
+        planner_model = str(call_kwargs.get('planner_model', ''))
+        executor_model = str(call_kwargs.get('executor_model', ''))
+        # Check they're not bare aliases
+        assert planner_model != 'sonnet', "planner_model should be resolved, not alias"
+        assert executor_model != 'haiku', "executor_model should be resolved, not alias"
+        # Check they're full model IDs
+        assert planner_model.startswith('claude-'), f"Expected full model ID, got: {planner_model}"
+        assert executor_model.startswith('claude-'), f"Expected full model ID, got: {executor_model}"
+
+    @patch('orchestrator_auto.tui.get_app_class')
+    @patch('orchestrator_auto.tui.check_textual_available')
+    @patch('orchestrator_auto.cli._create_telegram_notifier')
+    def test_tui_app_run_called(self, mock_telegram, mock_check, mock_get_app, temp_db):
+        """Test that TUI app.run() is called."""
+        mock_app_instance = Mock()
+        mock_app_class = Mock(return_value=mock_app_instance)
+        mock_get_app.return_value = mock_app_class
+        mock_telegram.return_value = None
+
+        from orchestrator_auto.cli import _start_session_tui
+
+        _start_session_tui(
+            feature='Test feature',
+            db_path=temp_db,
+            plan_path=None,
+            planner_model=None,
+            executor_model=None,
+            telegram=None,
+            mcp_config=None,
+            headless=False,
+        )
+
+        mock_app_instance.run.assert_called_once()
+
+    @patch('orchestrator_auto.tui.check_textual_available')
+    def test_textual_not_installed_error(self, mock_check, runner, temp_db):
+        """Test error message when Textual is not installed."""
+        mock_check.side_effect = ImportError("Textual not installed")
+
+        from orchestrator_auto.cli import _start_session_tui
+
+        with pytest.raises(SystemExit) as exc_info:
+            _start_session_tui(
+                feature='Test feature',
+                db_path=temp_db,
+                plan_path=None,
+                planner_model=None,
+                executor_model=None,
+                telegram=None,
+                mcp_config=None,
+                headless=False,
+            )
+
+        assert exc_info.value.code == 1
+
+
 class TestResumeCommand:
     """Test the resume command."""
 

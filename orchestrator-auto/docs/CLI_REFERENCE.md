@@ -35,6 +35,12 @@ orchestrator start -f "E2E tests" --mcp-config .mcp.json
 # Start with Playwright in headless mode (no browser window)
 orchestrator start -f "E2E tests" --mcp-config .mcp.json --headless
 
+# Start with TUI dashboard (rich visual interface)
+orchestrator start -f "Add user authentication" --tui
+
+# Start with TUI and custom models
+orchestrator start -f "Add feature" --tui -pm sonnet -em haiku
+
 # Verify Planner + Executor have Playwright MCP tools
 # Terminal 1: start the local fixture site
 cd orchestrator-auto/fixtures/playwright-test-site
@@ -139,7 +145,13 @@ orchestrator start -f "Feature description" [options]
 | `--no-rename` | Do not rename plan file to `*_done.md` on completion |
 | `--no-activity` | Disable activity indicator |
 | `--debug` | Enable debug mode (full stack trace on error) |
+| `--tui` | Run in TUI (Text User Interface) mode |
 | `-d, --db-path` | Custom database path |
+
+**Note**: `--tui` is not compatible with:
+- `--queue` (queue mode has its own TUI)
+- `--auto-commit` / `--smart-commit` (not yet implemented in TUI)
+- `--no-rename` (has no effect in TUI mode)
 
 #### Queue Mode
 
