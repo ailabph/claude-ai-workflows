@@ -486,3 +486,83 @@ class TestTaskListPanel:
         assert panel._tasks[2].task_status == "failed"
         assert panel._completed == 1
         assert panel._failed == 1
+
+
+class TestOrchestratorTUIRespond:
+    """Test OrchestratorTUI with answer parameter for respond mode."""
+
+    def test_init_with_answer(self):
+        """Test OrchestratorTUI can be initialized with answer parameter."""
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        app = OrchestratorTUI(
+            session_id="test-session-123",
+            answer="my answer to blocker",
+        )
+        assert app.session_id == "test-session-123"
+        assert app.answer == "my answer to blocker"
+
+    def test_init_without_answer(self):
+        """Test OrchestratorTUI works without answer (existing behavior)."""
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        app = OrchestratorTUI(feature="Test feature")
+        assert app.feature == "Test feature"
+        assert app.answer is None
+
+    def test_init_with_mcp_config(self):
+        """Test OrchestratorTUI accepts mcp_config_path parameter."""
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        app = OrchestratorTUI(
+            feature="Test feature",
+            mcp_config_path="/path/to/mcp.json",
+            headless=True,
+        )
+        assert app.mcp_config_path == "/path/to/mcp.json"
+        assert app.headless is True
+
+    def test_init_with_telegram_notifier(self):
+        """Test OrchestratorTUI accepts telegram_notifier parameter."""
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        mock_notifier = object()  # Placeholder for notifier
+        app = OrchestratorTUI(
+            feature="Test feature",
+            telegram_notifier=mock_notifier,
+        )
+        assert app.telegram_notifier is mock_notifier
+
+    def test_init_all_respond_params(self):
+        """Test OrchestratorTUI with all respond-related parameters."""
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        app = OrchestratorTUI(
+            session_id="session-456",
+            answer="the answer",
+            db_path="/tmp/test.db",
+            mcp_config_path="/path/to/mcp.json",
+            headless=True,
+            telegram_notifier=None,
+        )
+        assert app.session_id == "session-456"
+        assert app.answer == "the answer"
+        assert app.db_path == "/tmp/test.db"
+        assert app.mcp_config_path == "/path/to/mcp.json"
+        assert app.headless is True
+        assert app.telegram_notifier is None
+
+    def test_init_with_empty_string_answer(self):
+        """Test OrchestratorTUI with empty string answer (edge case).
+
+        Empty string is a valid answer - should not be treated as None/falsy.
+        """
+        from orchestrator_auto.tui.app import OrchestratorTUI
+
+        app = OrchestratorTUI(
+            session_id="session-789",
+            answer="",  # Empty string is valid
+        )
+        assert app.session_id == "session-789"
+        assert app.answer == ""
+        assert app.answer is not None  # Explicitly not None

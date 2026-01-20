@@ -488,6 +488,7 @@ orchestrator test-playwright executor --test-url URL -m haiku -v  # Cheaper mode
 | Resume a paused workflow | `orchestrator resume <session-id>` |
 | Resume with auto-commit | `orchestrator resume <session-id> --auto-commit --smart-commit` |
 | Answer a blocker question | `orchestrator respond <session-id> "Yes, proceed with approach A"` |
+| Answer blocker with TUI | `orchestrator respond <session-id> "answer" --tui` |
 | See all sessions | `orchestrator list` |
 | Check session details | `orchestrator status <session-id>` |
 | Force-complete stuck session | `orchestrator complete <session-id>` |
@@ -520,6 +521,9 @@ orchestrator status <session-id>
 Respond to continue:
 ```bash
 orchestrator respond <session-id> "Your answer here"
+
+# Or with TUI for rich visual feedback:
+orchestrator respond <session-id> "Your answer here" --tui
 ```
 
 ### API key doesn't work

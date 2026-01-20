@@ -346,6 +346,65 @@ class TestRespondCommand:
         assert result.exit_code != 0
         assert 'blocker' in result.output.lower()
 
+    def test_respond_has_tui_option(self):
+        """Test that respond command has --tui option."""
+        from orchestrator_auto.cli import respond
+
+        # Check that --tui is a valid option
+        params = {p.name for p in respond.params}
+        assert 'tui' in params
+
+    def test_respond_tui_missing_textual(self, runner, temp_db, monkeypatch):
+        """Test respond --tui shows helpful error when textual not installed."""
+        # Create a paused session with blocker
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        db.update_session(session_id, {"phase": "paused", "status": Status.PAUSED}, db_path=temp_db)
+        db.create_blocker(session_id, "executor", "What color?", db_path=temp_db)
+
+        # Mock check_textual_available in orchestrator_auto.tui (where it's defined)
+        # _start_respond_tui imports from .tui, so patch at source
+        def mock_check():
+            raise ImportError("Textual is not installed")
+
+        monkeypatch.setattr("orchestrator_auto.tui.check_textual_available", mock_check)
+
+        result = runner.invoke(cli, [
+            'respond', session_id, 'blue', '--tui', '--db-path', temp_db
+        ])
+
+        assert result.exit_code == 1
+        assert "Textual is not installed" in result.output
+
+    @patch('orchestrator_auto.cli.Orchestrator')
+    def test_respond_without_tui_invokes_resume(self, mock_orch_class, runner, temp_db):
+        """Test respond without --tui follows existing behavior and invokes resume."""
+        # Create a paused session with blocker
+        session_id = db.create_session("Test feature", db_path=temp_db)
+        db.update_session(session_id, {"phase": "paused", "status": Status.PAUSED}, db_path=temp_db)
+        db.create_blocker(session_id, "executor", "What color?", db_path=temp_db)
+
+        # Setup mock orchestrator
+        mock_orch = Mock()
+        mock_orch.session_id = session_id
+        mock_orch.get_status.return_value = {
+            'session_id': session_id,
+            'phase': Phase.COMPLETED,
+            'status': Status.COMPLETED,
+            'current_milestone': 0,
+            'total_milestones': 0,
+        }
+        mock_orch_class.return_value = mock_orch
+
+        result = runner.invoke(cli, [
+            'respond', session_id, 'blue', '--db-path', temp_db
+        ])
+
+        # Should show question/answer in output
+        assert "What color?" in result.output
+        assert "blue" in result.output
+        # Should have invoked resume on the orchestrator (via ctx.invoke -> resume -> Orchestrator)
+        assert mock_orch.resume.called
+
 
 class TestListCommand:
     """Test the list command."""

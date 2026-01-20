@@ -320,6 +320,62 @@ def _start_watch_tui(
     app.run()
 
 
+def _start_respond_tui(
+    session_id: str,
+    answer: str,
+    db_path: Optional[str],
+    telegram: Optional[bool],
+    mcp_config: Optional[str],
+    headless: bool,
+) -> None:
+    """
+    Start respond mode with TUI dashboard.
+
+    Launches the Textual-based OrchestratorTUI app for rich visual feedback
+    when responding to a blocker.
+
+    Args:
+        session_id: Session ID to respond to
+        answer: Answer to the blocker question
+        db_path: Optional database path
+        telegram: Telegram tri-state (True=enabled, False=disabled, None=auto from config)
+        mcp_config: Path to MCP configuration file
+        headless: Whether to run Playwright browser headless
+    """
+    try:
+        from .tui import get_app_class, check_textual_available
+        check_textual_available()
+    except ImportError:
+        click.secho("Error: Textual is not installed.", fg="red", bold=True)
+        click.echo()
+        click.echo("Install TUI support with:")
+        click.secho('  pip install -e ".[tui]"', fg="cyan")
+        click.echo()
+        click.echo("Or install textual directly:")
+        click.secho("  pip install textual", fg="cyan")
+        sys.exit(1)
+
+    # Setup Telegram notifier if configured (tri-state: not explicitly disabled)
+    # Matches resume command behavior (cli.py:1312-1315)
+    telegram_notifier = None
+    if telegram is not False:  # Not explicitly disabled
+        telegram_notifier = _create_telegram_notifier(telegram)
+
+    # Get the OrchestratorTUI class and instantiate
+    OrchestratorTUI = get_app_class()
+    app = OrchestratorTUI(
+        session_id=session_id,
+        answer=answer,
+        db_path=db_path,
+        mcp_config_path=mcp_config,
+        headless=headless,
+        telegram_notifier=telegram_notifier,
+    )
+
+    # Run the TUI
+    app.run()
+
+
 def _handle_orchestrator_error(
     e: OrchestratorError,
     debug: bool = False,
@@ -1600,12 +1656,10 @@ def resume(session_id: str, answer: Optional[str], db_path: Optional[str], show_
 @click.option('--telegram/--no-telegram', default=None, help='Enable/disable Telegram notifications (default: auto from config)')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (session-only override, not persisted)')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
-def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool], mcp_config: Optional[str], headless: bool):
+@click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
+def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Optional[bool], mcp_config: Optional[str], headless: bool, tui: bool):
     """Respond to a blocker and continue workflow."""
     try:
-        click.secho(f"Responding to session: {session_id}", fg="cyan", bold=True)
-        click.echo()
-
         # Initialize database
         db.init_db(db_path)
 
@@ -1624,6 +1678,23 @@ def respond(session_id: str, answer: str, db_path: Optional[str], telegram: Opti
         if not blockers:
             click.secho("✗ No unresolved blockers found", fg="red")
             sys.exit(1)
+
+        # Handle TUI mode FIRST (before any click.echo() calls)
+        # This prevents stray terminal output before Textual takes over
+        if tui:
+            _start_respond_tui(
+                session_id=session_id,
+                answer=answer,
+                db_path=db_path,
+                telegram=telegram,
+                mcp_config=mcp_config,
+                headless=headless,
+            )
+            return
+
+        # Non-TUI mode: existing behavior (click.echo() is safe here)
+        click.secho(f"Responding to session: {session_id}", fg="cyan", bold=True)
+        click.echo()
 
         click.echo(f"Question: {blockers[0]['question']}")
         click.echo(f"Answer: {answer}")

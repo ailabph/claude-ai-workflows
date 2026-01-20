@@ -125,6 +125,10 @@ class OrchestratorTUI(App):
         planner_model: Optional[str] = None,
         executor_model: Optional[str] = None,
         session_id: Optional[str] = None,
+        answer: Optional[str] = None,
+        mcp_config_path: Optional[str] = None,
+        headless: bool = False,
+        telegram_notifier=None,
         **kwargs,
     ) -> None:
         """
@@ -137,6 +141,10 @@ class OrchestratorTUI(App):
             planner_model: Model for planner agent.
             executor_model: Model for executor agent.
             session_id: Session ID to resume (if resuming).
+            answer: Answer to blocker question (for respond mode).
+            mcp_config_path: Path to MCP configuration file.
+            headless: Whether to run Playwright browser headless.
+            telegram_notifier: Telegram notifier instance.
         """
         super().__init__(**kwargs)
         self.feature = feature
@@ -145,6 +153,10 @@ class OrchestratorTUI(App):
         self.planner_model = planner_model
         self.executor_model = executor_model
         self.session_id = session_id
+        self.answer = answer
+        self.mcp_config_path = mcp_config_path
+        self.headless = headless
+        self.telegram_notifier = telegram_notifier
 
         # Create adapters
         self._adapter = TUIOutputAdapter(self)
@@ -240,6 +252,9 @@ class OrchestratorTUI(App):
                 input_provider=self._input_provider,
                 planner_model=self.planner_model,
                 executor_model=self.executor_model,
+                mcp_config_path=self.mcp_config_path,
+                headless=self.headless,
+                telegram_notifier=self.telegram_notifier,
                 show_activity=False,  # TUI handles display
             )
 
@@ -255,8 +270,13 @@ class OrchestratorTUI(App):
                 self.feature
             )
 
-            # Run the workflow
-            self._orchestrator.start()
+            # Branch: resume with answer OR start fresh
+            # NOTE: resume() internally calls start(), so we must not call both
+            # Use `is not None` to allow empty string answers (edge case)
+            if self.session_id and self.answer is not None:
+                self._orchestrator.resume(self.answer)
+            else:
+                self._orchestrator.start()
 
             # Notify completion
             self._adapter.notify_workflow_completed(
