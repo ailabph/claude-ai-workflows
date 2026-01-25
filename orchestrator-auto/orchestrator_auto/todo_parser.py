@@ -127,6 +127,34 @@ def parse_task_file(path: Path) -> TaskFile:
                 # Check if this line is a checkbox (nested task) - if so, stop
                 if CHECKBOX_PATTERN.match(next_line):
                     break
+                # Check if this is a section divider or heading - stop
+                stripped = next_line.strip()
+                if stripped == '---' or next_line.startswith('#'):
+                    break
+                # Handle blank/whitespace-only lines: peek ahead to see if
+                # there's more indented content belonging to this task
+                if not stripped:
+                    k = j + 1
+                    # Skip consecutive blank lines
+                    while k < len(lines) and not lines[k].strip():
+                        k += 1
+                    # Check if next non-blank line continues this task
+                    if k < len(lines):
+                        peek = lines[k]
+                        peek_stripped = peek.strip()
+                        # Stop if next content is a checkbox, heading, or divider
+                        if (CHECKBOX_PATTERN.match(peek)
+                                or peek.startswith('#')
+                                or peek_stripped == '---'):
+                            break
+                        # Continue if next content is indented (part of this task)
+                        if CONTINUATION_PATTERN.match(peek):
+                            task_lines.append('')  # Preserve blank line
+                            continuation_line_numbers.append(j)
+                            j += 1
+                            continue
+                    # End of file or unindented content - stop
+                    break
                 # Check if this is a continuation line (indented non-checkbox)
                 cont_match = CONTINUATION_PATTERN.match(next_line)
                 if cont_match:

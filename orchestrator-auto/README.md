@@ -405,6 +405,7 @@ orchestrator todo tasks.md --tui              # TUI mode
 - Atomic file updates (crash-safe)
 - Per-task timeout (default 5 min)
 - MCP tool support via `--mcp-config`
+- Multi-line tasks with blank lines and nested bullets
 
 **Example with file references:**
 
@@ -413,6 +414,31 @@ orchestrator todo tasks.md --tui              # TUI mode
 - [ ] Refactor authentication logic per @docs/auth-spec.md
 - [ ] Add tests for @src/services/email.py following @tests/test_example.py pattern
 ```
+
+**Example with multi-line tasks:**
+
+```markdown
+- [ ] **auth_test.py** - Test HMAC Authentication
+
+  Build a CLI tool `scripts/cli/auth_test.py` for testing.
+
+  Requirements:
+  - Create a shared HMAC client module
+  - Load API keys from `.env`
+  - Display response fields
+
+---
+
+- [ ] **deposit_create.py** - Create Deposit
+
+  Build a CLI tool for creating deposits.
+
+  Requirements:
+  - Prompt for required fields
+  - Handle success/error responses
+```
+
+Tasks can span multiple lines with blank lines between paragraphs. The parser stops at `---` dividers, `#` headings, or the next checkbox.
 
 ### Force-Complete Stuck Sessions
 

@@ -5,6 +5,12 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-01-25
+
+### Changed
+
+- **Todo parser: blank line support** - Multi-line tasks now support blank lines between checkbox and continuation content, enabling more readable task formats with paragraph breaks and nested bullets
+
 ## [1.1.0] - 2026-01-16
 
 ### Added

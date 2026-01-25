@@ -712,3 +712,182 @@ class TestContentMatchingGuard:
         updated = task_file.read_text()
         assert "- [x] Task A" in updated
         assert "- [x] Task B" in updated
+
+
+class TestBlankLinesInMultiLineTasks:
+    """Test that blank lines within multi-line task blocks are handled correctly."""
+
+    def test_blank_line_between_checkbox_and_continuation(self, tmp_path):
+        """Test parsing task with blank line after checkbox."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] **auth_test.py** - Test HMAC Authentication
+
+  Build a CLI tool for testing.
+
+  Requirements:
+  - Create a shared module
+  - Load API keys from .env
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 1
+        task = result.tasks[0]
+        assert "**auth_test.py** - Test HMAC Authentication" in task.content
+        assert "Build a CLI tool for testing." in task.content
+        assert "Requirements:" in task.content
+        assert "Create a shared module" in task.content
+        assert "Load API keys from .env" in task.content
+
+    def test_multiple_blank_lines_preserved(self, tmp_path):
+        """Test that multiple consecutive blank lines are preserved."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] Main task
+
+
+  After two blank lines
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 1
+        # Content should have blank lines preserved
+        assert result.tasks[0].content.count('\n') >= 2
+
+    def test_blank_lines_stop_at_section_divider(self, tmp_path):
+        """Test that --- section divider stops continuation even after blank lines."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] First task
+
+  Continuation of first
+
+---
+
+- [ ] Second task
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 2
+        assert "First task" in result.tasks[0].content
+        assert "Continuation of first" in result.tasks[0].content
+        assert "Second task" in result.tasks[1].content
+        # First task should NOT contain second task content
+        assert "Second task" not in result.tasks[0].content
+
+    def test_blank_lines_stop_at_heading(self, tmp_path):
+        """Test that # heading stops continuation even after blank lines."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] First task
+
+  Continuation
+
+### Phase 2
+
+- [ ] Second task
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 2
+        assert "Continuation" in result.tasks[0].content
+        assert "Phase 2" not in result.tasks[0].content
+
+    def test_blank_lines_stop_at_new_checkbox(self, tmp_path):
+        """Test that new checkbox stops continuation even after blank lines."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] First task
+
+  Continuation
+
+- [ ] Second task
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 2
+        assert "Continuation" in result.tasks[0].content
+        assert "Second task" not in result.tasks[0].content
+
+    def test_complex_multiline_task_format(self, tmp_path):
+        """Test the user's exact format with phases and nested bullets."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""### Phase 1: Authentication
+
+- [ ] **auth_test.py** - Test HMAC Authentication
+
+  Build a CLI tool `scripts/cli/coinsher/auth_test.py` for `GET /internal/v1/auth/test/`.
+
+  Requirements:
+  - Create a shared `scripts/cli/coinsher/hmac_client.py` module
+  - Load API_KEY and API_SECRET from `.env`
+  - Display response fields: api_key_prefix, credential_name
+
+---
+
+### Phase 2: Deposit Address Management
+
+- [ ] **deposit_address_create.py** - Create Deposit Address
+
+  Build a CLI tool for `POST /internal/v1/deposit/address/`.
+
+  Requirements:
+  - Prompt for: partner_payer_ref, currency, network
+  - Use hmac_client.py for signed requests
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 2
+
+        # First task should have all its content
+        first = result.tasks[0]
+        assert "**auth_test.py**" in first.content
+        assert "Build a CLI tool" in first.content
+        assert "Requirements:" in first.content
+        assert "hmac_client.py" in first.content
+        assert "Display response fields" in first.content
+
+        # Second task should have all its content
+        second = result.tasks[1]
+        assert "**deposit_address_create.py**" in second.content
+        assert "POST /internal/v1/deposit/address/" in second.content
+        assert "partner_payer_ref" in second.content
+
+        # Tasks should NOT bleed into each other
+        assert "deposit_address_create" not in first.content
+        assert "auth_test" not in second.content
+
+    def test_blank_lines_stop_at_unindented_content(self, tmp_path):
+        """Test that unindented non-checkbox content stops continuation."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] Task with continuation
+
+  Indented content
+
+Some unindented text that is not part of the task
+
+- [ ] Next task
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 2
+        assert "Indented content" in result.tasks[0].content
+        assert "unindented text" not in result.tasks[0].content
+
+    def test_blank_lines_at_end_of_file(self, tmp_path):
+        """Test handling blank lines at end of file after task."""
+        task_file = tmp_path / "tasks.md"
+        task_file.write_text("""- [ ] Final task
+
+  Some continuation
+
+
+""")
+
+        result = parse_task_file(task_file)
+
+        assert len(result.tasks) == 1
+        assert "Final task" in result.tasks[0].content
+        assert "Some continuation" in result.tasks[0].content
