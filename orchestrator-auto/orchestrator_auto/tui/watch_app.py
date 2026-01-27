@@ -201,13 +201,6 @@ class WatchTUI(App):
         # Track current session ID for copy action
         self._current_session_id: Optional[str] = None
 
-        # Track current plan file start time for per-file elapsed
-        self._file_start_time: Optional[datetime] = None
-
-        # Track blocker info for full blocker modal
-        self._current_blocker_question: Optional[str] = None
-        self._current_blocker_agent: Optional[str] = None
-
         # Phase 2: Focus tracking for panel navigation
         # Focusable panels in order: planner-output, executor-output, log-panel
         self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
@@ -595,9 +588,6 @@ class WatchTUI(App):
 
     def _reset_for_new_file(self, filename: str) -> None:
         """Reset UI elements for processing a new file."""
-        # Track file start time for per-file elapsed
-        self._file_start_time = datetime.now()
-
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.update_phase("STARTING", "ACTIVE")
@@ -1005,12 +995,12 @@ class WatchTUI(App):
             pass
 
     def _log_error(self, message: str) -> None:
-        """Helper to log error from worker thread."""
+        """Helper to log error (safe for use anywhere including worker threads)."""
         try:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_error(message)
         except Exception:
-            pass
+            pass  # Truly silent - can't log if log panel is unavailable
 
     def action_copy_session_id(self) -> None:
         """Copy current or paused session ID to clipboard."""
@@ -1102,9 +1092,16 @@ class WatchTUI(App):
         try:
             panel_id = self._focusable_panels[self._focused_panel_index]
             panel = self.query_one(panel_id)
-            panel.focus()
-        except Exception:
-            pass
+
+            # For AgentOutput panels, focus the inner RichLog to trigger :focus-within
+            if isinstance(panel, AgentOutput):
+                from textual.widgets import RichLog
+                inner = panel.query_one(".output-content", RichLog)
+                inner.focus()
+            else:
+                panel.focus()
+        except Exception as e:
+            self._log_error(f"Focus failed: {e}")
 
     def action_scroll_down(self) -> None:
         """Scroll the focused panel down."""
@@ -1114,8 +1111,8 @@ class WatchTUI(App):
             panel_id = self._focusable_panels[self._focused_panel_index]
             panel = self.query_one(panel_id)
             panel.scroll_down()
-        except Exception:
-            pass
+        except Exception as e:
+            self._log_error(f"Scroll down failed: {e}")
 
     def action_scroll_up(self) -> None:
         """Scroll the focused panel up."""
@@ -1125,8 +1122,8 @@ class WatchTUI(App):
             panel_id = self._focusable_panels[self._focused_panel_index]
             panel = self.query_one(panel_id)
             panel.scroll_up()
-        except Exception:
-            pass
+        except Exception as e:
+            self._log_error(f"Scroll up failed: {e}")
 
     # Phase 2: Log filter actions
 
@@ -1135,7 +1132,7 @@ class WatchTUI(App):
         try:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(1)
-            log_panel.log_info("Filter: errors only")
+            log_panel.log_system("Filter: errors only")
         except Exception:
             pass
 
@@ -1144,16 +1141,16 @@ class WatchTUI(App):
         try:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(2)
-            log_panel.log_info("Filter: errors + warnings")
+            log_panel.log_system("Filter: warnings+")
         except Exception:
             pass
 
     def action_filter_all(self) -> None:
-        """Set log filter to all messages."""
+        """Set log filter to info+ (excludes debug)."""
         try:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(3)
-            log_panel.log_info("Filter: all messages")
+            log_panel.log_system("Filter: info+")
         except Exception:
             pass
 
@@ -1183,5 +1180,5 @@ class WatchTUI(App):
                 self._controller.resume_polling()
             else:
                 self._controller.pause_polling()
-        except Exception:
-            pass
+        except Exception as e:
+            self._log_error(f"Pause toggle failed: {e}")

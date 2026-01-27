@@ -15,7 +15,7 @@ class LogPanel(RichLog):
     - Color-coded by log level
     - Auto-scroll to latest
     - Configurable max lines
-    - Filter by log level (1=errors, 2=+warnings, 3=all)
+    - Filter by log level (1=errors, 2=warn+, 3=info+ which excludes debug)
     """
 
     DEFAULT_CSS = """
@@ -48,7 +48,7 @@ class LogPanel(RichLog):
             max_lines=max_lines,
             **kwargs
         )
-        # Filter level: 1=errors only, 2=errors+warnings, 3=all (default)
+        # Filter level: 1=errors only, 2=warn+, 3=info+ (default, excludes debug)
         self._filter_level: int = 3
 
     def set_filter_level(self, level: int) -> None:
@@ -56,14 +56,14 @@ class LogPanel(RichLog):
         Set the log filter level.
 
         Args:
-            level: 1=errors only, 2=errors+warnings, 3=all (default)
+            level: 1=errors only, 2=warnings+, 3=info+ (default, excludes debug)
         """
         self._filter_level = max(1, min(3, level))
         # Update border title to show current filter
         filter_labels = {
             1: "LOG (errors)",
             2: "LOG (warn+)",
-            3: "LOG",
+            3: "LOG (info+)",
         }
         self.border_title = filter_labels.get(self._filter_level, "LOG")
 
@@ -101,6 +101,14 @@ class LogPanel(RichLog):
     def log_debug(self, message: str) -> None:
         """Log a debug message."""
         self.log(message, "debug")
+
+    def log_system(self, message: str) -> None:
+        """Log a system message that bypasses filters (for UI feedback)."""
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.write(
+            f"[dim]{timestamp}[/dim] [cyan]{message}[/cyan]",
+            scroll_end=True
+        )
 
     def log_success(self, message: str) -> None:
         """Log a success message."""

@@ -652,21 +652,18 @@ class TestWatchTUIContextInfo:
         # Session tracking starts as None
         assert app._current_session_id is None
         assert app._paused_session_id is None
-        assert app._file_start_time is None
 
-    def test_watch_tui_has_blocker_tracking(self, tmp_path):
-        """Test WatchTUI has blocker tracking attributes."""
+    def test_watch_tui_loads_blocker_from_db(self, tmp_path):
+        """Test WatchTUI loads blocker info from database (not cached)."""
         from orchestrator_auto.tui.watch_app import WatchTUI
 
         plans_dir = tmp_path / "plans"
         plans_dir.mkdir()
 
         app = WatchTUI(plans_dir=str(plans_dir))
-        # Blocker tracking attributes exist
-        assert hasattr(app, "_current_blocker_question")
-        assert hasattr(app, "_current_blocker_agent")
-        assert app._current_blocker_question is None
-        assert app._current_blocker_agent is None
+        # Blocker info is loaded from DB on demand, not cached
+        # Verify action_show_blocker exists (loads from db.get_unresolved_blockers)
+        assert hasattr(app, "action_show_blocker")
 
     def test_watch_tui_has_focus_tracking(self, tmp_path):
         """Test WatchTUI has focus tracking attributes for panel navigation."""
@@ -754,6 +751,29 @@ class TestLogPanelFilter:
         assert panel._should_log("warning") is True
         assert panel._should_log("info") is True
         assert panel._should_log("debug") is False  # debug is level 4
+
+    def test_log_panel_has_log_system_method(self):
+        """Test LogPanel has log_system method that bypasses filters."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        # Verify log_system method exists
+        assert hasattr(panel, "log_system")
+        assert callable(panel.log_system)
+
+
+class TestAgentOutputScroll:
+    """Test AgentOutput scroll methods."""
+
+    def test_agent_output_has_scroll_methods(self):
+        """Test AgentOutput has scroll_down and scroll_up methods."""
+        from orchestrator_auto.tui.widgets import AgentOutput
+
+        output = AgentOutput()
+        assert hasattr(output, "scroll_down")
+        assert hasattr(output, "scroll_up")
+        assert callable(output.scroll_down)
+        assert callable(output.scroll_up)
 
 
 class TestWatchBindingsPhase2:

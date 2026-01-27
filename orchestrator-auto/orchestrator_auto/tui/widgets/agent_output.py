@@ -179,3 +179,19 @@ class AgentOutput(Vertical):
             self._current_agent = ""
         except Exception:
             pass
+
+    def scroll_down(self, animate: bool = False) -> None:
+        """Scroll the output content down."""
+        try:
+            content = self.query_one(".output-content", RichLog)
+            content.scroll_down(animate=animate)
+        except Exception:
+            pass
+
+    def scroll_up(self, animate: bool = False) -> None:
+        """Scroll the output content up."""
+        try:
+            content = self.query_one(".output-content", RichLog)
+            content.scroll_up(animate=animate)
+        except Exception:
+            pass

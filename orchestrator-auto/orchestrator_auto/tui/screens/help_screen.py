@@ -121,8 +121,8 @@ class HelpScreen(ModalScreen):
 
                 yield Label("Log Filter", classes="help-section")
                 yield self._binding_row("1", "Errors only")
-                yield self._binding_row("2", "Errors + warnings")
-                yield self._binding_row("3", "All messages")
+                yield self._binding_row("2", "Warnings+")
+                yield self._binding_row("3", "Info+ (default)")
 
             elif self.mode == "todo":
                 yield Label("Todo Mode", classes="help-section")
