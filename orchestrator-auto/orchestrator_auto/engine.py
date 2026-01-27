@@ -614,8 +614,12 @@ Please continue based on this information."""
         return StreamingIndicator(interval=1.5, show_tokens=True)
 
     def _is_empty_response(self, response: Optional[str]) -> bool:
-        """Check if response is None, empty, or whitespace-only."""
-        return response is None or not response.strip()
+        """Check if response is None, empty, whitespace-only, or non-string."""
+        if response is None:
+            return True
+        if not isinstance(response, str):
+            return True  # Treat non-string responses as empty (defensive)
+        return not response.strip()
 
     def _touch_heartbeat(self) -> None:
         """Update session heartbeat to signal activity."""
@@ -1228,7 +1232,7 @@ The orchestrator will save the file for you.
                 )
                 return ("blocked", None)
 
-        # Log response (guaranteed non-empty at this point)
+        # Log response (non-empty here: empty case returned early as blocked)
         self._log_message("planner", "assistant", response)
 
         # Parse response
