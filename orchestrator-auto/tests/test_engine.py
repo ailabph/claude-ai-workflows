@@ -745,3 +745,226 @@ All setup tasks completed.
         # Should have called executor only once (BLOCKED is valid tag)
         assert mock_executor.send_message.call_count == 1
         assert "[BLOCKED]" in result
+
+
+class TestEmptyResponseRetry:
+    """Test auto-retry behavior for empty planner responses."""
+
+    @patch("orchestrator_auto.engine.time.sleep")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_planner_empty_response_retry_succeeds(self, mock_create_planner, mock_sleep, temp_db, tmp_path):
+        """Test that empty response triggers retry and succeeds on second attempt."""
+        # Setup plan file
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: first call returns empty, second returns valid approval
+        mock_planner = Mock()
+        call_count = [0]
+
+        def planner_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ""  # Empty response
+            else:
+                return "[MILESTONE_APPROVED] Milestone 1 approved."
+
+        mock_planner.send_message.side_effect = planner_side_effect
+        mock_create_planner.return_value = mock_planner
+
+        # Create orchestrator with plan
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+        orch.state.current_milestone = 1
+
+        # Run planner routing
+        mock_report = "[PROGRESS_REPORT]\nMilestone 1 done.\n[/PROGRESS_REPORT]"
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should have called planner twice (original + retry)
+        assert mock_planner.send_message.call_count == 2
+        # Should have slept once (backoff)
+        assert mock_sleep.call_count == 1
+        # Result should be approved
+        assert result_type == "approved"
+
+    @patch("orchestrator_auto.engine.time.sleep")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_planner_none_response_retry_succeeds(self, mock_create_planner, mock_sleep, temp_db, tmp_path):
+        """Test that None response triggers retry and succeeds on second attempt."""
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: first call returns None, second returns valid approval
+        mock_planner = Mock()
+        call_count = [0]
+
+        def planner_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return None  # None response (SDK edge case)
+            else:
+                return "[MILESTONE_APPROVED] Milestone 1 approved."
+
+        mock_planner.send_message.side_effect = planner_side_effect
+        mock_create_planner.return_value = mock_planner
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+        orch.state.current_milestone = 1
+
+        mock_report = "[PROGRESS_REPORT]\nMilestone 1 done.\n[/PROGRESS_REPORT]"
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should succeed without crashing
+        assert mock_planner.send_message.call_count == 2
+        assert result_type == "approved"
+
+    @patch("orchestrator_auto.engine.time.sleep")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_planner_empty_response_all_retries_fail(self, mock_create_planner, mock_sleep, temp_db, tmp_path):
+        """Test that all empty retries creates a blocker."""
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: always returns empty
+        mock_planner = Mock()
+        mock_planner.send_message.return_value = ""
+        mock_create_planner.return_value = mock_planner
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+        orch.state.current_milestone = 1
+
+        mock_report = "[PROGRESS_REPORT]\nMilestone 1 done.\n[/PROGRESS_REPORT]"
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should have called planner 3 times (original + 2 retries)
+        assert mock_planner.send_message.call_count == 3
+        # Should have slept twice (backoff for each retry)
+        assert mock_sleep.call_count == 2
+        # Result should be blocked
+        assert result_type == "blocked"
+
+    @patch("orchestrator_auto.engine.time.sleep")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    def test_planner_empty_then_changes_requested(self, mock_create_executor, mock_create_planner, mock_sleep, temp_db, tmp_path):
+        """Test that empty response followed by CHANGES_REQUESTED works correctly."""
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: first call returns empty, second returns changes requested
+        mock_planner = Mock()
+        call_count = [0]
+
+        def planner_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ""
+            else:
+                return "[CHANGES_REQUESTED]\n- Fix the tests\n- Add error handling"
+
+        mock_planner.send_message.side_effect = planner_side_effect
+        mock_create_planner.return_value = mock_planner
+
+        # Mock executor for the feedback routing
+        mock_executor = Mock()
+        mock_executor.send_message.return_value = "[PROGRESS_REPORT]\nFixed issues.\n[/PROGRESS_REPORT]"
+        mock_create_executor.return_value = mock_executor
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+        orch.state.current_milestone = 1
+
+        mock_report = "[PROGRESS_REPORT]\nMilestone 1 done.\n[/PROGRESS_REPORT]"
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should have called planner twice
+        assert mock_planner.send_message.call_count == 2
+        # Result should be changes_requested
+        assert result_type == "changes_requested"
+        # Should have routed to executor
+        assert mock_executor.send_message.call_count == 1
+
+    @patch("orchestrator_auto.engine.time.sleep")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_planner_empty_then_unparseable_falls_through(self, mock_create_planner, mock_sleep, temp_db, tmp_path):
+        """Test that empty then unparseable response falls through to truncation check."""
+        plan_content = """# Test Plan
+### Milestone 1: Setup
+**Deliverables:**
+- Complete setup
+"""
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text(plan_content)
+
+        # Mock planner: first call returns empty, second returns unparseable (no tag)
+        mock_planner = Mock()
+        call_count = [0]
+
+        def planner_side_effect(prompt, **kwargs):
+            call_count[0] += 1
+            if call_count[0] == 1:
+                return ""
+            elif call_count[0] == 2:
+                # Retry returns unparseable - no valid tag
+                return "I think the milestone looks good overall."
+            else:
+                # Continuation attempt (from truncation check) also fails
+                return "The code appears to work correctly."
+
+        mock_planner.send_message.side_effect = planner_side_effect
+        mock_create_planner.return_value = mock_planner
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None
+        )
+        orch.state.current_milestone = 1
+
+        mock_report = "[PROGRESS_REPORT]\nMilestone 1 done.\n[/PROGRESS_REPORT]"
+        result_type, result_data = orch._route_to_planner(mock_report)
+
+        # Should have called planner at least twice (original + retry that got non-empty)
+        assert mock_planner.send_message.call_count >= 2
+        # Result should be blocked (unparseable falls through to blocker)
+        assert result_type == "blocked"

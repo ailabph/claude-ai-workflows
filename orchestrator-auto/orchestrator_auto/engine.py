@@ -5,6 +5,7 @@ Coordinates Planner and Executor agents through discovery, planning,
 and execution phases with automatic milestone approval and blocker handling.
 """
 
+import time
 import traceback
 from typing import Optional, Dict, Any, Callable, Tuple, TYPE_CHECKING
 
@@ -612,6 +613,10 @@ Please continue based on this information."""
             return None
         return StreamingIndicator(interval=1.5, show_tokens=True)
 
+    def _is_empty_response(self, response: Optional[str]) -> bool:
+        """Check if response is None, empty, or whitespace-only."""
+        return response is None or not response.strip()
+
     def _touch_heartbeat(self) -> None:
         """Update session heartbeat to signal activity."""
         try:
@@ -1158,7 +1163,72 @@ The orchestrator will save the file for you.
 
         response = self._send_with_activity(planner, validation_prompt, "Planner reviewing", agent_name="planner")
 
-        # Log response
+        # Check for empty/None response and auto-retry before parsing
+        MAX_EMPTY_RETRIES = 2
+        if self._is_empty_response(response):
+            self._output("\n⚠ Planner returned empty response. Retrying validation...\n")
+
+            for retry_num in range(1, MAX_EMPTY_RETRIES + 1):
+                # Small backoff to help with transient rate limiting
+                time.sleep(0.5 * retry_num)
+
+                retry_prompt = (
+                    f"Your previous response was empty. Please validate Milestone {self.state.current_milestone}.\n\n"
+                    f"Progress report summary:\n{report[:1500]}{'...' if len(report) > 1500 else ''}\n\n"
+                    "Respond with [MILESTONE_APPROVED], [CHANGES_REQUESTED] with issues, or [HUMAN_INPUT_NEEDED]."
+                )
+                response = self._send_with_activity(
+                    planner, retry_prompt, f"Planner retry {retry_num}/{MAX_EMPTY_RETRIES}", agent_name="planner"
+                )
+
+                if not self._is_empty_response(response):
+                    # Got non-empty response - log it and parse
+                    self._log_message("planner", "assistant", response)
+                    response_type, data = parse_planner_response(response)
+
+                    if response_type == PLANNER_APPROVED:
+                        milestone_num = data.get("milestone", self.state.current_milestone)
+                        self._output(f"\n✓ Planner approved Milestone {milestone_num} (after retry)\n")
+                        return ("approved", None)
+
+                    elif response_type == PLANNER_CHANGES_REQUESTED:
+                        issues = data.get("issues", [])
+                        self._output("\n⚠ Planner requested changes (after retry):\n")
+                        for issue in issues:
+                            self._output(f"  - {issue}\n")
+                        if issues:
+                            issues_text = "\n".join([f"- {issue}" for issue in issues])
+                        else:
+                            issues_text = "- No specific issues parsed. Please review the planner's feedback above."
+                        feedback = CHANGES_REQUESTED_TEMPLATE.format(
+                            milestone_number=self.state.current_milestone,
+                            issues=issues_text
+                        )
+                        executor_response = self._route_to_executor(feedback)
+                        return ("changes_requested", executor_response)
+
+                    elif response_type == PLANNER_BLOCKED:
+                        question = data.get("question", "Unknown question")
+                        self._handle_blocker("planner", question)
+                        return ("blocked", None)
+
+                    # Got non-empty response but no valid tag - break to try existing logic
+                    break
+
+                self._output(f"\n⚠ Retry {retry_num} also returned empty.\n")
+
+            # All retries exhausted and still empty
+            if self._is_empty_response(response):
+                self._output("\n⚠ All retries returned empty. Pausing for human review.\n")
+                self._handle_blocker(
+                    "planner",
+                    f"Planner returned empty responses after {MAX_EMPTY_RETRIES} retries. "
+                    f"This may indicate API issues. Please respond with guidance "
+                    f"(e.g., 'approve milestone {self.state.current_milestone}')."
+                )
+                return ("blocked", None)
+
+        # Log response (guaranteed non-empty at this point)
         self._log_message("planner", "assistant", response)
 
         # Parse response
