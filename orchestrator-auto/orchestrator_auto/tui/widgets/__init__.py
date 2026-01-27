@@ -13,6 +13,11 @@ from .queue_panel import QueuePanel
 from .watch_panel import WatchPanel
 from .git_panel import GitStatusPanel
 from .task_list import TaskListPanel
+# Compact mode widgets
+from .compact_sidebar import CompactSidebar
+from .compact_milestone_row import CompactMilestoneRow
+from .agent_toggle_panel import AgentTogglePanel
+from .status_bar import StatusBar
 
 __all__ = [
     "StatusPanel",
@@ -24,4 +29,9 @@ __all__ = [
     "WatchPanel",
     "GitStatusPanel",
     "TaskListPanel",
+    # Compact mode widgets
+    "CompactSidebar",
+    "CompactMilestoneRow",
+    "AgentTogglePanel",
+    "StatusBar",
 ]

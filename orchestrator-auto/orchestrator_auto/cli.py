@@ -252,6 +252,7 @@ def _handle_watch_event(event: WatchEvent, data: dict, auto_commit: bool = False
 
 def _start_watch_tui(
     plans_dir: str,
+    verbose: bool,
     poll_interval: int,
     auto_convert: bool,
     db_path: Optional[str],
@@ -272,6 +273,7 @@ def _start_watch_tui(
 
     Args:
         plans_dir: Directory to watch for plan files
+        verbose: Use expanded layout with dual agent panels (default: compact)
         poll_interval: Seconds between directory polls
         auto_convert: Whether to auto-convert invalid plans
         db_path: Optional database path
@@ -304,6 +306,7 @@ def _start_watch_tui(
     WatchTUI = get_watch_app_class()
     app = WatchTUI(
         plans_dir=plans_dir,
+        verbose=verbose,
         db_path=db_path,
         poll_interval=poll_interval,
         auto_convert=auto_convert,
@@ -3470,6 +3473,7 @@ def _rename_to_terminal(
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file for all watched sessions')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--tui/--no-tui', default=False, help='Launch Textual TUI dashboard')
+@click.option('--verbose', '-v', is_flag=True, default=False, help='TUI: use expanded layout with dual agent panels (default: compact)')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -3484,6 +3488,7 @@ def watch(
     mcp_config: Optional[str],
     headless: bool,
     tui: bool,
+    verbose: bool,
 ):
     """Watch a directory for new plan files and execute them.
 
@@ -3502,11 +3507,13 @@ def watch(
         orchestrator watch ./plans/ --no-convert
         orchestrator watch ./plans/ --auto-commit
         orchestrator watch ./plans/ --tui
+        orchestrator watch ./plans/ --tui --verbose
     """
     # Handle TUI mode
     if tui:
         _start_watch_tui(
             plans_dir=plans_dir,
+            verbose=verbose,
             poll_interval=poll_interval,
             auto_convert=auto_convert,
             db_path=db_path,

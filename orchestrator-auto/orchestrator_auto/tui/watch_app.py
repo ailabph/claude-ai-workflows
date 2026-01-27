@@ -25,6 +25,10 @@ from .widgets import (
     InputModal,
     WatchPanel,
     GitStatusPanel,
+    # Compact mode widgets
+    CompactSidebar,
+    AgentTogglePanel,
+    StatusBar,
 )
 from .screens import HelpScreen, GitDiffScreen, BlockerModal
 from ..config import get_project_identity
@@ -57,7 +61,8 @@ class WatchTUI(App):
     SUB_TITLE = "Directory Watcher"
     CSS_PATH = "styles/theme.tcss"
 
-    CSS = """
+    # Verbose mode CSS (3-column layout with dual agent panels)
+    CSS_VERBOSE = """
     #main-row {
         width: 100%;
         height: 1fr;
@@ -126,11 +131,39 @@ class WatchTUI(App):
     }
     """
 
+    # Compact mode CSS (2-column layout with single toggleable agent panel)
+    CSS_COMPACT = """
+    #main-row {
+        width: 100%;
+        height: 1fr;
+    }
+
+    #sidebar {
+        width: 20;
+        min-width: 20;
+        max-width: 20;
+        height: 100%;
+    }
+
+    #agent-panel {
+        width: 1fr;
+        height: 100%;
+    }
+
+    #status-bar {
+        dock: bottom;
+        height: 1;
+    }
+    """
+
+    CSS = CSS_VERBOSE  # Default to verbose for backwards compatibility
+
     BINDINGS = GLOBAL_BINDINGS + WATCH_BINDINGS
 
     def __init__(
         self,
         plans_dir: str,
+        verbose: bool = False,
         db_path: Optional[str] = None,
         poll_interval: int = 2,
         auto_convert: bool = False,
@@ -148,6 +181,7 @@ class WatchTUI(App):
 
         Args:
             plans_dir: Directory to watch for plan files
+            verbose: Use expanded layout with dual agent panels (default: compact)
             db_path: Optional database path
             poll_interval: Seconds between directory polls
             auto_convert: Whether to auto-convert invalid plans
@@ -160,6 +194,7 @@ class WatchTUI(App):
             headless: Whether to run browsers in headless mode
         """
         super().__init__(**kwargs)
+        self.verbose = verbose
         self.plans_dir = Path(plans_dir).resolve()
         self.db_path = db_path
         self.poll_interval = poll_interval
@@ -202,8 +237,11 @@ class WatchTUI(App):
         self._current_session_id: Optional[str] = None
 
         # Phase 2: Focus tracking for panel navigation
-        # Focusable panels in order: planner-output, executor-output, log-panel
-        self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
+        # Focusable panels depend on layout mode
+        if self.verbose:
+            self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
+        else:
+            self._focusable_panels = ["#agent-panel"]
         self._focused_panel_index: int = -1  # -1 means no panel focused
 
     def _get_repo_name(self) -> str:
@@ -254,26 +292,36 @@ class WatchTUI(App):
     def compose(self) -> ComposeResult:
         """Compose the TUI layout with containers."""
         yield Header()
-        with Horizontal(id="main-row"):
-            with Vertical(id="left-col"):
-                yield WatchPanel(id="watch-panel")
-                yield MilestoneList(id="milestone-list")
-            with Vertical(id="middle-col"):
-                yield StatusPanel(id="status-panel")
-                yield GitStatusPanel(id="git-panel")
-            with Vertical(id="right-col"):
-                with Horizontal(id="output-row"):
-                    yield AgentOutput(
-                        id="planner-output",
-                        agent_filter="planner",
-                        header_title="PLANNER"
-                    )
-                    yield AgentOutput(
-                        id="executor-output",
-                        agent_filter="executor",
-                        header_title="EXECUTOR"
-                    )
-                yield LogPanel(id="log-panel")
+
+        if self.verbose:
+            # Verbose layout: 3 columns with dual agent panels
+            with Horizontal(id="main-row"):
+                with Vertical(id="left-col"):
+                    yield WatchPanel(id="watch-panel")
+                    yield MilestoneList(id="milestone-list")
+                with Vertical(id="middle-col"):
+                    yield StatusPanel(id="status-panel")
+                    yield GitStatusPanel(id="git-panel")
+                with Vertical(id="right-col"):
+                    with Horizontal(id="output-row"):
+                        yield AgentOutput(
+                            id="planner-output",
+                            agent_filter="planner",
+                            header_title="PLANNER"
+                        )
+                        yield AgentOutput(
+                            id="executor-output",
+                            agent_filter="executor",
+                            header_title="EXECUTOR"
+                        )
+                    yield LogPanel(id="log-panel")
+        else:
+            # Compact layout: sidebar + single toggleable agent panel
+            with Horizontal(id="main-row"):
+                yield CompactSidebar(id="sidebar")
+                yield AgentTogglePanel(id="agent-panel")
+            yield StatusBar(id="status-bar")
+
         yield Footer()
 
     def on_mount(self) -> None:
@@ -281,25 +329,36 @@ class WatchTUI(App):
         # Set repo/branch in subtitle
         self._update_subtitle()
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_info("Watch Mode TUI Started")
-        log_panel.log_info(f"Watching: {self.plans_dir}")
+        if self.verbose:
+            # Verbose mode: use LogPanel for logging
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_info("Watch Mode TUI Started (verbose)")
+            log_panel.log_info(f"Watching: {self.plans_dir}")
 
-        # Set initial models if provided
-        if self.planner_model or self.executor_model:
-            status_panel = self.query_one("#status-panel", StatusPanel)
-            status_panel.update_models(
-                self.planner_model or "default",
-                self.executor_model or "default"
-            )
+            # Set initial models if provided
+            if self.planner_model or self.executor_model:
+                status_panel = self.query_one("#status-panel", StatusPanel)
+                status_panel.update_models(
+                    self.planner_model or "default",
+                    self.executor_model or "default"
+                )
+        else:
+            # Compact mode: use StatusBar for logging
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log("Watch Mode TUI Started", "info")
 
-        # Start elapsed timer
-        self._timer = self.set_interval(1.0, self._update_elapsed)
+            # Initialize sidebar with config
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.update_current_file("—", 0, 0, "STARTING")
 
-        # Start git status refresh timer (every 5 seconds)
-        self.set_interval(5.0, self._refresh_git_status)
-        # Do initial git status refresh
-        self._refresh_git_status()
+        # Start elapsed timer (only for verbose mode with StatusPanel)
+        if self.verbose:
+            self._timer = self.set_interval(1.0, self._update_elapsed)
+
+        # Start git status refresh timer (every 5 seconds) - only for verbose mode
+        if self.verbose:
+            self.set_interval(5.0, self._refresh_git_status)
+            self._refresh_git_status()
 
         # Start subtitle refresh timer (every 30 seconds to catch branch switches)
         self.set_interval(30.0, self._update_subtitle)
@@ -589,33 +648,58 @@ class WatchTUI(App):
     def _reset_for_new_file(self, filename: str) -> None:
         """Reset UI elements for processing a new file."""
         try:
-            status_panel = self.query_one("#status-panel", StatusPanel)
-            status_panel.update_phase("STARTING", "ACTIVE")
-            status_panel.update_feature("—")  # Clear feature until session starts
-            status_panel.update_current_plan(filename)  # Show current plan with timer
+            if self.verbose:
+                # Verbose mode: reset StatusPanel, MilestoneList, AgentOutput panels
+                status_panel = self.query_one("#status-panel", StatusPanel)
+                status_panel.update_phase("STARTING", "ACTIVE")
+                status_panel.update_feature("—")  # Clear feature until session starts
+                status_panel.update_current_plan(filename)  # Show current plan with timer
 
-            # Reset stats (tokens, cost, animations) for new session
-            status_panel.reset_stats()
+                # Reset stats (tokens, cost, animations) for new session
+                status_panel.reset_stats()
 
-            milestone_list = self.query_one("#milestone-list", MilestoneList)
-            milestone_list.set_milestones([])
+                milestone_list = self.query_one("#milestone-list", MilestoneList)
+                milestone_list.set_milestones([])
 
-            # Clear both output panels
-            planner_output = self.query_one("#planner-output", AgentOutput)
-            planner_output.clear_output()
-            planner_output.write_message(f"Processing: {filename[:50]}...", "bold")
+                # Clear both output panels
+                planner_output = self.query_one("#planner-output", AgentOutput)
+                planner_output.clear_output()
+                planner_output.write_message(f"Processing: {filename[:50]}...", "bold")
 
-            executor_output = self.query_one("#executor-output", AgentOutput)
-            executor_output.clear_output()
-            executor_output.write_message(f"Processing: {filename[:50]}...", "bold")
+                executor_output = self.query_one("#executor-output", AgentOutput)
+                executor_output.clear_output()
+                executor_output.write_message(f"Processing: {filename[:50]}...", "bold")
+            else:
+                # Compact mode: reset sidebar and agent panel
+                sidebar = self.query_one("#sidebar", CompactSidebar)
+                sidebar.update_current_file(filename, 0, 0, "STARTING")
+                sidebar.update_stats(0, 0.0, "00:00", 0)
+                sidebar.update_milestones([], 0)
+
+                # Reset compact mode token/cost tracking
+                self._total_tokens = 0
+                self._total_cost = 0.0
+                self._total_api_calls = 0
+
+                agent_panel = self.query_one("#agent-panel", AgentTogglePanel)
+                agent_panel.clear_buffers()
+                agent_panel.write_message(f"Processing: {filename[:50]}...", "bold")
+
+                status_bar = self.query_one("#status-bar", StatusBar)
+                status_bar.set_milestone(0, 0)
+                status_bar.set_activity(f"Processing: {filename[:40]}...")
         except Exception:
             pass
 
     def _update_watch_counts(self) -> None:
         """Update the watch panel counts."""
         try:
-            watch_panel = self.query_one("#watch-panel", WatchPanel)
-            watch_panel.update_counts(self._completed, self._failed, self._paused)
+            if self.verbose:
+                watch_panel = self.query_one("#watch-panel", WatchPanel)
+                watch_panel.update_counts(self._completed, self._failed, self._paused)
+            else:
+                sidebar = self.query_one("#sidebar", CompactSidebar)
+                sidebar.update_queue_counts(self._completed, self._failed, self._paused)
         except Exception:
             pass
 
@@ -650,66 +734,109 @@ class WatchTUI(App):
 
     def on_watch_started(self, message: messages.WatchStarted) -> None:
         """Handle watch started."""
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.set_config(
-            message.directory,
-            message.poll_interval,
-            message.auto_convert,
-        )
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.set_config(
+                message.directory,
+                message.poll_interval,
+                message.auto_convert,
+            )
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_success(f"Watching {message.directory}")
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_success(f"Watching {message.directory}")
+        else:
+            # Compact mode: log to status bar
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log(f"Watching: {message.directory}", "success")
 
     def on_watch_stopped(self, message: messages.WatchStopped) -> None:
         """Handle watch stopped."""
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.set_stopped()
-        watch_panel.update_counts(message.completed, message.failed, message.paused)
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.set_stopped()
+            watch_panel.update_counts(message.completed, message.failed, message.paused)
 
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.update_phase("STOPPED", "COMPLETED")
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_phase("STOPPED", "COMPLETED")
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_success(
-            f"Watch stopped: {message.completed} completed, "
-            f"{message.failed} failed, {message.paused} paused"
-        )
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_success(
+                f"Watch stopped: {message.completed} completed, "
+                f"{message.failed} failed, {message.paused} paused"
+            )
+        else:
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.update_current_file("STOPPED", 0, 0, "COMPLETED")
+            sidebar.update_queue_counts(message.completed, message.failed, message.paused)
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log(
+                f"Stopped: {message.completed}✓ {message.failed}✗ {message.paused}⏸",
+                "success"
+            )
 
     def on_watch_paused(self, message: messages.WatchPaused) -> None:
         """Handle watch paused on blocker."""
         self._paused_session_id = message.session_id  # Track for in-TUI response
 
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.set_paused(message.session_id, message.plan_path)
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.set_paused(message.session_id, message.plan_path)
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_warning(f"Paused on blocker: {message.plan_path}")
-        log_panel.log_info("Press 'r' to respond to blocker")
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_warning(f"Paused on blocker: {message.plan_path}")
+            log_panel.log_info("Press 'r' to respond to blocker")
+        else:
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.set_polling_paused(True)
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log("Paused on blocker - press 'r' to respond", "warning")
 
     def on_watch_file_updated(self, message: messages.WatchFileUpdated) -> None:
         """Handle file status update."""
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.update_file(
-            message.filename,
-            message.status,
-            message.error,
-            message.original_filename,
-        )
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.update_file(
+                message.filename,
+                message.status,
+                message.error,
+                message.original_filename,
+            )
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        if message.status == "processing":
-            log_panel.log_info(f"Found: {message.filename}")
-        elif message.status == "completed":
-            log_panel.log_success(f"Completed: {message.filename}")
-        elif message.status == "failed":
-            error_msg = f": {message.error}" if message.error else ""
-            log_panel.log_error(f"Failed: {message.filename}{error_msg}")
-        elif message.status == "paused":
-            log_panel.log_warning(f"Paused: {message.filename}")
-        elif message.status == "skipped":
-            log_panel.log_warning(f"Skipped: {message.filename}")
-        elif message.status == "converted":
-            log_panel.log_info(f"Converted: {message.filename}")
+            log_panel = self.query_one("#log-panel", LogPanel)
+            if message.status == "processing":
+                log_panel.log_info(f"Found: {message.filename}")
+            elif message.status == "completed":
+                log_panel.log_success(f"Completed: {message.filename}")
+            elif message.status == "failed":
+                error_msg = f": {message.error}" if message.error else ""
+                log_panel.log_error(f"Failed: {message.filename}{error_msg}")
+            elif message.status == "paused":
+                log_panel.log_warning(f"Paused: {message.filename}")
+            elif message.status == "skipped":
+                log_panel.log_warning(f"Skipped: {message.filename}")
+            elif message.status == "converted":
+                log_panel.log_info(f"Converted: {message.filename}")
+        else:
+            # Compact mode: update sidebar file list
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.update_file(
+                message.filename,
+                message.status,
+                message.original_filename,
+            )
+
+            # Update status bar with status message
+            status_bar = self.query_one("#status-bar", StatusBar)
+            level = "info"
+            if message.status == "completed":
+                level = "success"
+            elif message.status == "failed":
+                level = "error"
+            elif message.status in ("paused", "skipped"):
+                level = "warning"
+            status_bar.log(f"{message.status.title()}: {message.filename[:30]}", level)
 
     def on_watch_pending_updated(self, message: messages.WatchPendingUpdated) -> None:
         """Handle pending files list update."""
@@ -721,24 +848,9 @@ class WatchTUI(App):
         # Track current session ID for copy action
         self._current_session_id = message.session_id
 
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.update_session(message.session_id)
-        status_panel.update_feature(message.feature or "")
-        status_panel.update_models(message.planner_model, message.executor_model)
-        status_panel.update_phase(message.phase.upper(), "ACTIVE")
-
-        # Update milestone progress if we have milestones
-        if message.milestone_count > 0:
-            status_panel.update_milestone_progress(
-                message.current_milestone, message.milestone_count
-            )
-
-        # Load milestones into the milestone list
+        # Build milestones list from names
+        milestones = []
         if message.milestone_names:
-            milestone_list = self.query_one("#milestone-list", MilestoneList)
-            # Convert milestone names to the format expected by MilestoneList
-            # Mark milestones up to current_milestone as completed
-            milestones = []
             for i, name in enumerate(message.milestone_names):
                 milestone_num = i + 1
                 if milestone_num < message.current_milestone:
@@ -748,17 +860,56 @@ class WatchTUI(App):
                 else:
                     status = "pending"
                 milestones.append({"id": milestone_num, "title": name, "status": status})
-            milestone_list.set_milestones(milestones)
+
+        if self.verbose:
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_session(message.session_id)
+            status_panel.update_feature(message.feature or "")
+            status_panel.update_models(message.planner_model, message.executor_model)
+            status_panel.update_phase(message.phase.upper(), "ACTIVE")
+
+            # Update milestone progress if we have milestones
+            if message.milestone_count > 0:
+                status_panel.update_milestone_progress(
+                    message.current_milestone, message.milestone_count
+                )
+
+            # Load milestones into the milestone list
+            if milestones:
+                milestone_list = self.query_one("#milestone-list", MilestoneList)
+                milestone_list.set_milestones(milestones)
+        else:
+            # Compact mode: update sidebar
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.update_current_file(
+                self._current_processing_file or message.feature or "—",
+                message.current_milestone,
+                message.milestone_count,
+                message.phase.upper()
+            )
+
+            # Update milestones in sidebar
+            if milestones:
+                sidebar.update_milestones(milestones, message.current_milestone)
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.set_milestone(message.current_milestone, message.milestone_count)
+            status_bar.set_activity(f"Session: {message.session_id[:8]}...")
 
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""
         try:
-            # Write to both output panels - they filter based on agent
-            planner_output = self.query_one("#planner-output", AgentOutput)
-            planner_output.write_chunk(message.chunk, message.agent)
+            if self.verbose:
+                # Verbose mode: write to both output panels - they filter based on agent
+                planner_output = self.query_one("#planner-output", AgentOutput)
+                planner_output.write_chunk(message.chunk, message.agent)
 
-            executor_output = self.query_one("#executor-output", AgentOutput)
-            executor_output.write_chunk(message.chunk, message.agent)
+                executor_output = self.query_one("#executor-output", AgentOutput)
+                executor_output.write_chunk(message.chunk, message.agent)
+            else:
+                # Compact mode: write to toggle panel (it buffers both agents)
+                agent_panel = self.query_one("#agent-panel", AgentTogglePanel)
+                agent_panel.write_chunk(message.chunk, message.agent)
         except Exception:
             pass
 
@@ -768,52 +919,102 @@ class WatchTUI(App):
     def on_tokens_used(self, message: messages.TokensUsed) -> None:
         """Handle token usage report from agent."""
         try:
-            status_panel = self.query_one("#status-panel", StatusPanel)
-            # Add actual tokens from API
             total_tokens = message.input_tokens + message.output_tokens
-            status_panel.add_tokens(total_tokens)
 
-            # Update cost if provided
-            if message.cost_usd is not None:
-                status_panel.add_cost(message.cost_usd)
+            if self.verbose:
+                status_panel = self.query_one("#status-panel", StatusPanel)
+                status_panel.add_tokens(total_tokens)
+
+                # Update cost if provided
+                if message.cost_usd is not None:
+                    status_panel.add_cost(message.cost_usd)
+            else:
+                # Compact mode: update sidebar stats
+                # We need to accumulate tokens/cost - store in instance vars
+                if not hasattr(self, '_total_tokens'):
+                    self._total_tokens = 0
+                    self._total_cost = 0.0
+                    self._total_api_calls = 0
+
+                self._total_tokens += total_tokens
+                self._total_api_calls += 1
+                if message.cost_usd is not None:
+                    self._total_cost += message.cost_usd
+
+                sidebar = self.query_one("#sidebar", CompactSidebar)
+                sidebar.update_stats(
+                    self._total_tokens,
+                    self._total_cost,
+                    "—",  # elapsed handled separately
+                    self._total_api_calls
+                )
         except Exception:
             pass
 
     def on_state_changed(self, message: messages.StateChanged) -> None:
         """Handle state change."""
         state = message.state
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        log_panel = self.query_one("#log-panel", LogPanel)
-        milestone_list = self.query_one("#milestone-list", MilestoneList)
 
         phase = getattr(state, 'phase', '—')
         status = getattr(state, 'status', '—')
-        status_panel.update_phase(phase, status)
-
-        # Update session_id from state
-        session_id = getattr(state, 'session_id', None)
-        if session_id:
-            status_panel.update_session(session_id)
-
-        status_panel.increment_api_calls()
-
-        if message.previous_phase and message.previous_phase != phase:
-            log_panel.log_phase_change(phase.upper())
-
         current_milestone = getattr(state, 'current_milestone', 0)
         total_milestones = getattr(state, 'total_milestones', 0)
 
-        if total_milestones > 0:
-            # Update milestone progress in status panel
-            status_panel.update_milestone_progress(current_milestone, total_milestones)
-            # Update milestone list highlighting
+        if self.verbose:
+            # Verbose mode: use StatusPanel, LogPanel, MilestoneList
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            log_panel = self.query_one("#log-panel", LogPanel)
+            milestone_list = self.query_one("#milestone-list", MilestoneList)
+
+            status_panel.update_phase(phase, status)
+
+            # Update session_id from state
+            session_id = getattr(state, 'session_id', None)
+            if session_id:
+                status_panel.update_session(session_id)
+
+            status_panel.increment_api_calls()
+
+            if message.previous_phase and message.previous_phase != phase:
+                log_panel.log_phase_change(phase.upper())
+
+            if total_milestones > 0:
+                # Update milestone progress in status panel
+                status_panel.update_milestone_progress(current_milestone, total_milestones)
+                # Update milestone list highlighting
+                if current_milestone > 0:
+                    milestone_list.set_current_milestone(current_milestone)
+        else:
+            # Compact mode: use CompactSidebar and StatusBar
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            status_bar = self.query_one("#status-bar", StatusBar)
+
+            # Update sidebar with current state
+            sidebar.update_current_file(
+                self._current_processing_file or "—",
+                current_milestone,
+                total_milestones,
+                phase.upper() if phase else "—"
+            )
+
+            # Update status bar
+            status_bar.set_milestone(current_milestone, total_milestones)
+
+            if message.previous_phase and message.previous_phase != phase:
+                status_bar.log(f"Phase: {phase.upper()}", "info")
+
+            # Update milestones in sidebar
             if current_milestone > 0:
-                milestone_list.set_current_milestone(current_milestone)
+                sidebar.set_current_milestone(current_milestone)
 
     def on_output_received(self, message: messages.OutputReceived) -> None:
         """Handle general output message."""
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log(message.message, message.level)
+        if self.verbose:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log(message.message, message.level)
+        else:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log(message.message, message.level)
 
     def on_input_requested(self, message: messages.InputRequested) -> None:
         """Handle input request - show input modal."""
@@ -872,10 +1073,16 @@ class WatchTUI(App):
 
     def action_clear(self) -> None:
         """Clear the file list."""
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.clear_files()
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_info("Cleared file list")
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.clear_files()
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_info("Cleared file list")
+        else:
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.clear_files()
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log("Cleared file list", "info")
 
     def action_back(self) -> None:
         """Handle escape."""
@@ -1098,6 +1305,11 @@ class WatchTUI(App):
                 from textual.widgets import RichLog
                 inner = panel.query_one(".output-content", RichLog)
                 inner.focus()
+            elif isinstance(panel, AgentTogglePanel):
+                # For AgentTogglePanel, focus the inner RichLog
+                from textual.widgets import RichLog
+                inner = panel.query_one("#output-content", RichLog)
+                inner.focus()
             else:
                 panel.focus()
         except Exception as e:
@@ -1159,14 +1371,24 @@ class WatchTUI(App):
     def _set_polling_paused(self, paused: bool) -> None:
         """Update UI when polling is paused/resumed."""
         try:
-            watch_panel = self.query_one("#watch-panel", WatchPanel)
-            watch_panel.set_polling_paused(paused)
+            if self.verbose:
+                watch_panel = self.query_one("#watch-panel", WatchPanel)
+                watch_panel.set_polling_paused(paused)
 
-            log_panel = self.query_one("#log-panel", LogPanel)
-            if paused:
-                log_panel.log_warning("Polling paused - press 'p' to resume")
+                log_panel = self.query_one("#log-panel", LogPanel)
+                if paused:
+                    log_panel.log_warning("Polling paused - press 'p' to resume")
+                else:
+                    log_panel.log_info("Polling resumed")
             else:
-                log_panel.log_info("Polling resumed")
+                sidebar = self.query_one("#sidebar", CompactSidebar)
+                sidebar.set_polling_paused(paused)
+
+                status_bar = self.query_one("#status-bar", StatusBar)
+                if paused:
+                    status_bar.log("Polling paused - press 'p' to resume", "warning")
+                else:
+                    status_bar.log("Polling resumed", "info")
         except Exception:
             pass
 
@@ -1182,3 +1404,33 @@ class WatchTUI(App):
                 self._controller.pause_polling()
         except Exception as e:
             self._log_error(f"Pause toggle failed: {e}")
+
+    # Compact mode: Agent toggle actions
+
+    def action_show_planner(self) -> None:
+        """Show planner output (compact mode only)."""
+        if self.verbose:
+            return  # No-op in verbose mode (both panels visible)
+
+        try:
+            agent_panel = self.query_one("#agent-panel", AgentTogglePanel)
+            agent_panel.set_agent("planner")
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.set_activity("Viewing: Planner output")
+        except Exception:
+            pass
+
+    def action_show_executor(self) -> None:
+        """Show executor output (compact mode only)."""
+        if self.verbose:
+            return  # No-op in verbose mode (both panels visible)
+
+        try:
+            agent_panel = self.query_one("#agent-panel", AgentTogglePanel)
+            agent_panel.set_agent("executor")
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.set_activity("Viewing: Executor output")
+        except Exception:
+            pass

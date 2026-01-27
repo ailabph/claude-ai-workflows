@@ -48,6 +48,9 @@ WATCH_BINDINGS = [
     Binding("3", "filter_all", "All Logs", show=False),
     # Phase 3: Execution control
     Binding("p", "toggle_pause", "Pause"),
+    # Compact mode: Agent toggle ([ for planner, ] for executor)
+    Binding("[", "show_planner", "Planner", show=True),
+    Binding("]", "show_executor", "Executor", show=True),
 ]
 
 # Todo mode bindings
