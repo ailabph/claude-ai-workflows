@@ -5,6 +5,24 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-01-27
+
+### Added
+
+- **Watch TUI: Context visibility** - Repo name and branch displayed in header subtitle (auto-refreshes every 30s), current plan filename with per-file elapsed time in status panel
+- **Watch TUI: Copy session ID** - Press `y` to copy current/paused session ID to clipboard
+- **Watch TUI: View full blocker** - Press `b` to open modal showing full blocker question with respond option
+- **Watch TUI: Panel navigation** - Press `Tab`/`Shift+Tab` to cycle focus between panels, `j`/`k` to scroll focused panel
+- **Watch TUI: Log filtering** - Press `1`/`2`/`3` to filter log panel (errors only, +warnings, all)
+- **Watch TUI: Pause polling** - Press `p` to pause/resume directory polling without stopping in-flight execution
+- **WatchController: Pause API** - New `pause_polling()`, `resume_polling()`, `is_polling_paused()` methods with `POLLING_PAUSED`/`POLLING_RESUMED` events
+- **BlockerModal screen** - New modal screen for viewing full blocker questions
+
+### Changed
+
+- **LogPanel: Filter support** - Added `set_filter_level()` method and filter indicator in border title
+- **WatchPanel: Polling status** - New `set_polling_paused()` method to show paused state
+
 ## [1.1.1] - 2026-01-25
 
 ### Changed

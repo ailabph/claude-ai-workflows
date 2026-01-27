@@ -353,19 +353,23 @@ orchestrator todo tasks.md --tui          # Todo mode TUI
 - Real-time streaming output with syntax highlighting
 - Status panel showing phase, models, API calls, tokens, elapsed time
 - Milestone progress tracking with visual checkmarks
-- Log panel for orchestrator messages
+- Log panel for orchestrator messages with filtering
 - Input modals for blocker/discovery prompts
 - Responsive layouts adapting to terminal width
 
-**Keybindings (press `?` for full list):**
+**Watch Mode TUI Keybindings (press `?` for full list):**
 | Key | Action |
 |-----|--------|
 | `q` | Quit |
 | `?` | Show help |
-| `l` | Toggle logs |
-| `m` | Toggle milestones |
-| `s` | Show status |
-| `Esc` | Back/Cancel |
+| `r` | Respond to blocker |
+| `y` | Copy session ID to clipboard |
+| `b` | View full blocker question |
+| `p` | Pause/resume directory polling |
+| `g` | Show git diff |
+| `Tab` | Focus next panel |
+| `j`/`k` | Scroll down/up in focused panel |
+| `1`/`2`/`3` | Log filter (errors/+warnings/all) |
 
 ### Batch Task Execution (Todo Mode)
 
