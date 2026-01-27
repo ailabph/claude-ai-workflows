@@ -7,9 +7,11 @@ Provides modal and overlay screens for the TUI application.
 from .help_screen import HelpScreen
 from .session_picker import SessionPickerScreen
 from .git_diff_screen import GitDiffScreen
+from .blocker_modal import BlockerModal
 
 __all__ = [
     "HelpScreen",
     "SessionPickerScreen",
     "GitDiffScreen",
+    "BlockerModal",
 ]

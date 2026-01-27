@@ -566,3 +566,354 @@ class TestOrchestratorTUIRespond:
         assert app.session_id == "session-789"
         assert app.answer == ""
         assert app.answer is not None  # Explicitly not None
+
+
+class TestBlockerModal:
+    """Test BlockerModal screen."""
+
+    def test_blocker_modal_initialization(self):
+        """Test BlockerModal can be initialized with required parameters."""
+        from orchestrator_auto.tui.screens import BlockerModal
+
+        modal = BlockerModal(
+            question="What API endpoint should I use?",
+            session_id="abc12345",
+        )
+        assert modal.question == "What API endpoint should I use?"
+        assert modal.session_id == "abc12345"
+        assert modal.agent == "unknown"  # Default
+        assert modal.timestamp is None  # Default
+
+    def test_blocker_modal_with_all_parameters(self):
+        """Test BlockerModal with all optional parameters."""
+        from orchestrator_auto.tui.screens import BlockerModal
+        from datetime import datetime
+
+        timestamp = datetime(2025, 1, 27, 14, 30, 0)
+        modal = BlockerModal(
+            question="How should I implement authentication?",
+            session_id="def67890",
+            agent="executor",
+            timestamp=timestamp,
+        )
+        assert modal.question == "How should I implement authentication?"
+        assert modal.session_id == "def67890"
+        assert modal.agent == "executor"
+        assert modal.timestamp == timestamp
+
+    def test_blocker_modal_long_question(self):
+        """Test BlockerModal handles long questions."""
+        from orchestrator_auto.tui.screens import BlockerModal
+
+        long_question = "This is a very long question " * 50
+        modal = BlockerModal(
+            question=long_question,
+            session_id="ghi11111",
+        )
+        assert modal.question == long_question  # Full question stored
+
+
+class TestWatchBindingsExtended:
+    """Test extended watch mode bindings."""
+
+    def test_watch_bindings_include_copy_id(self):
+        """Test watch bindings include 'y' for copy session ID."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "y" in keys
+        # Find the binding and check its action
+        y_binding = next(b for b in WATCH_BINDINGS if b.key == "y")
+        assert y_binding.action == "copy_session_id"
+
+    def test_watch_bindings_include_blocker(self):
+        """Test watch bindings include 'b' for show blocker."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "b" in keys
+        # Find the binding and check its action
+        b_binding = next(b for b in WATCH_BINDINGS if b.key == "b")
+        assert b_binding.action == "show_blocker"
+
+
+class TestWatchTUIContextInfo:
+    """Test WatchTUI context visibility features."""
+
+    def test_watch_tui_initialization_with_plans_dir(self, tmp_path):
+        """Test WatchTUI initializes with plans directory."""
+        from orchestrator_auto.tui.watch_app import WatchTUI
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        app = WatchTUI(plans_dir=str(plans_dir))
+        assert app.plans_dir == plans_dir.resolve()
+        # Session tracking starts as None
+        assert app._current_session_id is None
+        assert app._paused_session_id is None
+        assert app._file_start_time is None
+
+    def test_watch_tui_has_blocker_tracking(self, tmp_path):
+        """Test WatchTUI has blocker tracking attributes."""
+        from orchestrator_auto.tui.watch_app import WatchTUI
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        app = WatchTUI(plans_dir=str(plans_dir))
+        # Blocker tracking attributes exist
+        assert hasattr(app, "_current_blocker_question")
+        assert hasattr(app, "_current_blocker_agent")
+        assert app._current_blocker_question is None
+        assert app._current_blocker_agent is None
+
+    def test_watch_tui_has_focus_tracking(self, tmp_path):
+        """Test WatchTUI has focus tracking attributes for panel navigation."""
+        from orchestrator_auto.tui.watch_app import WatchTUI
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        app = WatchTUI(plans_dir=str(plans_dir))
+        # Focus tracking attributes exist
+        assert hasattr(app, "_focusable_panels")
+        assert hasattr(app, "_focused_panel_index")
+        # Default state
+        assert len(app._focusable_panels) > 0
+        assert app._focused_panel_index == -1  # No panel focused initially
+
+
+class TestLogPanelFilter:
+    """Test LogPanel filter functionality."""
+
+    def test_log_panel_default_filter_level(self):
+        """Test LogPanel starts with filter level 3 (all messages)."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        assert panel._filter_level == 3
+
+    def test_log_panel_set_filter_level(self):
+        """Test LogPanel.set_filter_level updates filter."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        panel.set_filter_level(1)
+        assert panel._filter_level == 1
+
+        panel.set_filter_level(2)
+        assert panel._filter_level == 2
+
+        panel.set_filter_level(3)
+        assert panel._filter_level == 3
+
+    def test_log_panel_filter_level_clamped(self):
+        """Test filter level is clamped to valid range."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        panel.set_filter_level(0)  # Below min
+        assert panel._filter_level == 1
+
+        panel.set_filter_level(5)  # Above max
+        assert panel._filter_level == 3
+
+    def test_log_panel_should_log_at_level_1(self):
+        """Test _should_log at filter level 1 (errors only)."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        panel._filter_level = 1
+
+        assert panel._should_log("error") is True
+        assert panel._should_log("warning") is False
+        assert panel._should_log("info") is False
+        assert panel._should_log("debug") is False
+
+    def test_log_panel_should_log_at_level_2(self):
+        """Test _should_log at filter level 2 (errors + warnings)."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        panel._filter_level = 2
+
+        assert panel._should_log("error") is True
+        assert panel._should_log("warning") is True
+        assert panel._should_log("info") is False
+        assert panel._should_log("debug") is False
+
+    def test_log_panel_should_log_at_level_3(self):
+        """Test _should_log at filter level 3 (all)."""
+        from orchestrator_auto.tui.widgets import LogPanel
+
+        panel = LogPanel()
+        panel._filter_level = 3
+
+        assert panel._should_log("error") is True
+        assert panel._should_log("warning") is True
+        assert panel._should_log("info") is True
+        assert panel._should_log("debug") is False  # debug is level 4
+
+
+class TestWatchBindingsPhase2:
+    """Test Phase 2 watch mode bindings."""
+
+    def test_watch_bindings_include_focus_navigation(self):
+        """Test watch bindings include Tab/Shift+Tab for focus."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "tab" in keys
+        assert "shift+tab" in keys
+
+        # Verify actions
+        tab_binding = next(b for b in WATCH_BINDINGS if b.key == "tab")
+        assert tab_binding.action == "focus_next"
+
+        shift_tab_binding = next(b for b in WATCH_BINDINGS if b.key == "shift+tab")
+        assert shift_tab_binding.action == "focus_prev"
+
+    def test_watch_bindings_include_scroll(self):
+        """Test watch bindings include j/k for scrolling."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "j" in keys
+        assert "k" in keys
+
+        # Verify actions
+        j_binding = next(b for b in WATCH_BINDINGS if b.key == "j")
+        assert j_binding.action == "scroll_down"
+
+        k_binding = next(b for b in WATCH_BINDINGS if b.key == "k")
+        assert k_binding.action == "scroll_up"
+
+    def test_watch_bindings_include_log_filter(self):
+        """Test watch bindings include 1/2/3 for log filter."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "1" in keys
+        assert "2" in keys
+        assert "3" in keys
+
+        # Verify actions
+        binding_1 = next(b for b in WATCH_BINDINGS if b.key == "1")
+        assert binding_1.action == "filter_errors"
+
+        binding_2 = next(b for b in WATCH_BINDINGS if b.key == "2")
+        assert binding_2.action == "filter_warnings"
+
+        binding_3 = next(b for b in WATCH_BINDINGS if b.key == "3")
+        assert binding_3.action == "filter_all"
+
+
+class TestWatchBindingsPhase3:
+    """Test Phase 3 watch mode bindings."""
+
+    def test_watch_bindings_include_pause(self):
+        """Test watch bindings include 'p' for pause/resume."""
+        from orchestrator_auto.tui.bindings import WATCH_BINDINGS
+
+        keys = [b.key for b in WATCH_BINDINGS]
+        assert "p" in keys
+
+        # Verify action
+        p_binding = next(b for b in WATCH_BINDINGS if b.key == "p")
+        assert p_binding.action == "toggle_pause"
+
+
+class TestWatchControllerPause:
+    """Test WatchController pause functionality."""
+
+    def test_watch_controller_pause_flag_default(self, tmp_path):
+        """Test WatchController starts with polling not paused."""
+        from orchestrator_auto.controllers.watch_controller import WatchController
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        controller = WatchController(plans_dir=plans_dir)
+        assert controller._polling_paused is False
+        assert controller.is_polling_paused() is False
+
+    def test_watch_controller_pause_polling(self, tmp_path):
+        """Test WatchController.pause_polling() sets flag."""
+        from orchestrator_auto.controllers.watch_controller import WatchController
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        events = []
+        controller = WatchController(
+            plans_dir=plans_dir,
+            on_event=lambda e, d: events.append(e),
+        )
+
+        controller.pause_polling()
+        assert controller._polling_paused is True
+        assert controller.is_polling_paused() is True
+
+    def test_watch_controller_resume_polling(self, tmp_path):
+        """Test WatchController.resume_polling() clears flag."""
+        from orchestrator_auto.controllers.watch_controller import WatchController
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        events = []
+        controller = WatchController(
+            plans_dir=plans_dir,
+            on_event=lambda e, d: events.append(e),
+        )
+
+        controller.pause_polling()
+        assert controller.is_polling_paused() is True
+
+        controller.resume_polling()
+        assert controller._polling_paused is False
+        assert controller.is_polling_paused() is False
+
+    def test_watch_controller_pause_emits_event(self, tmp_path):
+        """Test pause/resume emits appropriate events."""
+        from orchestrator_auto.controllers.watch_controller import WatchController, WatchEvent
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        events = []
+        controller = WatchController(
+            plans_dir=plans_dir,
+            on_event=lambda e, d: events.append(e),
+        )
+
+        controller.pause_polling()
+        assert WatchEvent.POLLING_PAUSED in events
+
+        controller.resume_polling()
+        assert WatchEvent.POLLING_RESUMED in events
+
+    def test_watch_controller_pause_idempotent(self, tmp_path):
+        """Test pause/resume are idempotent (don't emit duplicate events)."""
+        from orchestrator_auto.controllers.watch_controller import WatchController, WatchEvent
+
+        plans_dir = tmp_path / "plans"
+        plans_dir.mkdir()
+
+        events = []
+        controller = WatchController(
+            plans_dir=plans_dir,
+            on_event=lambda e, d: events.append(e),
+        )
+
+        # Pause twice - should only emit one event
+        controller.pause_polling()
+        controller.pause_polling()
+        assert events.count(WatchEvent.POLLING_PAUSED) == 1
+
+        # Resume twice - should only emit one event
+        events.clear()
+        controller.resume_polling()
+        controller.resume_polling()
+        assert events.count(WatchEvent.POLLING_RESUMED) == 1

@@ -36,6 +36,8 @@ class WatchEvent(Enum):
     RESUMED_COMPLETED = "resumed_completed"
     RESUMED_FAILED = "resumed_failed"
     TOKEN_USAGE = "token_usage"  # Actual token usage from API
+    POLLING_PAUSED = "polling_paused"  # Emitted when polling is paused
+    POLLING_RESUMED = "polling_resumed"  # Emitted when polling is resumed
     STOPPED = "stopped"
     INFO = "info"
     WARNING = "warning"
@@ -151,6 +153,7 @@ class WatchController:
         self.headless = headless
 
         self._should_stop = False
+        self._polling_paused = False  # Pause polling without stopping execution
         self._currently_processing: set = set()
         self._paused_session_id: Optional[str] = None
         self._paused_plan_path: Optional[Path] = None
@@ -695,6 +698,11 @@ class WatchController:
                         time.sleep(self.poll_interval)
                         continue
 
+                # If polling is paused, skip file detection but stay in loop
+                if self._polling_paused:
+                    time.sleep(self.poll_interval)
+                    continue
+
                 # Get oldest pending plan
                 pending = self.get_pending_plans()
                 pending = [p for p in pending if p.name not in self._currently_processing]
@@ -792,3 +800,24 @@ class WatchController:
     def stop(self) -> None:
         """Signal watch loop to stop."""
         self._should_stop = True
+
+    def pause_polling(self) -> None:
+        """
+        Pause directory polling without stopping execution.
+
+        In-flight executions will complete, but no new files will be picked up.
+        Useful when editing plan files mid-watch.
+        """
+        if not self._polling_paused:
+            self._polling_paused = True
+            self.on_event(WatchEvent.POLLING_PAUSED, {})
+
+    def resume_polling(self) -> None:
+        """Resume directory polling."""
+        if self._polling_paused:
+            self._polling_paused = False
+            self.on_event(WatchEvent.POLLING_RESUMED, {})
+
+    def is_polling_paused(self) -> bool:
+        """Check if polling is paused."""
+        return self._polling_paused

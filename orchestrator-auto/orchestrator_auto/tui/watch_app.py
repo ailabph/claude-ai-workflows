@@ -4,6 +4,8 @@ Watch mode TUI application for orchestrator-auto.
 Provides a TUI for directory-based plan watching and execution.
 """
 
+import subprocess
+from datetime import datetime
 from pathlib import Path
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -24,7 +26,7 @@ from .widgets import (
     WatchPanel,
     GitStatusPanel,
 )
-from .screens import HelpScreen, GitDiffScreen
+from .screens import HelpScreen, GitDiffScreen, BlockerModal
 from ..config import get_project_identity
 
 if TYPE_CHECKING:
@@ -196,6 +198,66 @@ class WatchTUI(App):
         # Store telegram notifier for resume parity
         self._telegram_notifier = None
 
+        # Track current session ID for copy action
+        self._current_session_id: Optional[str] = None
+
+        # Track current plan file start time for per-file elapsed
+        self._file_start_time: Optional[datetime] = None
+
+        # Track blocker info for full blocker modal
+        self._current_blocker_question: Optional[str] = None
+        self._current_blocker_agent: Optional[str] = None
+
+        # Phase 2: Focus tracking for panel navigation
+        # Focusable panels in order: planner-output, executor-output, log-panel
+        self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
+        self._focused_panel_index: int = -1  # -1 means no panel focused
+
+    def _get_repo_name(self) -> str:
+        """Get repository name from git or directory name."""
+        try:
+            # Try to get repo root
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(self.plans_dir),
+                capture_output=True,
+                text=True,
+                timeout=1.0
+            )
+            if result.returncode == 0:
+                repo_path = Path(result.stdout.strip())
+                return repo_path.name
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+        # Fallback to plans directory parent name
+        return self.plans_dir.parent.name
+
+    def _get_branch_name(self) -> str:
+        """Get current git branch name."""
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                cwd=str(self.plans_dir),
+                capture_output=True,
+                text=True,
+                timeout=1.0
+            )
+            if result.returncode == 0:
+                branch = result.stdout.strip()
+                # Truncate long branch names
+                if len(branch) > 25:
+                    return branch[:22] + "..."
+                return branch
+        except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            pass
+        return "—"
+
+    def _update_subtitle(self) -> None:
+        """Update the app subtitle with repo and branch info."""
+        repo = self._get_repo_name()
+        branch = self._get_branch_name()
+        self.sub_title = f"📁 {repo} ({branch})"
+
     def compose(self) -> ComposeResult:
         """Compose the TUI layout with containers."""
         yield Header()
@@ -223,6 +285,9 @@ class WatchTUI(App):
 
     def on_mount(self) -> None:
         """Handle app mount - start the watch."""
+        # Set repo/branch in subtitle
+        self._update_subtitle()
+
         log_panel = self.query_one("#log-panel", LogPanel)
         log_panel.log_info("Watch Mode TUI Started")
         log_panel.log_info(f"Watching: {self.plans_dir}")
@@ -242,6 +307,9 @@ class WatchTUI(App):
         self.set_interval(5.0, self._refresh_git_status)
         # Do initial git status refresh
         self._refresh_git_status()
+
+        # Start subtitle refresh timer (every 30 seconds to catch branch switches)
+        self.set_interval(30.0, self._update_subtitle)
 
         # Start watch in worker thread
         self._start_watch()
@@ -509,6 +577,12 @@ class WatchTUI(App):
                 )
             )
 
+        elif event == WatchEvent.POLLING_PAUSED:
+            self.call_from_thread(self._set_polling_paused, True)
+
+        elif event == WatchEvent.POLLING_RESUMED:
+            self.call_from_thread(self._set_polling_paused, False)
+
         elif event in (WatchEvent.INFO, WatchEvent.WARNING):
             level = "warning" if event == WatchEvent.WARNING else "info"
             self.call_from_thread(
@@ -521,10 +595,14 @@ class WatchTUI(App):
 
     def _reset_for_new_file(self, filename: str) -> None:
         """Reset UI elements for processing a new file."""
+        # Track file start time for per-file elapsed
+        self._file_start_time = datetime.now()
+
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.update_phase("STARTING", "ACTIVE")
             status_panel.update_feature("—")  # Clear feature until session starts
+            status_panel.update_current_plan(filename)  # Show current plan with timer
 
             # Reset stats (tokens, cost, animations) for new session
             status_panel.reset_stats()
@@ -570,10 +648,11 @@ class WatchTUI(App):
             pass
 
     def _update_elapsed(self) -> None:
-        """Update the elapsed time display."""
+        """Update the elapsed time display (total and per-file)."""
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.update_elapsed()
+            status_panel.update_plan_elapsed()  # Update per-file elapsed
         except Exception:
             pass
 
@@ -649,6 +728,9 @@ class WatchTUI(App):
 
     def on_watch_session_started(self, message: messages.WatchSessionStarted) -> None:
         """Handle session started - update status panel with session info."""
+        # Track current session ID for copy action
+        self._current_session_id = message.session_id
+
         status_panel = self.query_one("#status-panel", StatusPanel)
         status_panel.update_session(message.session_id)
         status_panel.update_feature(message.feature or "")
@@ -927,5 +1009,179 @@ class WatchTUI(App):
         try:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_error(message)
+        except Exception:
+            pass
+
+    def action_copy_session_id(self) -> None:
+        """Copy current or paused session ID to clipboard."""
+        log_panel = self.query_one("#log-panel", LogPanel)
+
+        session_id = self._current_session_id or self._paused_session_id
+        if session_id:
+            self.copy_to_clipboard(session_id)
+            log_panel.log_info(f"Copied: {session_id[:8]}...")
+        else:
+            log_panel.log_warning("No session ID to copy")
+
+    def action_show_blocker(self) -> None:
+        """Show full blocker question in modal."""
+        from .. import db
+
+        log_panel = self.query_one("#log-panel", LogPanel)
+
+        session_id = self._paused_session_id or self._current_session_id
+        if not session_id:
+            log_panel.log_warning("No session with blocker")
+            return
+
+        try:
+            # Load blocker from database
+            blockers = db.get_unresolved_blockers(session_id, self.db_path)
+            if not blockers:
+                log_panel.log_warning("No unresolved blocker found")
+                return
+
+            blocker = blockers[0]
+            question = blocker.get("question", "No question available")
+            agent = blocker.get("agent", "unknown")
+
+            # Parse timestamp if available
+            timestamp = None
+            if blocker.get("created_at"):
+                try:
+                    timestamp = datetime.fromisoformat(blocker["created_at"])
+                except (ValueError, TypeError):
+                    pass
+
+            # Show the blocker modal
+            def handle_result(should_respond: bool) -> None:
+                if should_respond:
+                    self.action_respond()
+
+            self.push_screen(
+                BlockerModal(
+                    question=question,
+                    session_id=session_id,
+                    agent=agent,
+                    timestamp=timestamp,
+                ),
+                handle_result,
+            )
+
+        except Exception as e:
+            log_panel.log_error(f"Failed to load blocker: {e}")
+
+    # Phase 2: Panel navigation actions
+
+    def action_focus_next(self) -> None:
+        """Cycle focus to the next panel."""
+        if not self._focusable_panels:
+            return
+
+        # Move to next panel (wrap around)
+        self._focused_panel_index = (self._focused_panel_index + 1) % len(self._focusable_panels)
+        self._apply_panel_focus()
+
+    def action_focus_prev(self) -> None:
+        """Cycle focus to the previous panel."""
+        if not self._focusable_panels:
+            return
+
+        # Move to previous panel (wrap around)
+        if self._focused_panel_index <= 0:
+            self._focused_panel_index = len(self._focusable_panels) - 1
+        else:
+            self._focused_panel_index -= 1
+        self._apply_panel_focus()
+
+    def _apply_panel_focus(self) -> None:
+        """Apply focus to the current panel and update visual state."""
+        if self._focused_panel_index < 0:
+            return
+
+        try:
+            panel_id = self._focusable_panels[self._focused_panel_index]
+            panel = self.query_one(panel_id)
+            panel.focus()
+        except Exception:
+            pass
+
+    def action_scroll_down(self) -> None:
+        """Scroll the focused panel down."""
+        if self._focused_panel_index < 0:
+            return
+        try:
+            panel_id = self._focusable_panels[self._focused_panel_index]
+            panel = self.query_one(panel_id)
+            panel.scroll_down()
+        except Exception:
+            pass
+
+    def action_scroll_up(self) -> None:
+        """Scroll the focused panel up."""
+        if self._focused_panel_index < 0:
+            return
+        try:
+            panel_id = self._focusable_panels[self._focused_panel_index]
+            panel = self.query_one(panel_id)
+            panel.scroll_up()
+        except Exception:
+            pass
+
+    # Phase 2: Log filter actions
+
+    def action_filter_errors(self) -> None:
+        """Set log filter to errors only."""
+        try:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.set_filter_level(1)
+            log_panel.log_info("Filter: errors only")
+        except Exception:
+            pass
+
+    def action_filter_warnings(self) -> None:
+        """Set log filter to errors + warnings."""
+        try:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.set_filter_level(2)
+            log_panel.log_info("Filter: errors + warnings")
+        except Exception:
+            pass
+
+    def action_filter_all(self) -> None:
+        """Set log filter to all messages."""
+        try:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.set_filter_level(3)
+            log_panel.log_info("Filter: all messages")
+        except Exception:
+            pass
+
+    # Phase 3: Execution control actions
+
+    def _set_polling_paused(self, paused: bool) -> None:
+        """Update UI when polling is paused/resumed."""
+        try:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.set_polling_paused(paused)
+
+            log_panel = self.query_one("#log-panel", LogPanel)
+            if paused:
+                log_panel.log_warning("Polling paused - press 'p' to resume")
+            else:
+                log_panel.log_info("Polling resumed")
+        except Exception:
+            pass
+
+    def action_toggle_pause(self) -> None:
+        """Toggle polling pause state."""
+        if not self._controller:
+            return
+
+        try:
+            if self._controller.is_polling_paused():
+                self._controller.resume_polling()
+            else:
+                self._controller.pause_polling()
         except Exception:
             pass

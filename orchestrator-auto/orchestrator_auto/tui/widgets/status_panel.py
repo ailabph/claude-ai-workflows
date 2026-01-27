@@ -50,6 +50,7 @@ class StatusPanel(Static):
         self.status = "—"
         self.session_id = "—"
         self.feature = "—"
+        self.current_plan = "—"
         self.planner_model = "—"
         self.executor_model = "—"
         self.api_calls = 0
@@ -57,6 +58,7 @@ class StatusPanel(Static):
         self.estimated_cost = 0.0
         self._use_actual_cost = False  # True when we have actual cost from API
         self._start_time: Optional[datetime] = None
+        self._plan_start_time: Optional[datetime] = None  # Per-file elapsed tracking
         self.current_milestone = 0
         self.total_milestones = 0
 
@@ -73,6 +75,9 @@ class StatusPanel(Static):
     def compose(self) -> ComposeResult:
         yield Label("[b]STATUS[/b]", classes="title")
         with Vertical():
+            with Horizontal(classes="stat-row"):
+                yield Label("Plan:", classes="stat-label")
+                yield Label(self.current_plan, id="plan-value", classes="stat-value")
             with Horizontal(classes="stat-row"):
                 yield Label("Phase:", classes="stat-label")
                 yield Label(self.phase, id="phase-value", classes="stat-value phase-active")
@@ -150,6 +155,46 @@ class StatusPanel(Static):
 
         if self.is_mounted:
             self.query_one("#feature-value", Label).update(self.feature)
+
+    def update_current_plan(self, filename: Optional[str], start_timer: bool = True) -> None:
+        """
+        Update the current plan filename display.
+
+        Args:
+            filename: Plan filename to display (will be truncated), or None to clear
+            start_timer: If True, start the per-file elapsed timer
+        """
+        if not filename:
+            self.current_plan = "—"
+            self._plan_start_time = None
+        else:
+            # Extract just the filename, truncate if needed
+            name = filename.split("/")[-1] if "/" in filename else filename
+            if len(name) > 20:
+                name = name[:17] + "..."
+            self.current_plan = name
+            if start_timer:
+                self._plan_start_time = datetime.now()
+
+        if self.is_mounted:
+            self.query_one("#plan-value", Label).update(self._format_plan_display())
+
+    def _format_plan_display(self) -> str:
+        """Format plan display with optional elapsed time."""
+        if self.current_plan == "—":
+            return "—"
+        if self._plan_start_time:
+            elapsed = datetime.now() - self._plan_start_time
+            mins, secs = divmod(int(elapsed.total_seconds()), 60)
+            if mins > 0:
+                return f"{self.current_plan} ({mins}m{secs:02d}s)"
+            return f"{self.current_plan} ({secs}s)"
+        return self.current_plan
+
+    def update_plan_elapsed(self) -> None:
+        """Update the plan elapsed time display (call from timer)."""
+        if self.is_mounted and self._plan_start_time:
+            self.query_one("#plan-value", Label).update(self._format_plan_display())
 
     def update_models(self, planner_model: str, executor_model: str) -> None:
         """Update the models display."""

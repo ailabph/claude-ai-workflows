@@ -15,6 +15,7 @@ class LogPanel(RichLog):
     - Color-coded by log level
     - Auto-scroll to latest
     - Configurable max lines
+    - Filter by log level (1=errors, 2=+warnings, 3=all)
     """
 
     DEFAULT_CSS = """
@@ -30,6 +31,14 @@ class LogPanel(RichLog):
     }
     """
 
+    # Map log levels to numeric values for filtering
+    LEVEL_VALUES = {
+        "debug": 4,
+        "info": 3,
+        "warning": 2,
+        "error": 1,
+    }
+
     def __init__(self, max_lines: int = 1000, **kwargs) -> None:
         super().__init__(
             highlight=True,
@@ -39,6 +48,29 @@ class LogPanel(RichLog):
             max_lines=max_lines,
             **kwargs
         )
+        # Filter level: 1=errors only, 2=errors+warnings, 3=all (default)
+        self._filter_level: int = 3
+
+    def set_filter_level(self, level: int) -> None:
+        """
+        Set the log filter level.
+
+        Args:
+            level: 1=errors only, 2=errors+warnings, 3=all (default)
+        """
+        self._filter_level = max(1, min(3, level))
+        # Update border title to show current filter
+        filter_labels = {
+            1: "LOG (errors)",
+            2: "LOG (warn+)",
+            3: "LOG",
+        }
+        self.border_title = filter_labels.get(self._filter_level, "LOG")
+
+    def _should_log(self, level: str) -> bool:
+        """Check if a message at this level should be logged based on filter."""
+        level_value = self.LEVEL_VALUES.get(level, 3)
+        return level_value <= self._filter_level
 
     def log(self, message: str, level: str = "info") -> None:
         """
@@ -48,6 +80,8 @@ class LogPanel(RichLog):
             message: The message to log
             level: Log level (debug, info, warning, error)
         """
+        if not self._should_log(level):
+            return
         timestamp = datetime.now().strftime("%H:%M:%S")
         styled_message = self._style_message(message, level)
         self.write(f"[dim]{timestamp}[/dim] {styled_message}", scroll_end=True)

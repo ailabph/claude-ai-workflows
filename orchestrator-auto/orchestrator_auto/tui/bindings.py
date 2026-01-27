@@ -35,6 +35,19 @@ WATCH_BINDINGS = [
     Binding("R", "refresh", "Refresh"),
     Binding("c", "clear", "Clear"),
     Binding("g", "show_git_diff", "Git Diff"),
+    Binding("y", "copy_session_id", "Copy ID"),
+    Binding("b", "show_blocker", "Blocker"),
+    # Phase 2: Panel navigation
+    Binding("tab", "focus_next", "Next Panel", show=False),
+    Binding("shift+tab", "focus_prev", "Prev Panel", show=False),
+    Binding("j", "scroll_down", "Scroll Down", show=False),
+    Binding("k", "scroll_up", "Scroll Up", show=False),
+    # Phase 2: Log filter
+    Binding("1", "filter_errors", "Errors", show=False),
+    Binding("2", "filter_warnings", "Warnings", show=False),
+    Binding("3", "filter_all", "All Logs", show=False),
+    # Phase 3: Execution control
+    Binding("p", "toggle_pause", "Pause"),
 ]
 
 # Todo mode bindings

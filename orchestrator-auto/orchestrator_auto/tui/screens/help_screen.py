@@ -106,9 +106,23 @@ class HelpScreen(ModalScreen):
 
             elif self.mode == "watch":
                 yield Label("Watch Mode", classes="help-section")
-                yield self._binding_row("r", "Refresh display")
+                yield self._binding_row("r", "Respond to blocker")
+                yield self._binding_row("R", "Refresh display")
                 yield self._binding_row("c", "Clear file list")
                 yield self._binding_row("g", "Show git diff")
+                yield self._binding_row("y", "Copy session ID")
+                yield self._binding_row("b", "View full blocker")
+                yield self._binding_row("p", "Pause/resume polling")
+
+                yield Label("Navigation", classes="help-section")
+                yield self._binding_row("Tab", "Focus next panel")
+                yield self._binding_row("Shift+Tab", "Focus prev panel")
+                yield self._binding_row("j / k", "Scroll down / up")
+
+                yield Label("Log Filter", classes="help-section")
+                yield self._binding_row("1", "Errors only")
+                yield self._binding_row("2", "Errors + warnings")
+                yield self._binding_row("3", "All messages")
 
             elif self.mode == "todo":
                 yield Label("Todo Mode", classes="help-section")

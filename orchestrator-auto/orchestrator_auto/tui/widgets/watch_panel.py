@@ -176,6 +176,19 @@ class WatchPanel(Static):
         except Exception:
             pass
 
+    def set_polling_paused(self, paused: bool) -> None:
+        """Mark polling as paused/resumed (independent of blocker pause)."""
+        try:
+            status_label = self.query_one("#watch-status", Label)
+            if paused:
+                status_label.update("⏸ PAUSED (p to resume)")
+                status_label.add_class("phase-paused")
+            else:
+                status_label.update("Watching")
+                status_label.remove_class("phase-paused")
+        except Exception:
+            pass
+
     def update_counts(self, completed: int, failed: int, paused: int) -> None:
         """Update the status counts."""
         self._completed = completed
