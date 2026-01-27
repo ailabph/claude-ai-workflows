@@ -5,6 +5,24 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.3] - 2026-01-27
+
+### Fixed
+
+- **Watch TUI: Log filter confirmation** - Filter change messages now use `log_system()` which bypasses filters, ensuring users see confirmation when switching to "errors only" mode
+- **Watch TUI: AgentOutput scroll** - Added `scroll_down()`/`scroll_up()` methods that properly forward to inner RichLog widget; exceptions now bubble to caller for proper error logging
+- **Watch TUI: Panel focus indication** - Focus now targets inner RichLog for AgentOutput panels, triggering `:focus-within` CSS for visible border highlight
+- **Watch TUI: Filter naming** - Renamed level 3 from "all" to "info+" to clarify it excludes debug messages; updated help screen accordingly
+
+### Changed
+
+- **LogPanel: System messages** - New `log_system()` method for UI feedback that bypasses filter level
+- **Watch TUI: Error visibility** - Key action methods (`_apply_panel_focus`, `action_scroll_*`, `action_toggle_pause`) now log errors instead of silently swallowing exceptions
+
+### Removed
+
+- **Watch TUI: Dead code cleanup** - Removed unused state variables (`_file_start_time`, `_current_blocker_question`, `_current_blocker_agent`) that duplicated StatusPanel tracking or were never set
+
 ## [1.1.2] - 2026-01-27
 
 ### Added
