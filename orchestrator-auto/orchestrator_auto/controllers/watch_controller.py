@@ -481,6 +481,8 @@ class WatchController:
                     files_after = set(get_changed_files(str(self._project_id)))
                     # Files modified during this session = new files not in before set
                     session_modified_files = list(files_after - files_before)
+                    # Filter out temporary/generated files
+                    session_modified_files = self._filter_temp_files(session_modified_files)
                     self._do_auto_commit(feature, orch.session_id, session_modified_files)
 
                 return WatchResult(
@@ -517,6 +519,60 @@ class WatchController:
                 status='failed',
                 error=str(e),
             )
+
+    def _filter_temp_files(self, files: List[str]) -> List[str]:
+        """
+        Filter out temporary/generated files that shouldn't be committed.
+
+        Excludes:
+        - milestone*.md files (progress reports)
+        - Files in .plans/ directory (plan files are handled separately)
+        - Common temp file patterns
+
+        Args:
+            files: List of file paths to filter
+
+        Returns:
+            Filtered list of files suitable for commit
+        """
+        import re
+        from pathlib import Path
+
+        # Patterns to exclude (case-insensitive)
+        exclude_patterns = [
+            r'^milestone.*\.md$',           # milestone1.md, milestone_report.md, etc.
+            r'^progress.*\.md$',            # progress_report.md, etc.
+            r'^\.plans/',                   # Files in .plans/ directory
+            r'.*_done\.md$',                # Already processed plan files
+            r'.*_failed\.md$',              # Failed plan files
+            r'.*_paused\.md$',              # Paused plan files
+            r'^PLAN_.*\.md$',               # Plan files (handled separately)
+        ]
+
+        filtered = []
+        for file_path in files:
+            # Normalize path for matching
+            name = Path(file_path).name
+            path_str = str(file_path).replace('\\', '/')
+
+            # Check if file matches any exclude pattern
+            excluded = False
+            for pattern in exclude_patterns:
+                if re.match(pattern, name, re.IGNORECASE) or re.match(pattern, path_str, re.IGNORECASE):
+                    excluded = True
+                    break
+
+            if not excluded:
+                filtered.append(file_path)
+
+        # Log if files were filtered
+        excluded_count = len(files) - len(filtered)
+        if excluded_count > 0:
+            self.on_event(WatchEvent.INFO, {
+                "message": f"Excluded {excluded_count} temp file(s) from commit"
+            })
+
+        return filtered
 
     def _do_auto_commit(
         self,
