@@ -464,6 +464,10 @@ class WatchController:
                 "milestone_names": milestone_names,
             })
 
+            # Capture git status BEFORE execution for selective commit
+            from ..git import get_changed_files
+            files_before = set(get_changed_files(str(self._project_id)))
+
             orch.start()
 
             # Check final state
@@ -473,7 +477,11 @@ class WatchController:
             if final_phase == Phase.COMPLETED and final_status == Status.COMPLETED:
                 # Handle auto-commit if enabled
                 if self.auto_commit:
-                    self._do_auto_commit(feature, orch.session_id)
+                    # Capture git status AFTER execution
+                    files_after = set(get_changed_files(str(self._project_id)))
+                    # Files modified during this session = new files not in before set
+                    session_modified_files = list(files_after - files_before)
+                    self._do_auto_commit(feature, orch.session_id, session_modified_files)
 
                 return WatchResult(
                     status='completed',
@@ -510,8 +518,20 @@ class WatchController:
                 error=str(e),
             )
 
-    def _do_auto_commit(self, feature: str, session_id: str) -> None:
-        """Perform auto-commit if enabled, using same logic as CLI."""
+    def _do_auto_commit(
+        self,
+        feature: str,
+        session_id: str,
+        modified_files: Optional[List[str]] = None
+    ) -> None:
+        """Perform auto-commit if enabled, using same logic as CLI.
+
+        Args:
+            feature: Feature description for commit message
+            session_id: Session ID for milestone lookup
+            modified_files: List of files modified during session (from git diff).
+                           If provided, only these files will be committed.
+        """
         from ..git import auto_commit
         from ..config import get_smart_commit_enabled, get_auto_commit_model
 
@@ -523,8 +543,7 @@ class WatchController:
         # Determine which model to use for smart commit
         commit_model = get_auto_commit_model(None, self.executor_model)
 
-        # Get files modified during this session (from tool invocations)
-        modified_files = db.get_session_modified_files(session_id, self.db_path)
+        # Log modified files info
         if modified_files:
             self.on_event(WatchEvent.INFO, {
                 "message": f"Found {len(modified_files)} file(s) modified in session"

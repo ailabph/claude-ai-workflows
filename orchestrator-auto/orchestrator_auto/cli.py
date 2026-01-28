@@ -8,7 +8,7 @@ import click
 import sys
 import signal
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
 
 from . import db
@@ -577,8 +577,7 @@ def _do_smart_auto_commit(
     smart_commit_flag: Optional[bool] = None,
     executor_model: Optional[str] = None,
     auto_commit_model_flag: Optional[str] = None,
-    session_id: Optional[str] = None,
-    db_path: Optional[str] = None,
+    files_to_commit: Optional[List[str]] = None,
 ) -> tuple:
     """
     Perform auto-commit with smart commit support and CLI feedback.
@@ -590,8 +589,7 @@ def _do_smart_auto_commit(
         smart_commit_flag: CLI flag for smart commit (None = use config)
         executor_model: Resolved executor model for this session (fallback for commit model)
         auto_commit_model_flag: CLI flag for commit model (--auto-commit-model)
-        session_id: Optional session ID to get modified files from tool invocations
-        db_path: Optional database path
+        files_to_commit: Optional list of specific files to commit (from git diff before/after)
 
     Returns:
         (success, message) tuple
@@ -604,12 +602,9 @@ def _do_smart_auto_commit(
     # Determine which model to use for smart commit
     commit_model = get_auto_commit_model(auto_commit_model_flag, executor_model)
 
-    # Get files modified during session (if session_id provided)
-    files_to_commit = None
-    if session_id:
-        files_to_commit = db.get_session_modified_files(session_id, db_path)
-        if files_to_commit:
-            click.echo(f"  Found {len(files_to_commit)} file(s) modified in session")
+    # Log files to commit info
+    if files_to_commit:
+        click.echo(f"  Found {len(files_to_commit)} file(s) modified in session")
 
     # Status callback for CLI feedback
     def on_status(msg: str) -> None:
@@ -1058,14 +1053,13 @@ def _reconcile_queue_head(
                     click.echo("  Attempting auto-commit for reconciled session...")
                     milestones = db.get_milestones(session_id, db_path)
                     # Use executor_model from session DB for crash recovery
+                    # Note: CLI commits all changes (no selective commit for reconciled sessions)
                     success, msg = _do_smart_auto_commit(
                         head["feature_description"],
                         milestones,
                         smart_commit_flag=smart_commit,
                         executor_model=session.get("executor_model"),
                         auto_commit_model_flag=auto_commit_model,
-                        session_id=session_id,
-                        db_path=db_path,
                     )
                     if success:
                         click.secho("  ✓ Changes committed", fg="green")
@@ -1180,14 +1174,13 @@ def _run_queue(
                 click.echo()
                 click.secho("Creating auto-commit...", fg="cyan")
                 milestones = db.get_milestones(session_id, db_path)
+                # Note: CLI commits all changes (no selective commit for queue mode)
                 success, msg = _do_smart_auto_commit(
                     feature,
                     milestones,
                     smart_commit_flag=smart_commit,
                     executor_model=resolved_executor,
                     auto_commit_model_flag=auto_commit_model,
-                    session_id=session_id,
-                    db_path=db_path,
                 )
                 if success:
                     click.secho("✓ Changes committed", fg="green")
@@ -1458,14 +1451,13 @@ def start(
             click.echo()
             click.secho("Creating auto-commit...", fg="cyan")
             milestones = db.get_milestones(orch.session_id, db_path)
+            # Note: CLI commits all changes (no selective commit for start command)
             success, msg = _do_smart_auto_commit(
                 feature,
                 milestones,
                 smart_commit_flag=smart_commit,
                 executor_model=resolved_executor,
                 auto_commit_model_flag=auto_commit_model,
-                session_id=orch.session_id,
-                db_path=db_path,
             )
             if success:
                 click.secho("✓ Changes committed", fg="green")
@@ -3889,13 +3881,12 @@ def _process_watch_file(
                 click.echo()
                 click.secho("Creating commit...", fg="cyan")
                 milestones = db.get_milestones(orch.session_id, db_path)
+                # Note: CLI commits all changes (no selective commit)
                 success, msg = _do_smart_auto_commit(
                     feature_description=feature,
                     milestones=milestones,
                     smart_commit_flag=smart_commit,
                     executor_model=resolved_executor,
-                    session_id=orch.session_id,
-                    db_path=db_path,
                 )
                 if success:
                     click.secho(f"✓ {msg}", fg="green")

@@ -9,11 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Selective auto-commit** - Auto-commit now only commits files modified during the session instead of staging all changes
+- **Selective auto-commit (watch mode)** - Auto-commit now only commits files modified during the session instead of staging all changes
+  - Uses git diff before/after execution to detect which files the orchestrator modified
   - `git.py`: New `stage_files()` function for selective staging
-  - `db.py`: New `get_session_modified_files()` extracts file paths from Write/Edit/NotebookEdit tool invocations
   - `auto_commit()`: New optional `files_to_commit` parameter
   - Shows "Found N file(s) modified in session" message before committing
+  - Note: CLI commands (`orchestrator start`) still commit all changes; selective commit is watch-mode only
 
 ### Changed
 
