@@ -360,6 +360,11 @@ orchestrator todo tasks.md --tui          # Todo mode TUI
 - Log panel for orchestrator messages with filtering
 - Input modals for blocker/discovery prompts
 - Responsive layouts adapting to terminal width
+- **Layout B (Watch mode):** Compact 3-column layout with sub-agent integration
+  - HeaderBar with session/model info and milestone progress bar
+  - SubAgentPanel showing exploration queries and validation status
+  - StatsPanel with tokens, cost, and elapsed time
+  - Task progress (N/M tasks) and files changed per milestone
 
 **Watch Mode TUI Keybindings (press `?` for full list):**
 | Key | Action |

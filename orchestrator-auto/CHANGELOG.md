@@ -5,6 +5,25 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-01-28
+
+### Added
+
+- **Watch TUI: Layout B** - New compact 3-column layout with sub-agent integration for exploration and validation phases
+- **HeaderBar widget** - Compact header showing session ID, models, and current phase
+- **MilestoneProgressBar widget** - Horizontal progress indicator with milestone status icons
+- **StatsPanel widget** - Token count, cost, API calls, and elapsed time display
+- **SubAgentPanel widget** - Real-time status for exploration queries and validation results
+- **Enhanced MilestoneList** - Now tracks task progress (N/M tasks) and files changed per milestone
+- **Sub-agent event wiring** - Full integration of EXPLORE_* and VALIDATE_* events into Watch TUI
+
+### Technical
+
+- **Status constants** - `EXPLORE_STATUS_*`, `VALIDATE_STATUS_*`, and phase-level constants prevent string drift
+- **Upsert pattern for queries** - `SubAgentPanel.update_explore_query()` handles out-of-order events gracefully
+- **Focusable panels** - `MilestoneList` and `SubAgentPanel` now support keyboard focus navigation
+- **Message schema alignment** - TUI messages match controller event payloads exactly
+
 ## [1.3.0] - 2026-01-28
 
 ### Added
