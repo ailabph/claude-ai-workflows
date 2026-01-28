@@ -363,7 +363,8 @@ orchestrator todo tasks.md --tui          # Todo mode TUI
 - **Layout B (Watch mode):** Compact 3-column layout with sub-agent integration
   - HeaderBar with session/model info and milestone progress bar
   - SubAgentPanel showing exploration queries and validation status
-  - StatsPanel with tokens, cost, and elapsed time
+  - StatsPanel with session totals, per-file stats, and per-agent breakdown (Planner/Executor/Explore)
+  - Thinking token tracking for Claude extended thinking mode
   - Task progress (N/M tasks) and files changed per milestone
   - WatchPanel with files organized by category: PENDING, ONGOING, DONE, PAUSED, FAILED
 

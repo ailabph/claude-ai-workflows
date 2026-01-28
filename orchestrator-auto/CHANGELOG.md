@@ -5,6 +5,23 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-01-28
+
+### Added
+
+- **Token Tracking: Session-level persistence** - Token counts and costs now persist across files in watch mode instead of resetting per file
+- **Token Tracking: Per-agent breakdown** - StatsPanel shows tokens/cost breakdown by agent (Planner, Executor, Explore) with color-coded display
+- **Token Tracking: Thinking tokens** - Extended thinking tokens now captured and displayed in stats (Claude with `extended_thinking` enabled)
+- **StatsPanel: Redesigned layout** - New 3-section layout with SESSION totals, FILE stats, and BY AGENT breakdown
+- **StatsPanel: Increased height** - Panel now uses min-height 12, max-height 20 for better visibility
+
+### Technical
+
+- **Thinking token extraction** (`agents.py`) - Extracts `thinking_tokens` from Claude API usage data
+- **Session tracking variables** (`watch_app.py`) - Added `_session_*` counters that never reset during a session
+- **Per-agent cost tracking** - Separate token/cost accumulators for planner, executor, and explore agents
+- **Compact mode session totals** - Sidebar now shows session totals instead of per-file stats
+
 ## [1.5.0] - 2026-01-28
 
 ### Added
