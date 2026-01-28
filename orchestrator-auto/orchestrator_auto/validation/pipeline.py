@@ -209,37 +209,54 @@ class ValidationPipeline:
                         error=str(e),
                     )
 
-        # Run all validators with total timeout
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(
-                    *[run_validator(v) for v in self.validators],
-                    return_exceptions=True,
-                ),
-                timeout=self.total_timeout,
-            )
-        except asyncio.TimeoutError:
-            # Return partial results
-            results = [
-                ValidationResult(
-                    validator_name=v.name,
-                    error="Pipeline timeout",
-                )
-                for v in self.validators
-            ]
+        # Create tasks with validator references for tracking
+        tasks = {
+            asyncio.create_task(run_validator(v)): v
+            for v in self.validators
+        }
 
-        # Convert exceptions to error results
-        final_results = []
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
+        # Wait with timeout, preserving partial results
+        done, pending = await asyncio.wait(
+            tasks.keys(),
+            timeout=self.total_timeout,
+            return_when=asyncio.ALL_COMPLETED,
+        )
+
+        # Collect completed results
+        final_results: List[ValidationResult] = []
+
+        for task in done:
+            try:
+                result = task.result()
+                if isinstance(result, Exception):
+                    validator = tasks[task]
+                    final_results.append(
+                        ValidationResult(
+                            validator_name=validator.name,
+                            error=str(result),
+                        )
+                    )
+                else:
+                    final_results.append(result)
+            except Exception as e:
+                validator = tasks[task]
                 final_results.append(
                     ValidationResult(
-                        validator_name=self.validators[i].name,
-                        error=str(result),
+                        validator_name=validator.name,
+                        error=str(e),
                     )
                 )
-            else:
-                final_results.append(result)
+
+        # Mark pending tasks as timed out (preserve completed results)
+        for task in pending:
+            task.cancel()
+            validator = tasks[task]
+            final_results.append(
+                ValidationResult(
+                    validator_name=validator.name,
+                    error="Pipeline timeout (incomplete)",
+                )
+            )
 
         total_duration_ms = int((time.time() - start_time) * 1000)
 

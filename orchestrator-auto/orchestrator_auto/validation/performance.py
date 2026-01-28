@@ -18,10 +18,12 @@ from .base import BaseValidator, ValidationResult, ValidationIssue, Severity
 
 
 # Performance check patterns
+# Note: "multiline": True indicates patterns that span multiple lines and should
+# only be checked against aggregated content, not individual diff lines.
 PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
     "n_plus_one": {
         "patterns": [
-            # Query in loop patterns
+            # Query in loop patterns (multiline - span for...query)
             r'for\s+\w+\s+in\s+.*:\s*\n\s*.*\.(query|execute|filter|get)\s*\(',
             r'for\s+\w+\s+in\s+.*:\s*\n\s*.*\.objects\.',
             r'\.forEach\s*\([^)]*\)\s*=>\s*\{[^}]*fetch\s*\(',
@@ -29,6 +31,7 @@ PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
             # Nested query patterns
             r'SELECT.*FROM.*WHERE.*IN\s*\(\s*SELECT',
         ],
+        "multiline": True,  # Patterns span multiple lines
         "severity": Severity.HIGH,
         "message": "Potential N+1 query pattern detected",
         "recommendation": "Use eager loading, batch queries, or joins instead of queries in loops",
@@ -41,18 +44,20 @@ PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
             r'\.find\(\{\}\)',                    # MongoDB find all
             r'\.objects\.filter\([^)]*\)(?!\s*\[)', # Django filter without slice
         ],
+        "multiline": False,  # Single-line patterns
         "severity": Severity.MEDIUM,
         "message": "Query without LIMIT may return unbounded results",
         "recommendation": "Add LIMIT clause or use pagination for large tables",
     },
     "sync_in_async": {
         "patterns": [
-            # Blocking calls in async functions
+            # Blocking calls in async functions (multiline - span def...call)
             r'async\s+def\s+\w+[^:]*:\s*\n(?:[^#\n]*\n)*?\s*time\.sleep\s*\(',
             r'async\s+def\s+\w+[^:]*:\s*\n(?:[^#\n]*\n)*?\s*requests\.(get|post|put)',
             r'async\s+def\s+\w+[^:]*:\s*\n(?:[^#\n]*\n)*?\s*open\s*\(',
             r'await\s+.*\bsync\b',
         ],
+        "multiline": True,  # Most patterns span multiple lines
         "severity": Severity.MEDIUM,
         "message": "Blocking operation in async context",
         "recommendation": "Use async versions: asyncio.sleep, aiohttp, aiofiles",
@@ -65,6 +70,7 @@ PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
             r'WHERE\s+status\s*=',                # Status field
             r'ORDER\s+BY\s+created_at',           # Ordering by date
         ],
+        "multiline": False,  # Single-line patterns
         "severity": Severity.LOW,
         "message": "Query pattern suggests an index may be beneficial",
         "recommendation": "Verify database indexes exist for frequently queried columns",
@@ -77,6 +83,7 @@ PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
             r'list\(\s*.*\.all\(\)\s*\)',         # Materialize entire queryset
             r'pd\.read_csv\s*\([^)]*\)(?!\s*,\s*chunksize)', # Pandas without chunks
         ],
+        "multiline": False,  # Single-line patterns
         "severity": Severity.MEDIUM,
         "message": "Large object loaded entirely into memory",
         "recommendation": "Use streaming, chunking, or iterators for large data",
@@ -88,6 +95,7 @@ PERFORMANCE_CHECKS: Dict[str, Dict[str, Any]] = {
             r'(?<!with\s)connection\s*=\s*\w+\.connect\(',
             r'cursor\s*=\s*\w+\.cursor\(\)(?!.*finally)',
         ],
+        "multiline": False,  # Single-line patterns
         "severity": Severity.MEDIUM,
         "message": "Resource opened without context manager",
         "recommendation": "Use 'with' statement or ensure proper cleanup in finally block",
@@ -188,13 +196,13 @@ class PerformanceValidator(BaseValidator):
                 if current_file:
                     added_blocks[current_file].append(added_content)
 
-                # Single-line pattern checks
+                # Single-line pattern checks only (skip multiline patterns)
                 for check_name, check_info in self.checks.items():
                     if not self.should_run_check(check_name):
                         continue
 
-                    # Skip multi-line patterns in single-line analysis
-                    if "\\n" in str(check_info["patterns"]):
+                    # Skip multiline patterns - they're checked on aggregated content
+                    if check_info.get("multiline", False):
                         continue
 
                     for pattern in check_info["patterns"]:
@@ -212,11 +220,15 @@ class PerformanceValidator(BaseValidator):
                             )
                             break
 
-        # Multi-line pattern checks on added blocks
+        # Multi-line pattern checks on added blocks (only for multiline patterns)
         for file_path, lines in added_blocks.items():
             content = "\n".join(lines)
             for check_name, check_info in self.checks.items():
                 if not self.should_run_check(check_name):
+                    continue
+
+                # Only run multiline patterns here
+                if not check_info.get("multiline", False):
                     continue
 
                 for pattern in check_info["patterns"]:

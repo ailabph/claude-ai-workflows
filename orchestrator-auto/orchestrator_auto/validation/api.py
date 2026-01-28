@@ -184,13 +184,30 @@ class APIValidator(BaseValidator):
         current_file = None
         current_line = 0
 
-        # Only analyze if current file is in api_files
-        api_file_strs = [str(f) for f in api_files]
+        # Normalize api_files for comparison - use both full path and basename
+        # to handle prefix mismatches between changed_files and diff paths
+        api_file_set = set()
+        for f in api_files:
+            # Add normalized posix path
+            api_file_set.add(f.as_posix())
+            # Add just the filename for fallback matching
+            api_file_set.add(f.name)
+            # Add path parts from the end (e.g., "src/api.py", "api.py")
+            parts = f.parts
+            for i in range(len(parts)):
+                api_file_set.add("/".join(parts[i:]))
 
         for line in diff.split("\n"):
             if line.startswith("+++ b/"):
                 file_path = line[6:]
-                current_file = Path(file_path) if file_path in api_file_strs else None
+                # Check if this file matches any api_file (normalized comparison)
+                diff_path = Path(file_path)
+                is_api_file = (
+                    file_path in api_file_set or
+                    diff_path.as_posix() in api_file_set or
+                    diff_path.name in api_file_set
+                )
+                current_file = diff_path if is_api_file else None
                 current_line = 0
             elif line.startswith("@@ "):
                 match = re.search(r'\+(\d+)', line)

@@ -72,11 +72,17 @@ class ValidationIssue:
 
 @dataclass
 class ValidationResult:
-    """Result from a single validator."""
+    """
+    Result from a single validator.
+
+    Note: tokens_used is only populated for LLM-based validators. Pattern-based
+    validators (SecurityValidator, PerformanceValidator, APIValidator) do not
+    use LLM calls and will always have tokens_used=0.
+    """
 
     validator_name: str
     issues: List[ValidationIssue] = field(default_factory=list)
-    tokens_used: int = 0
+    tokens_used: int = 0  # Only populated for LLM-based validators; 0 for pattern-based
     duration_ms: int = 0
     error: Optional[str] = None
 
@@ -129,15 +135,24 @@ class BaseValidator(ABC):
 
     Validators analyze code changes (diffs and files) to find issues.
     Each validator focuses on a specific domain (security, performance, etc.).
+
+    Governance limits:
+    - max_tokens: Token limit for LLM-based validators (pattern-based validators ignore this)
+    - max_turns: Turn limit for LLM-based validators (pattern-based validators ignore this)
+    - timeout: Enforced by ValidationPipeline via asyncio.wait_for
+
+    Note: The built-in validators (SecurityValidator, PerformanceValidator, APIValidator)
+    are pattern-based and do not use LLM calls, so max_tokens and max_turns are not
+    enforced for them. They complete in a single synchronous pass.
     """
 
     name: str = "base"
     description: str = "Base validator"
 
-    # Governance limits
-    max_tokens: int = 15_000
-    max_turns: int = 3
-    timeout: float = 20.0  # seconds
+    # Governance limits (enforced for LLM-based validators; timeout enforced for all)
+    max_tokens: int = 15_000  # Token limit for LLM-based validators
+    max_turns: int = 3        # Turn limit for LLM-based validators
+    timeout: float = 20.0     # Timeout enforced by ValidationPipeline
 
     def __init__(
         self,

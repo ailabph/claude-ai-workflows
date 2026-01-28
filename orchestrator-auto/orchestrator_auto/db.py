@@ -1519,7 +1519,7 @@ def save_validation_results_batch(
     db_path: Optional[str] = None
 ) -> int:
     """
-    Save multiple validation results in a batch.
+    Save multiple validation results in a batch (single transaction).
 
     Args:
         session_id: Session ID
@@ -1532,10 +1532,14 @@ def save_validation_results_batch(
     """
     import json
 
-    count = 0
+    if not results:
+        return 0
+
+    # Prepare all rows for batch insert
+    rows = []
     for result in results:
-        issues_json = json.dumps(result.get('issues', []))
         issues = result.get('issues', [])
+        issues_json = json.dumps(issues)
 
         # Count by severity
         high_count = sum(1 for i in issues if i.get('severity') == 'high')
@@ -1543,23 +1547,32 @@ def save_validation_results_batch(
         low_count = sum(1 for i in issues if i.get('severity') == 'low')
         warning_count = sum(1 for i in issues if i.get('severity') == 'warning')
 
-        save_validation_result(
-            session_id=session_id,
-            validator_name=result.get('validator_name', 'unknown'),
-            issues_json=issues_json,
-            high_count=high_count,
-            medium_count=medium_count,
-            low_count=low_count,
-            warning_count=warning_count,
-            tokens_used=result.get('tokens_used', 0),
-            duration_ms=result.get('duration_ms', 0),
-            error=result.get('error'),
-            milestone_number=milestone_number,
-            db_path=db_path,
-        )
-        count += 1
+        rows.append((
+            session_id,
+            milestone_number,
+            result.get('validator_name', 'unknown'),
+            issues_json,
+            high_count,
+            medium_count,
+            low_count,
+            warning_count,
+            result.get('tokens_used', 0),
+            result.get('duration_ms', 0),
+            result.get('error'),
+        ))
 
-    return count
+    # Single transaction with executemany for efficiency
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.executemany("""
+            INSERT INTO validation_results (
+                session_id, milestone_number, validator_name, issues_json,
+                high_count, medium_count, low_count, warning_count,
+                tokens_used, duration_ms, error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, rows)
+        return len(rows)
 
 
 def get_validation_results(

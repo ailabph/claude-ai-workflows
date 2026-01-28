@@ -95,7 +95,19 @@ class ExplorationResult:
 
 
 class ExplorationError(Exception):
-    """Exception raised when exploration fails."""
+    """
+    Exception raised when exploration fails.
+
+    Note: Currently not raised by ExploreSubAgent - errors are captured in
+    ExplorationResult.error instead to allow graceful degradation. This
+    exception is available for callers who prefer exception-based error
+    handling (e.g., when exploration failure should halt execution).
+
+    Usage:
+        result = await agent.explore_async(query)
+        if not result.is_success():
+            raise ExplorationError(result.query, Exception(result.error))
+    """
 
     def __init__(
         self,
@@ -166,6 +178,9 @@ class ExploreSubAgent:
         prompt = self._build_prompt(query, scope)
 
         # Create isolated client for this exploration
+        # Note: bypassPermissions is required because read-only tools (Glob, Grep, Read)
+        # would otherwise prompt for user confirmation on each use. The tools list
+        # is explicitly restricted to read-only operations.
         options = ClaudeAgentOptions(
             system_prompt=EXPLORATION_SYSTEM_PROMPT,
             tools=EXPLORE_TOOLS,
@@ -184,25 +199,16 @@ class ExploreSubAgent:
 
         try:
             async with ClaudeSDKClient(options) as client:
-                # Apply timeout
+                # Run exploration with timeout - single query execution
                 try:
-                    await asyncio.wait_for(
-                        self._run_exploration(
-                            client, prompt, on_progress,
-                            lambda s: sources.append(s),
-                            lambda t: None,  # Token tracking handled in result
-                        ),
+                    findings, tokens_used, turns, sources = await asyncio.wait_for(
+                        self._run_exploration(client, prompt, on_progress),
                         timeout=self.timeout
                     )
                 except asyncio.TimeoutError:
                     is_partial = True
                     if on_progress:
                         on_progress("[Exploration timeout - returning partial results]")
-
-                # Extract response
-                findings, tokens_used, turns = await self._extract_response(
-                    client, prompt
-                )
 
                 # Check if we hit turn limit
                 if turns >= self.max_turns:
@@ -283,52 +289,44 @@ class ExploreSubAgent:
         client: ClaudeSDKClient,
         prompt: str,
         on_progress: Optional[Callable[[str], None]],
-        on_source: Callable[[str], None],
-        on_tokens: Callable[[int], None],
-    ) -> None:
-        """Run the exploration query."""
-        await client.query(prompt)
-
-        turns = 0
-        async for message in client.receive_messages():
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        if on_progress:
-                            on_progress(block.text[:100])
-            elif isinstance(message, ResultMessage):
-                # Capture token usage
-                if message.usage:
-                    on_tokens(message.usage.get("output_tokens", 0))
-                break
-
-            turns += 1
-            if turns >= self.max_turns:
-                break
-
-    async def _extract_response(
-        self,
-        client: ClaudeSDKClient,
-        prompt: str,
     ) -> tuple:
         """
-        Extract response from a fresh query.
+        Run the exploration query and extract results.
+
+        Single execution path - sends query once and collects all results.
+
+        Args:
+            client: SDK client instance
+            prompt: Exploration prompt
+            on_progress: Optional progress callback
 
         Returns:
-            Tuple of (findings_text, tokens_used, turns)
+            Tuple of (findings_text, tokens_used, assistant_turns, sources_consulted)
         """
         findings = ""
         tokens_used = 0
-        turns = 0
+        assistant_turns = 0  # Count only assistant responses, not all messages
+        sources: List[str] = []
 
         await client.query(prompt)
 
         async for message in client.receive_messages():
             if isinstance(message, AssistantMessage):
+                # Count assistant turns (not every message)
+                assistant_turns += 1
+
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         findings += block.text
+                        if on_progress:
+                            on_progress(block.text[:100])
+
+                # Check turn limit after processing assistant message
+                if assistant_turns >= self.max_turns:
+                    break
+
             elif isinstance(message, ResultMessage):
+                # Capture token usage from final result
                 if message.usage:
                     tokens_used = (
                         message.usage.get("input_tokens", 0) +
@@ -336,11 +334,7 @@ class ExploreSubAgent:
                     )
                 break
 
-            turns += 1
-            if turns >= self.max_turns:
-                break
-
-        return findings, tokens_used, turns
+        return findings, tokens_used, assistant_turns, sources
 
 
 def compact_findings(results: List[ExplorationResult]) -> str:

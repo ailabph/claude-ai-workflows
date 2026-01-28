@@ -1366,6 +1366,18 @@ def start(
     resolved_planner = get_planner_model(planner_model)
     resolved_executor = get_executor_model(executor_model)
 
+    # Warn about flags that are accepted but not yet wired into execution flow
+    if explore is not None or explore_query:
+        click.secho(
+            "Note: --explore flags are accepted but not yet wired into execution flow.",
+            fg="yellow"
+        )
+    if validate is not None or validators:
+        click.secho(
+            "Note: --validate flags are accepted but not yet wired into execution flow.",
+            fg="yellow"
+        )
+
     # Setup Telegram notifier if configured
     telegram_notifier = None
     if telegram is not False:  # Not explicitly disabled
