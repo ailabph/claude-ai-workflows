@@ -937,6 +937,10 @@ class WatchTUI(App):
                 self._lb_total_cost = 0.0
                 self._lb_total_api_calls = 0
 
+                planner_output = self.query_one("#lb-planner-output", AgentOutput)
+                planner_output.clear_output()
+                planner_output.write_message(f"Processing: {filename[:50]}...", "bold")
+
                 executor_output = self.query_one("#lb-executor-output", AgentOutput)
                 executor_output.clear_output()
                 executor_output.write_message(f"Processing: {filename[:50]}...", "bold")
@@ -1707,12 +1711,25 @@ class WatchTUI(App):
 
     def action_refresh(self) -> None:
         """Refresh the display."""
-        log_panel = self.query_one("#log-panel", LogPanel)
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+        elif self.verbose:
+            log_panel = self.query_one("#log-panel", LogPanel)
+        else:
+            # Compact mode has no log panel, use status bar
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log("Refreshed", "info")
+            return
         log_panel.log_info("Refreshed")
 
     def action_clear(self) -> None:
         """Clear the file list."""
-        if self.verbose:
+        if self._use_layout_b:
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.clear_files()
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_info("Cleared file list")
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.clear_files()
             log_panel = self.query_one("#log-panel", LogPanel)
