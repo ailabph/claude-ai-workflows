@@ -2,7 +2,7 @@
 Sub-agent panel widget for Layout B - shows exploration and validation status.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional
 from textual.app import ComposeResult
 from textual.widgets import Static, Label
@@ -299,7 +299,9 @@ class SubAgentPanel(Static):
             icon = self.EXPLORE_ICONS.get(q.status, self.EXPLORE_ICONS["pending"])
             # Truncate long queries
             query_text = q.query[:25] + "..." if len(q.query) > 28 else q.query
-            lines.append(f"{icon} {query_text}")
+            # Add partial indicator if result was truncated/timed out
+            partial_indicator = " [dim](partial)[/dim]" if q.is_partial else ""
+            lines.append(f"{icon} {query_text}{partial_indicator}")
 
         if len(self._explore_queries) > 5:
             lines.append(f"[dim]... +{len(self._explore_queries) - 5} more[/dim]")

@@ -705,16 +705,18 @@ class WatchController:
         """Lazy initialize the exploration sub-agent."""
         if self._explore_agent is None and self.explore_enabled:
             from ..explore import ExploreSubAgent
+            # Use project root (repo root) for exploration, not plans_dir
+            # This allows exploration to search the entire codebase
             self._explore_agent = ExploreSubAgent(
-                cwd=self.plans_dir,
+                cwd=Path(self._project_id),
             )
         return self._explore_agent
 
     def _init_validation_pipeline(self):
         """Lazy initialize the validation pipeline."""
         if self._validation_pipeline is None and self.validate_enabled:
-            from ..validation import ValidationPipeline
-            self._validation_pipeline = ValidationPipeline()
+            from ..validation.pipeline import create_default_pipeline
+            self._validation_pipeline = create_default_pipeline()
         return self._validation_pipeline
 
     def _create_state_change_wrapper(self, original_callback: Optional[Callable]) -> Callable:
@@ -832,10 +834,12 @@ class WatchController:
             from ..git import get_changed_files, get_full_diff
             import asyncio
 
-            # Get changed files and diff
-            changed_file_strings = get_changed_files(str(self.plans_dir))
-            changed_files = [Path(f) for f in changed_file_strings]
-            diff = get_full_diff(str(self.plans_dir))
+            # Get changed files and diff from project root (not plans_dir)
+            project_root = Path(self._project_id)
+            changed_file_strings = get_changed_files(str(project_root))
+            # Convert to absolute paths using project root as base
+            changed_files = [(project_root / f).resolve() for f in changed_file_strings]
+            diff = get_full_diff(str(project_root))
 
             if not changed_files and not diff:
                 # No changes to validate
@@ -848,11 +852,11 @@ class WatchController:
                 "file_count": len(changed_files),
             })
 
-            # Emit pending status for each validator
+            # Emit running status for each validator
             for validator in pipeline.validators:
                 self.on_event(WatchEvent.VALIDATOR_STARTED, {
                     "name": validator.name,
-                    "status": "pending",
+                    "status": "running",
                 })
 
             # Run validation (async, so we need to run in event loop)
@@ -869,10 +873,9 @@ class WatchController:
                 status = "passed"
                 if result.error:
                     status = "failed"
-                elif result.high_count > 0:
+                elif result.high_count > 0 or result.medium_count > 0:
+                    # Use "issues" for any severity (SubAgentPanel shows count details)
                     status = "issues"
-                elif result.medium_count > 0:
-                    status = "warnings"
 
                 self.on_event(WatchEvent.VALIDATOR_DONE, {
                     "name": result.validator_name,

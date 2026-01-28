@@ -196,13 +196,22 @@ class MilestoneProgressBar(Static):
             return f"[bold]▶ {self._current_file}[/bold]"
         return "[dim]No file processing[/dim]"
 
+    def _count_completed(self) -> int:
+        """Count completed milestones from statuses or current milestone."""
+        if self._milestone_statuses:
+            # Use actual statuses for accurate count
+            return sum(1 for s in self._milestone_statuses if s == "completed")
+        else:
+            # Fallback: milestones before current are completed
+            return max(0, self._current_milestone - 1)
+
     def _format_progress_bar(self) -> str:
         """Format the visual progress bar."""
         if self._total_milestones == 0:
             return "[dim]" + "░" * self._bar_width + "[/dim]"
 
-        # Calculate fill ratio
-        completed = max(0, self._current_milestone - 1)
+        # Calculate fill ratio based on completed milestones
+        completed = self._count_completed()
         ratio = completed / self._total_milestones
 
         filled = int(ratio * self._bar_width)
@@ -216,7 +225,7 @@ class MilestoneProgressBar(Static):
         if self._total_milestones == 0:
             return "M-/- (0%)"
 
-        completed = max(0, self._current_milestone - 1)
+        completed = self._count_completed()
         percent = int((completed / self._total_milestones) * 100)
         return f"M{self._current_milestone}/{self._total_milestones} ({percent}%)"
 

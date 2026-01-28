@@ -94,13 +94,14 @@ class LogPanel(RichLog):
         label = filter_labels.get(self._filter_level, "info+")
 
         if self._show_filter_hints:
-            # Show clickable-looking hints with current level highlighted
+            # Show filter key hints with current level highlighted
+            # Use parentheses instead of brackets to avoid Rich markup issues
             hints = []
             for i in range(1, 4):
                 if i == self._filter_level:
-                    hints.append(f"[{i}]")  # Current level
+                    hints.append(f"({i})")  # Current level - highlighted with parens
                 else:
-                    hints.append(f" {i} ")  # Other levels
+                    hints.append(f" {i} ")  # Other levels - plain
             hint_str = "".join(hints)
             self.border_title = f"LOG ({label}) {hint_str}"
         else:
