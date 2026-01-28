@@ -784,10 +784,11 @@ The SDK supports spawning sub-agents via the `Task` tool for focused subtasks:
 
 **orchestrator-auto Sub-Agents** (Phase 1):
 
-| Sub-Agent | Purpose | Governance |
-|-----------|---------|------------|
-| `ExploreSubAgent` | Pre-milestone codebase discovery (read-only) | 25K tokens, 5 turns, 30s timeout |
-| `ValidationPipeline` | Post-milestone code analysis | 3 validators in parallel, 45s total |
+| Sub-Agent | Model | Purpose | Governance |
+|-----------|-------|---------|------------|
+| `ExploreSubAgent` | Sonnet | Pre-milestone codebase discovery (read-only) | 25K tokens, 5 turns, 30s timeout |
+| `CommitAI` | Sonnet | AI-generated commit messages | 30s timeout |
+| `ValidationPipeline` | N/A (pattern-based) | Post-milestone code analysis | 3 validators in parallel, 45s total |
 
 **Exploration** gathers context before execution:
 ```bash

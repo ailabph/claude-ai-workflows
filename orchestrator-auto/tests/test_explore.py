@@ -64,7 +64,7 @@ class TestExploreSubAgent:
 
     def test_default_initialization(self):
         agent = ExploreSubAgent()
-        assert agent.model == "claude-3-5-haiku-20241022"
+        assert agent.model == "claude-sonnet-4-5-20250929"
         assert agent.cwd == Path.cwd()
         assert agent.max_tokens == DEFAULT_MAX_TOKENS
         assert agent.max_turns == DEFAULT_MAX_TURNS

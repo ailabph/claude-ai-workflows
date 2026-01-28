@@ -5,6 +5,15 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-01-28
+
+### Changed
+
+- **Sub-agent default model upgraded to Sonnet** - Both `ExploreSubAgent` and `CommitAI` now use `claude-sonnet-4-5-20250929` instead of Haiku for improved quality
+  - `explore.py`: Better codebase discovery and pattern recognition
+  - `commit_ai.py`: Higher quality commit message generation
+- **Note:** This increases API costs but improves exploration accuracy and commit message quality. Use `--auto-commit-model haiku` to override CommitAI if needed.
+
 ## [1.6.0] - 2026-01-28
 
 ### Added

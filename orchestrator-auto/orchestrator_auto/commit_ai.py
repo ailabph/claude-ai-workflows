@@ -20,8 +20,8 @@ from claude_agent_sdk.types import (
     TextBlock,
 )
 
-# Model for commit message generation (fast and cost-effective)
-DEFAULT_MODEL = "claude-haiku-3-5-20241022"
+# Model for commit message generation
+DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 # Timeout for AI generation (30 seconds)
 DEFAULT_TIMEOUT = 30
