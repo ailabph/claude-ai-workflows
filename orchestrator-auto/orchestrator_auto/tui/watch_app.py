@@ -216,15 +216,25 @@ class WatchTUI(App):
         max-height: 5;
     }
 
-    /* Right column: Executor output */
+    /* Right column: Agent outputs */
     #lb-right-col {
         width: 3fr;
-        min-width: 40;
+        min-width: 60;
         height: 100%;
     }
 
-    #lb-executor-output {
+    #lb-output-row {
         height: 1fr;
+    }
+
+    #lb-planner-output {
+        width: 1fr;
+        min-width: 30;
+    }
+
+    #lb-executor-output {
+        width: 1fr;
+        min-width: 30;
     }
 
     /* Bottom: Log panel */
@@ -327,10 +337,11 @@ class WatchTUI(App):
         # Focusable panels depend on layout mode
         if self.verbose:
             if self._use_layout_b:
-                # Layout B: include milestone list, subagent panel, executor, log
+                # Layout B: include milestone list, subagent panel, planner, executor, log
                 self._focusable_panels = [
                     "#lb-milestone-list",
                     "#lb-subagent-panel",
+                    "#lb-planner-output",
                     "#lb-executor-output",
                     "#lb-log-panel",
                 ]
@@ -414,13 +425,19 @@ class WatchTUI(App):
                     yield SubAgentPanel(id="lb-subagent-panel")
                     yield StatsPanel(id="lb-stats-panel")
 
-                # Right column: Executor output
+                # Right column: Planner + Executor outputs
                 with Vertical(id="lb-right-col"):
-                    yield AgentOutput(
-                        id="lb-executor-output",
-                        agent_filter="executor",
-                        header_title="EXECUTOR OUTPUT"
-                    )
+                    with Horizontal(id="lb-output-row"):
+                        yield AgentOutput(
+                            id="lb-planner-output",
+                            agent_filter="planner",
+                            header_title="PLANNER"
+                        )
+                        yield AgentOutput(
+                            id="lb-executor-output",
+                            agent_filter="executor",
+                            header_title="EXECUTOR"
+                        )
 
             yield LogPanel(id="lb-log-panel", show_filter_hints=True)
 
