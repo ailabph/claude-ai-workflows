@@ -18,6 +18,10 @@ from .compact_sidebar import CompactSidebar
 from .compact_milestone_row import CompactMilestoneRow
 from .agent_toggle_panel import AgentTogglePanel
 from .status_bar import StatusBar
+# Layout B widgets
+from .header_bar import HeaderBar
+from .progress_bar import MilestoneProgressBar
+from .stats_panel import StatsPanel
 
 __all__ = [
     "StatusPanel",
@@ -34,4 +38,8 @@ __all__ = [
     "CompactMilestoneRow",
     "AgentTogglePanel",
     "StatusBar",
+    # Layout B widgets
+    "HeaderBar",
+    "MilestoneProgressBar",
+    "StatsPanel",
 ]

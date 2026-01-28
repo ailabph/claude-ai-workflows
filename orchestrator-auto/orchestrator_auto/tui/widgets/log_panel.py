@@ -39,7 +39,19 @@ class LogPanel(RichLog):
         "error": 1,
     }
 
-    def __init__(self, max_lines: int = 1000, **kwargs) -> None:
+    def __init__(
+        self,
+        max_lines: int = 1000,
+        show_filter_hints: bool = False,
+        **kwargs,
+    ) -> None:
+        """
+        Initialize LogPanel.
+
+        Args:
+            max_lines: Maximum number of lines to keep
+            show_filter_hints: Show [1][2][3] filter key hints in title
+        """
         super().__init__(
             highlight=True,
             markup=True,
@@ -50,6 +62,7 @@ class LogPanel(RichLog):
         )
         # Filter level: 1=errors only, 2=warn+, 3=info+ (default, excludes debug)
         self._filter_level: int = 3
+        self._show_filter_hints: bool = show_filter_hints
 
     def set_filter_level(self, level: int) -> None:
         """
@@ -59,13 +72,39 @@ class LogPanel(RichLog):
             level: 1=errors only, 2=warnings+, 3=info+ (default, excludes debug)
         """
         self._filter_level = max(1, min(3, level))
-        # Update border title to show current filter
+        self._update_title()
+
+    def set_filter_hints_visible(self, visible: bool) -> None:
+        """
+        Show or hide filter key hints in title.
+
+        Args:
+            visible: Whether to show [1][2][3] hints
+        """
+        self._show_filter_hints = visible
+        self._update_title()
+
+    def _update_title(self) -> None:
+        """Update border title based on filter level and hint visibility."""
         filter_labels = {
-            1: "LOG (errors)",
-            2: "LOG (warn+)",
-            3: "LOG (info+)",
+            1: "errors",
+            2: "warn+",
+            3: "info+",
         }
-        self.border_title = filter_labels.get(self._filter_level, "LOG")
+        label = filter_labels.get(self._filter_level, "info+")
+
+        if self._show_filter_hints:
+            # Show clickable-looking hints with current level highlighted
+            hints = []
+            for i in range(1, 4):
+                if i == self._filter_level:
+                    hints.append(f"[{i}]")  # Current level
+                else:
+                    hints.append(f" {i} ")  # Other levels
+            hint_str = "".join(hints)
+            self.border_title = f"LOG ({label}) {hint_str}"
+        else:
+            self.border_title = f"LOG ({label})"
 
     def _should_log(self, level: str) -> bool:
         """Check if a message at this level should be logged based on filter."""
