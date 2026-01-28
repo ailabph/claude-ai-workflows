@@ -177,12 +177,15 @@ class WatchFileUpdated(Message):
         status: str,
         error: Optional[str] = None,
         original_filename: Optional[str] = None,
+        elapsed_seconds: Optional[int] = None,
     ) -> None:
         self.filename = filename
         self.status = status
         self.error = error
         # For terminal renames: the original filename before rename
         self.original_filename = original_filename
+        # Elapsed time in seconds when file completed/failed
+        self.elapsed_seconds = elapsed_seconds
         super().__init__()
 
 

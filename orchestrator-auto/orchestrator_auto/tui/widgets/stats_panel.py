@@ -88,6 +88,7 @@ class StatsPanel(Static):
         self._session_tokens: int = 0
         self._session_cost: float = 0.0
         self._session_api_calls: int = 0
+        self._session_elapsed_seconds: int = 0
 
         # Per-agent breakdown
         self._planner_tokens: int = 0
@@ -210,6 +211,7 @@ class StatsPanel(Static):
     def tick_elapsed(self) -> None:
         """Increment elapsed time by 1 second."""
         self._elapsed_seconds += 1
+        self._session_elapsed_seconds += 1
         self._format_elapsed_from_seconds()
         self._refresh_display()
 
@@ -260,10 +262,23 @@ class StatsPanel(Static):
         else:
             return str(tokens)
 
+    def _format_time(self, seconds: int) -> str:
+        """Format seconds into a time string."""
+        if seconds >= 3600:
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            secs = seconds % 60
+            return f"{hours}:{minutes:02d}:{secs:02d}"
+        else:
+            minutes = seconds // 60
+            secs = seconds % 60
+            return f"{minutes:02d}:{secs:02d}"
+
     def _format_session_line(self) -> str:
-        """Format session tokens and cost line."""
+        """Format session tokens, cost, and total working time."""
         tokens_str = self._format_tokens(self._session_tokens)
-        return f"[bold]{tokens_str}[/bold] tok [dim]·[/dim] [green]${self._session_cost:.2f}[/green]"
+        time_str = self._format_time(self._session_elapsed_seconds)
+        return f"[bold]{tokens_str}[/bold] tok [dim]·[/dim] [green]${self._session_cost:.2f}[/green] [dim]·[/dim] {time_str}"
 
     def _format_session_calls(self) -> str:
         """Format session API calls."""

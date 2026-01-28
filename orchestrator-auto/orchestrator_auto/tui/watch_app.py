@@ -327,6 +327,7 @@ class WatchTUI(App):
         self._completed: int = 0
         self._failed: int = 0
         self._paused: int = 0
+        self._file_elapsed_seconds: int = 0
 
         # Session-level token tracking (never reset during session)
         self._session_tokens: int = 0
@@ -669,6 +670,7 @@ class WatchTUI(App):
         elif event == WatchEvent.FILE_COMPLETED:
             self._completed += 1
             original = self._current_processing_file
+            elapsed = self._file_elapsed_seconds
             self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
@@ -676,6 +678,7 @@ class WatchTUI(App):
                     filename=data.get("new_path", ""),
                     status="completed",
                     original_filename=original,
+                    elapsed_seconds=elapsed,
                 )
             )
             self.call_from_thread(self._update_watch_counts)
@@ -683,6 +686,7 @@ class WatchTUI(App):
         elif event == WatchEvent.FILE_FAILED:
             self._failed += 1
             original = self._current_processing_file
+            elapsed = self._file_elapsed_seconds
             self._current_processing_file = None
             self.call_from_thread(
                 self.post_message,
@@ -691,6 +695,7 @@ class WatchTUI(App):
                     status="failed",
                     error=data.get("error"),
                     original_filename=original,
+                    elapsed_seconds=elapsed,
                 )
             )
             self.call_from_thread(self._update_watch_counts)
@@ -925,6 +930,7 @@ class WatchTUI(App):
 
     def _reset_for_new_file(self, filename: str) -> None:
         """Reset UI elements for processing a new file."""
+        self._file_elapsed_seconds = 0
         try:
             if self._use_layout_b:
                 # Layout B: Reset progress bar, milestone list, sub-agent panel, stats
@@ -1044,6 +1050,7 @@ class WatchTUI(App):
 
     def _update_elapsed(self) -> None:
         """Update the elapsed time display (total and per-file)."""
+        self._file_elapsed_seconds += 1
         try:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.update_elapsed()
@@ -1053,6 +1060,7 @@ class WatchTUI(App):
 
     def _update_elapsed_layout_b(self) -> None:
         """Update elapsed time for Layout B."""
+        self._file_elapsed_seconds += 1
         try:
             # Update header bar clock
             header_bar = self.query_one("#header-bar", HeaderBar)
@@ -1182,6 +1190,7 @@ class WatchTUI(App):
                 message.status,
                 message.error,
                 message.original_filename,
+                message.elapsed_seconds,
             )
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
@@ -1208,6 +1217,7 @@ class WatchTUI(App):
                 message.status,
                 message.error,
                 message.original_filename,
+                message.elapsed_seconds,
             )
 
             log_panel = self.query_one("#log-panel", LogPanel)
@@ -1231,6 +1241,7 @@ class WatchTUI(App):
                 message.filename,
                 message.status,
                 message.original_filename,
+                message.elapsed_seconds,
             )
 
             # Update status bar with status message

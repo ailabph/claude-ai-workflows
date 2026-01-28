@@ -14,6 +14,14 @@ from .compact_milestone_row import CompactMilestoneRow
 class CompactFileItem(ListItem):
     """A compact file item in the file list."""
 
+    DEFAULT_CSS = """
+    CompactFileItem .compact-file-elapsed {
+        color: $text-muted;
+        height: 1;
+        padding-left: 2;
+    }
+    """
+
     MARKERS = {
         "pending": "○",
         "processing": "▶",
@@ -24,29 +32,57 @@ class CompactFileItem(ListItem):
         "converted": "↻",
     }
 
-    def __init__(self, filename: str, status: str = "pending") -> None:
+    def __init__(self, filename: str, status: str = "pending", elapsed_seconds: Optional[int] = None) -> None:
         super().__init__()
         self.filename = filename
         self.file_status = status
+        self.elapsed_seconds = elapsed_seconds
+
+    @staticmethod
+    def _format_elapsed(seconds: int) -> str:
+        """Format seconds into a compact time string."""
+        if seconds >= 3600:
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            return f"{h}:{m:02d}:{s:02d}"
+        else:
+            m = seconds // 60
+            s = seconds % 60
+            return f"{m:02d}:{s:02d}"
+
+    def _render_name_label(self) -> str:
+        """Render marker + filename."""
+        marker = self.MARKERS.get(self.file_status, "○")
+        display_name = self.filename
+        if len(display_name) > 40:
+            display_name = display_name[:40] + ".."
+        return f"{marker} {display_name}"
+
+    def _elapsed_text(self) -> str:
+        """Get elapsed time text, or empty string."""
+        if self.elapsed_seconds is not None and self.file_status in ("completed", "failed"):
+            return f"  {self._format_elapsed(self.elapsed_seconds)}"
+        return ""
 
     def compose(self) -> ComposeResult:
-        marker = self.MARKERS.get(self.file_status, "○")
-        # Truncate filename to fit sidebar
-        display_name = self.filename
-        if len(display_name) > 14:
-            display_name = display_name[:14] + ".."
-        yield Label(f"{marker} {display_name}")
+        yield Label(self._render_name_label(), classes="compact-file-name")
+        elapsed = self._elapsed_text()
+        lbl = Label(elapsed, classes="compact-file-elapsed")
+        lbl.display = bool(elapsed)
+        yield lbl
 
-    def update_status(self, status: str) -> None:
+    def update_status(self, status: str, elapsed_seconds: Optional[int] = None) -> None:
         """Update the file status."""
         self.file_status = status
-        # Re-render
+        if elapsed_seconds is not None:
+            self.elapsed_seconds = elapsed_seconds
         try:
-            marker = self.MARKERS.get(status, "○")
-            display_name = self.filename
-            if len(display_name) > 14:
-                display_name = display_name[:14] + ".."
-            self.query_one(Label).update(f"{marker} {display_name}")
+            self.query_one(".compact-file-name", Label).update(self._render_name_label())
+            elapsed_lbl = self.query_one(".compact-file-elapsed", Label)
+            text = self._elapsed_text()
+            elapsed_lbl.update(text)
+            elapsed_lbl.display = bool(text)
         except Exception:
             pass
 
@@ -70,9 +106,7 @@ class CompactSidebar(Static):
 
     DEFAULT_CSS = """
     CompactSidebar {
-        width: 18;
-        min-width: 18;
-        max-width: 18;
+        width: 100%;
         height: 100%;
         border: solid $secondary;
         background: $surface;
@@ -176,17 +210,17 @@ class CompactSidebar(Static):
         with Vertical():
             # Current file section
             yield Label("▶ CURRENT", classes="section-title", id="section-current")
-            yield Label(self._truncate(self._current_file, 16), classes="current-file", id="current-file")
+            yield Label(self._truncate(self._current_file, 50), classes="current-file", id="current-file")
             yield Label(self._format_progress(), classes="progress-line", id="progress-line")
 
             # Stats section
-            yield Label("─" * 16, classes="separator")
+            yield Label("─" * 40, classes="separator")
             yield Label("STATS", classes="section-title")
             yield Label(self._format_stats_line1(), classes="stat-line", id="stats-line1")
             yield Label(self._format_stats_line2(), classes="stat-line", id="stats-line2")
 
             # Queue section
-            yield Label("─" * 16, classes="separator")
+            yield Label("─" * 40, classes="separator")
             yield Label("QUEUE", classes="section-title")
             yield Label(self._format_counts(), classes="counts-line", id="counts-line")
 
@@ -194,7 +228,7 @@ class CompactSidebar(Static):
             yield ListView(id="file-list", classes="file-list")
 
             # Milestones section
-            yield Label("─" * 16, classes="separator")
+            yield Label("─" * 40, classes="separator")
             yield Label("MILESTONES", classes="section-title")
             yield CompactMilestoneRow(id="milestone-row", classes="milestone-row")
 
@@ -246,7 +280,7 @@ class CompactSidebar(Static):
 
         if self.is_mounted:
             try:
-                self.query_one("#current-file", Label).update(self._truncate(filename, 16))
+                self.query_one("#current-file", Label).update(self._truncate(filename, 50))
                 self.query_one("#progress-line", Label).update(self._format_progress())
             except Exception:
                 pass
@@ -333,16 +367,16 @@ class CompactSidebar(Static):
         except Exception:
             pass
 
-    def update_file(self, filename: str, status: str, original_filename: Optional[str] = None) -> None:
+    def update_file(self, filename: str, status: str, original_filename: Optional[str] = None, elapsed_seconds: Optional[int] = None) -> None:
         """Update file status in the list."""
         # Handle renames
         if original_filename and original_filename in self._files:
             item = self._files.pop(original_filename)
             item.update_filename(filename)
-            item.update_status(status)
+            item.update_status(status, elapsed_seconds)
             self._files[filename] = item
         elif filename in self._files:
-            self._files[filename].update_status(status)
+            self._files[filename].update_status(status, elapsed_seconds)
         else:
             self.add_file(filename, status)
 

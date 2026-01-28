@@ -15,6 +15,14 @@ from typing import Optional, List, Dict
 class WatchFileItem(ListItem):
     """A single file item in the watch file list."""
 
+    DEFAULT_CSS = """
+    WatchFileItem .watch-elapsed {
+        color: $text-muted;
+        height: 1;
+        padding-left: 2;
+    }
+    """
+
     MARKERS = {
         "pending": "○",
         "processing": "▶",
@@ -30,11 +38,13 @@ class WatchFileItem(ListItem):
         filename: str,
         status: str = "pending",
         error: Optional[str] = None,
+        elapsed_seconds: Optional[int] = None,
     ) -> None:
         super().__init__()
         self.filename = filename
         self.file_status = status
         self.error = error
+        self.elapsed_seconds = elapsed_seconds
         self._update_classes()
 
     def _update_classes(self) -> None:
@@ -43,10 +53,12 @@ class WatchFileItem(ListItem):
             self.remove_class(f"watch-{status}")
         self.add_class(f"watch-{self.file_status}")
 
-    def update_status(self, status: str, error: Optional[str] = None) -> None:
+    def update_status(self, status: str, error: Optional[str] = None, elapsed_seconds: Optional[int] = None) -> None:
         """Update the file status."""
         self.file_status = status
         self.error = error
+        if elapsed_seconds is not None:
+            self.elapsed_seconds = elapsed_seconds
         self._update_classes()
         self._update_display()
 
@@ -55,20 +67,47 @@ class WatchFileItem(ListItem):
         self.filename = filename
         self._update_display()
 
+    @staticmethod
+    def _format_elapsed(seconds: int) -> str:
+        """Format seconds into a compact time string."""
+        if seconds >= 3600:
+            h = seconds // 3600
+            m = (seconds % 3600) // 60
+            s = seconds % 60
+            return f"{h}:{m:02d}:{s:02d}"
+        else:
+            m = seconds // 60
+            s = seconds % 60
+            return f"{m:02d}:{s:02d}"
+
+    def _elapsed_label(self) -> str:
+        """Get elapsed time label text, or empty string if not applicable."""
+        if self.elapsed_seconds is not None and self.file_status in ("completed", "failed"):
+            return f"  {self._format_elapsed(self.elapsed_seconds)}"
+        return ""
+
     def _update_display(self) -> None:
         """Update the displayed marker and filename labels."""
         try:
             marker = self.MARKERS.get(self.file_status, "○")
             self.query_one(".watch-marker", Label).update(marker)
             self.query_one(".watch-filename", Label).update(self.filename)
+            elapsed_lbl = self.query_one(".watch-elapsed", Label)
+            text = self._elapsed_label()
+            elapsed_lbl.update(text)
+            elapsed_lbl.display = bool(text)
         except Exception:
             pass
 
     def compose(self) -> ComposeResult:
         marker = self.MARKERS.get(self.file_status, "○")
+        elapsed = self._elapsed_label()
         with Horizontal(classes="watch-file-row"):
             yield Label(marker, classes="watch-marker")
             yield Label(self.filename, classes="watch-filename")
+        lbl = Label(elapsed, classes="watch-elapsed")
+        lbl.display = bool(elapsed)
+        yield lbl
 
 
 class WatchPanel(Static):
@@ -350,6 +389,7 @@ class WatchPanel(Static):
         status: str,
         error: Optional[str] = None,
         original_filename: Optional[str] = None,
+        elapsed_seconds: Optional[int] = None,
     ) -> None:
         """Update a file's status, moving between categories as needed.
 
@@ -358,6 +398,7 @@ class WatchPanel(Static):
             status: New status
             error: Optional error message
             original_filename: If file was renamed, the original filename to update
+            elapsed_seconds: Time spent processing this file
         """
         # Handle renames: find the file by original name
         lookup_name = original_filename if original_filename else filename
@@ -383,14 +424,14 @@ class WatchPanel(Static):
 
         if current_category == target_category:
             # Same category, just update
-            item.update_status(status, error)
+            item.update_status(status, error, elapsed_seconds)
             if original_filename and filename != original_filename:
                 item.update_filename(filename)
                 files_dict.pop(lookup_name)
                 files_dict[filename] = item
         else:
             # Move to different category
-            self._move_file_to_category(lookup_name, filename, status, error, current_category, target_category)
+            self._move_file_to_category(lookup_name, filename, status, error, current_category, target_category, elapsed_seconds)
 
         self._update_category_headers()
 
@@ -402,6 +443,7 @@ class WatchPanel(Static):
         error: Optional[str],
         from_category: str,
         to_category: str,
+        elapsed_seconds: Optional[int] = None,
     ) -> None:
         """Move a file from one category to another."""
         try:
@@ -416,7 +458,7 @@ class WatchPanel(Static):
             new_list = self.query_one(new_list_id, ListView)
             new_files = self._get_files_dict(to_category)
 
-            new_item = WatchFileItem(new_filename, status, error)
+            new_item = WatchFileItem(new_filename, status, error, elapsed_seconds)
             new_files[new_filename] = new_item
             new_list.append(new_item)
 
