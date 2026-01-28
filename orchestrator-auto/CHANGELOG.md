@@ -5,6 +5,40 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-01-28
+
+### Added
+
+- **Exploration Sub-Agent** - Pre-milestone codebase discovery using read-only tools (Glob, Grep, Read). Gathers context about existing patterns, file structure, and implementations before execution begins.
+- **Validation Sub-Agent Pipeline** - Post-milestone code analysis with three built-in validators:
+  - **SecurityValidator** - Detects SQL injection, XSS, hardcoded secrets, path traversal, command injection
+  - **PerformanceValidator** - Flags N+1 queries, unbounded queries, sync-in-async, memory leaks
+  - **APIValidator** - Checks for missing validation, inconsistent errors, hardcoded URLs
+- **CLI: `--explore`/`--no-explore`** - Enable/disable exploration before milestones
+- **CLI: `--explore-query`** - Custom exploration queries (can be used multiple times)
+- **CLI: `--validate`/`--no-validate`** - Enable/disable validation after milestones
+- **CLI: `--validators`** - Comma-separated list of validators to run
+- **DB: `exploration_results` table** - Persist exploration findings per session/milestone
+- **DB: `validation_results` table** - Persist validation issues with severity counts
+- **Config: exploration section** - Configure exploration model, tokens, turns, timeout
+- **Config: validation section** - Configure validators, thresholds, parallel execution
+
+### Technical
+
+- **ExploreSubAgent** - Spawns isolated sub-agents with governance limits (25K tokens, 5 turns, 30s timeout)
+- **ValidationPipeline** - Runs validators in parallel with total timeout, preserves partial results
+- **Mutable accumulator pattern** - Exploration preserves partial findings on timeout
+- **Multiline pattern auto-detection** - Performance validator auto-detects patterns containing `\n`
+- **Proper task cancellation** - Pipeline awaits cancelled tasks to avoid warnings
+
+### Documentation
+
+- **Sub-agent proposals** - Phase 1A (Exploration), Phase 1B (Validation) implementation tickets in `docs/proposals/`
+
+### Note
+
+Sub-agent flags are accepted but not yet wired into the execution flow. This release provides the infrastructure; integration will follow in a future release.
+
 ## [1.2.0] - 2026-01-28
 
 ### Added

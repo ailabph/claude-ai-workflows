@@ -168,6 +168,8 @@ orchestrator resume <session-id>     # Continue where you left off
 | `controllers/queue_controller.py` | Queue mode orchestration | `QueueController`, `QueueEvent`, `QueueItem` |
 | `controllers/watch_controller.py` | Watch mode orchestration | `WatchController`, `WatchEvent`, `FileState` |
 | `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, widgets, screens |
+| `explore.py` | Exploration sub-agent | `ExploreSubAgent`, `explore_async()`, `compact_findings()` |
+| `validation/` | Validation sub-agents | `SecurityValidator`, `PerformanceValidator`, `APIValidator`, `ValidationPipeline` |
 
 ### Database Tables
 
@@ -179,6 +181,8 @@ orchestrator resume <session-id>     # Continue where you left off
 | `milestones` | Plan structure and milestone statuses |
 | `queue_items` | Batch execution queue state |
 | `telegram_state` | Telegram polling cursor for reply routing |
+| `exploration_results` | Pre-milestone codebase exploration findings |
+| `validation_results` | Post-milestone validation issues with severity counts |
 
 ---
 
@@ -770,6 +774,30 @@ The SDK supports spawning sub-agents via the `Task` tool for focused subtasks:
 | `Explore` | Fast codebase exploration and search |
 | `Plan` | Implementation planning and architecture |
 | `general-purpose` | Research and multi-step tasks |
+
+**orchestrator-auto Sub-Agents** (Phase 1):
+
+| Sub-Agent | Purpose | Governance |
+|-----------|---------|------------|
+| `ExploreSubAgent` | Pre-milestone codebase discovery (read-only) | 25K tokens, 5 turns, 30s timeout |
+| `ValidationPipeline` | Post-milestone code analysis | 3 validators in parallel, 45s total |
+
+**Exploration** gathers context before execution:
+```bash
+orchestrator start -f "Add auth" --explore --explore-query "Find existing auth patterns"
+```
+
+**Validation** checks code quality after execution:
+```bash
+orchestrator start -f "Add API endpoint" --validate --validators security,api
+```
+
+Built-in validators:
+- **SecurityValidator** - SQL injection, XSS, secrets, path traversal
+- **PerformanceValidator** - N+1 queries, unbounded queries, sync-in-async
+- **APIValidator** - Missing validation, inconsistent errors, hardcoded URLs
+
+> **Note:** Sub-agent flags are accepted in v1.3.0 but not yet wired into execution flow.
 
 **Custom sub-agents** can be defined programmatically:
 
