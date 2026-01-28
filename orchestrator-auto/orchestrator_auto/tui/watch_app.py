@@ -1746,21 +1746,13 @@ class WatchTUI(App):
 
     def action_respond(self) -> None:
         """Open input modal to respond to a paused blocker."""
-        try:
-            if self._use_layout_b:
-                log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
-                log_panel = self.query_one("#log-panel", LogPanel)
-        except Exception:
-            return
-
         if not self._paused_session_id:
-            log_panel.log_warning("No paused session to respond to")
+            self._log_to_ui("No paused session to respond to", "warning")
             return
 
         # Prevent overlapping modals
         if self._input_provider.current_prompt:
-            log_panel.log_warning("Input already in progress")
+            self._log_to_ui("Input already in progress", "warning")
             return
 
         # Start respond worker in background thread
@@ -1855,78 +1847,63 @@ class WatchTUI(App):
                 f"Resume failed: {e}. Press 'r' to retry or use: orchestrator resume {session_id[:8]}"
             )
 
-    def _log_info(self, message: str) -> None:
-        """Helper to log info from worker thread."""
+    def _log_to_ui(self, message: str, level: str = "info") -> None:
+        """
+        Log message to appropriate widget for current layout mode.
+
+        Args:
+            message: The message to log
+            level: Log level - "info", "warning", "error", "success", or "debug"
+        """
         try:
             if self._use_layout_b:
                 log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
+                getattr(log_panel, f"log_{level}", log_panel.log_info)(message)
+            elif self.verbose:
                 log_panel = self.query_one("#log-panel", LogPanel)
-            log_panel.log_info(message)
+                getattr(log_panel, f"log_{level}", log_panel.log_info)(message)
+            else:
+                # Compact mode: use StatusBar
+                status_bar = self.query_one("#status-bar", StatusBar)
+                status_bar.log(message, level)
         except Exception:
-            pass
+            pass  # Silent - UI logging is best-effort
+
+    def _log_info(self, message: str) -> None:
+        """Helper to log info from worker thread."""
+        self._log_to_ui(message, "info")
 
     def _log_error(self, message: str) -> None:
         """Helper to log error (safe for use anywhere including worker threads)."""
-        try:
-            if self._use_layout_b:
-                log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
-                log_panel = self.query_one("#log-panel", LogPanel)
-            log_panel.log_error(message)
-        except Exception:
-            pass  # Truly silent - can't log if log panel is unavailable
+        self._log_to_ui(message, "error")
 
     def _log_debug(self, message: str) -> None:
         """Helper to log debug messages for diagnosing UI issues."""
-        try:
-            if self._use_layout_b:
-                log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
-                log_panel = self.query_one("#log-panel", LogPanel)
-            log_panel.log_debug(message)
-        except Exception:
-            pass  # Silent - debug logging is best-effort
+        self._log_to_ui(message, "debug")
 
     def action_copy_session_id(self) -> None:
         """Copy current or paused session ID to clipboard."""
-        try:
-            if self._use_layout_b:
-                log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
-                log_panel = self.query_one("#log-panel", LogPanel)
-        except Exception:
-            return
-
         session_id = self._current_session_id or self._paused_session_id
         if session_id:
             self.copy_to_clipboard(session_id)
-            log_panel.log_info(f"Copied: {session_id[:8]}...")
+            self._log_to_ui(f"Copied: {session_id[:8]}...", "info")
         else:
-            log_panel.log_warning("No session ID to copy")
+            self._log_to_ui("No session ID to copy", "warning")
 
     def action_show_blocker(self) -> None:
         """Show full blocker question in modal."""
         from .. import db
 
-        try:
-            if self._use_layout_b:
-                log_panel = self.query_one("#lb-log-panel", LogPanel)
-            else:
-                log_panel = self.query_one("#log-panel", LogPanel)
-        except Exception:
-            return
-
         session_id = self._paused_session_id or self._current_session_id
         if not session_id:
-            log_panel.log_warning("No session with blocker")
+            self._log_to_ui("No session with blocker", "warning")
             return
 
         try:
             # Load blocker from database
             blockers = db.get_unresolved_blockers(session_id, self.db_path)
             if not blockers:
-                log_panel.log_warning("No unresolved blocker found")
+                self._log_to_ui("No unresolved blocker found", "warning")
                 return
 
             blocker = blockers[0]
@@ -1957,7 +1934,7 @@ class WatchTUI(App):
             )
 
         except Exception as e:
-            log_panel.log_error(f"Failed to load blocker: {e}")
+            self._log_to_ui(f"Failed to load blocker: {e}", "error")
 
     # Phase 2: Panel navigation actions
 
