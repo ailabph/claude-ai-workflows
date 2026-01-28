@@ -416,3 +416,176 @@ class TestAgentMcpConfiguration:
 
         # mcp_servers should be empty or None when not configured
         assert not options.mcp_servers  # Empty dict {} or None are both falsy
+
+
+# ============================================================================
+# File Checkpoint/Rewind Tests (SDK 0.1.17+)
+# ============================================================================
+
+
+class TestFileCheckpointRewind:
+    """Test file checkpoint and rewind functionality."""
+
+    def test_checkpoint_uuid_initialized_to_none(self):
+        """Checkpoint UUID should be None on initialization."""
+        agent = BaseAgent(system_prompt="Test")
+        assert agent._checkpoint_uuid is None
+        assert agent._last_message_uuid is None
+
+    def test_set_checkpoint_returns_none_without_messages(self):
+        """set_checkpoint should return None if no messages received yet."""
+        agent = BaseAgent(system_prompt="Test")
+        result = agent.set_checkpoint()
+        assert result is None
+
+    def test_set_checkpoint_captures_last_uuid(self):
+        """set_checkpoint should capture the last message UUID."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._last_message_uuid = "test-uuid-12345"
+
+        result = agent.set_checkpoint()
+
+        assert result == "test-uuid-12345"
+        assert agent._checkpoint_uuid == "test-uuid-12345"
+
+    def test_get_checkpoint_returns_checkpoint_uuid(self):
+        """get_checkpoint should return the current checkpoint UUID."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._checkpoint_uuid = "checkpoint-uuid-abc"
+
+        assert agent.get_checkpoint() == "checkpoint-uuid-abc"
+
+    def test_clear_checkpoint_resets_uuid(self):
+        """clear_checkpoint should reset checkpoint UUID to None."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._checkpoint_uuid = "some-uuid"
+
+        agent.clear_checkpoint()
+
+        assert agent._checkpoint_uuid is None
+
+    def test_rewind_returns_false_without_checkpoint(self):
+        """rewind_to_checkpoint should return False if no checkpoint set."""
+        agent = BaseAgent(system_prompt="Test")
+        result = agent.rewind_to_checkpoint()
+        assert result is False
+
+    def test_rewind_returns_false_without_client(self):
+        """rewind_to_checkpoint should return False if client not initialized."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._checkpoint_uuid = "some-uuid"
+
+        result = agent.rewind_to_checkpoint()
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_rewind_calls_client_rewind_files(self):
+        """rewind_to_checkpoint_async should call client.rewind_files."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._checkpoint_uuid = "test-checkpoint-uuid"
+
+        # Mock the client
+        mock_client = AsyncMock()
+        agent._client = mock_client
+
+        result = await agent.rewind_to_checkpoint_async()
+
+        assert result is True
+        mock_client.rewind_files.assert_called_once_with("test-checkpoint-uuid")
+
+    @pytest.mark.asyncio
+    async def test_rewind_handles_exception(self):
+        """rewind_to_checkpoint_async should handle exceptions gracefully."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._checkpoint_uuid = "test-uuid"
+
+        # Mock client that raises an exception
+        mock_client = AsyncMock()
+        mock_client.rewind_files.side_effect = Exception("Rewind failed")
+        agent._client = mock_client
+
+        result = await agent.rewind_to_checkpoint_async()
+
+        assert result is False
+
+
+# ============================================================================
+# MCP Status Tests (SDK 0.1.23+)
+# ============================================================================
+
+
+class TestMcpStatus:
+    """Test MCP status monitoring functionality."""
+
+    def test_get_mcp_status_returns_empty_without_client(self):
+        """get_mcp_status should return empty dict if no client."""
+        agent = BaseAgent(system_prompt="Test")
+        result = agent.get_mcp_status()
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_mcp_status_calls_client_method(self):
+        """get_mcp_status_async should call client.get_mcp_status."""
+        agent = BaseAgent(system_prompt="Test")
+
+        # Mock the client with MCP status
+        mock_status = {
+            "playwright": {"connected": True},
+            "figma": {"connected": False, "error": "Connection refused"}
+        }
+        mock_client = AsyncMock()
+        mock_client.get_mcp_status.return_value = mock_status
+        agent._client = mock_client
+
+        result = await agent.get_mcp_status_async()
+
+        assert result == mock_status
+        mock_client.get_mcp_status.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_mcp_status_handles_exception(self):
+        """get_mcp_status_async should handle exceptions gracefully."""
+        agent = BaseAgent(system_prompt="Test")
+
+        mock_client = AsyncMock()
+        mock_client.get_mcp_status.side_effect = Exception("Status check failed")
+        agent._client = mock_client
+
+        result = await agent.get_mcp_status_async()
+
+        assert result == {}
+
+
+# ============================================================================
+# Tool Invocation Tracking Tests (SDK 0.1.22+)
+# ============================================================================
+
+
+class TestToolInvocationTracking:
+    """Test tool invocation tracking functionality."""
+
+    def test_tool_invocations_initialized_empty(self):
+        """Tool invocations list should be empty on initialization."""
+        agent = BaseAgent(system_prompt="Test")
+        assert agent._tool_invocations == []
+
+    def test_get_tool_invocations_returns_copy(self):
+        """get_tool_invocations should return a copy of the list."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._tool_invocations = [{"tool": "Read", "result": "ok"}]
+
+        result = agent.get_tool_invocations()
+
+        assert result == [{"tool": "Read", "result": "ok"}]
+        # Verify it's a copy, not the same reference
+        assert result is not agent._tool_invocations
+
+    def test_clear_tool_invocations(self):
+        """clear_tool_invocations should empty the list."""
+        agent = BaseAgent(system_prompt="Test")
+        agent._tool_invocations = [{"tool": "Read"}, {"tool": "Write"}]
+
+        agent.clear_tool_invocations()
+
+        assert agent._tool_invocations == []

@@ -744,10 +744,69 @@ pytest tests/ --cov=orchestrator_auto
 
 ---
 
+## Dependencies
+
+| Package | Required Version | Purpose |
+|---------|------------------|---------|
+| `claude-agent-sdk` | ≥0.1.16 | Claude Code Python SDK |
+| `click` | ≥8.0 | CLI framework |
+| `prompt_toolkit` | ≥3.0 | Multi-line input handling |
+| `pyyaml` | ≥6.0 | Configuration files |
+| `textual` | ≥0.80.0 | TUI framework (optional) |
+| `httpx` | ≥0.27 | Telegram support (optional) |
+
+---
+
+## Claude Agent SDK Features
+
+orchestrator-auto is built on the [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python), which provides the same tools, agent loop, and context management that power Claude Code.
+
+### Sub-Agents
+
+The SDK supports spawning sub-agents via the `Task` tool for focused subtasks:
+
+| Built-in Sub-Agent | Purpose |
+|--------------------|---------|
+| `Explore` | Fast codebase exploration and search |
+| `Plan` | Implementation planning and architecture |
+| `general-purpose` | Research and multi-step tasks |
+
+**Custom sub-agents** can be defined programmatically:
+
+```python
+from claude_agent_sdk.types import AgentDefinition
+
+my_subagent = AgentDefinition(
+    description="Backend API specialist",
+    prompt="You are an expert in REST API design...",
+    tools=["Read", "Write", "Edit", "Bash"],
+    model="sonnet",  # or "opus", "haiku", "inherit"
+)
+```
+
+**Constraints:**
+- Sub-agents cannot spawn other sub-agents (no nesting)
+- Each sub-agent starts with fresh context
+- Multiple sub-agents can run in parallel
+
+### SDK Version Compatibility
+
+| SDK Version | Status | Key Features |
+|-------------|--------|--------------|
+| 0.1.16 | Current minimum | Rate limit detection |
+| 0.1.17 | Recommended | `uuid` field, `rewind_files()` for file rollback |
+| 0.1.22 | - | `tool_use_result` for audit trails |
+| 0.1.23 | Latest | `get_mcp_status()` for MCP health checks |
+
+See [SDK Upgrade Proposal](docs/proposals/PROPOSAL_sdk_upgrade_0.1.23.md) for planned improvements.
+
+---
+
 ## Related
 
 - [CLAUDE_orchestrator.md](../CLAUDE_orchestrator.md) - Framework docs
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk) - SDK docs
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.23)
+- [Subagents in the SDK](https://platform.claude.com/docs/en/agent-sdk/subagents) - Official sub-agent documentation
 
 ## Future Planned Features
 

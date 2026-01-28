@@ -262,6 +262,27 @@ def init_db(db_path: Optional[str] = None) -> None:
             ON session_errors(session_id)
         """)
 
+        # Tool invocations table (SDK 0.1.22+)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tool_invocations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                milestone_number INTEGER,
+                tool_name TEXT NOT NULL,
+                input_summary TEXT,
+                output_summary TEXT,
+                success INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tool_invocations_session_id
+            ON tool_invocations(session_id)
+        """)
+
         conn.commit()
 
 
@@ -1147,3 +1168,138 @@ def get_latest_session_error(
         if row:
             return dict(row)
         return None
+
+
+# ============================================================================
+# Tool Invocations (SDK 0.1.22+)
+# ============================================================================
+
+
+def save_tool_invocation(
+    session_id: str,
+    agent: str,
+    tool_name: str,
+    milestone_number: Optional[int] = None,
+    input_summary: Optional[str] = None,
+    output_summary: Optional[str] = None,
+    success: bool = True,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Save a tool invocation record.
+
+    Args:
+        session_id: Session ID
+        agent: Agent name (planner/executor)
+        tool_name: Name of the tool invoked
+        milestone_number: Current milestone number (optional)
+        input_summary: Truncated input (optional)
+        output_summary: Truncated output (optional)
+        success: Whether the tool succeeded
+        db_path: Custom database path
+
+    Returns:
+        The tool invocation record ID
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO tool_invocations (
+                session_id, agent, milestone_number, tool_name,
+                input_summary, output_summary, success
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (session_id, agent, milestone_number, tool_name,
+              input_summary, output_summary, 1 if success else 0))
+
+        return cursor.lastrowid
+
+
+def save_tool_invocations_batch(
+    session_id: str,
+    agent: str,
+    invocations: List[Dict[str, Any]],
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Save multiple tool invocations in a batch.
+
+    Args:
+        session_id: Session ID
+        agent: Agent name (planner/executor)
+        invocations: List of invocation dicts with tool_name, input, output, success
+        milestone_number: Current milestone number (optional)
+        db_path: Custom database path
+
+    Returns:
+        Number of records inserted
+    """
+    if not invocations:
+        return 0
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        count = 0
+        for inv in invocations:
+            tool_name = inv.get('tool_name', inv.get('name', 'unknown'))
+            input_summary = _truncate_str(str(inv.get('input', '')), 500)
+            output_summary = _truncate_str(str(inv.get('output', '')), 1000)
+            success = inv.get('success', True)
+
+            cursor.execute("""
+                INSERT INTO tool_invocations (
+                    session_id, agent, milestone_number, tool_name,
+                    input_summary, output_summary, success
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (session_id, agent, milestone_number, tool_name,
+                  input_summary, output_summary, 1 if success else 0))
+            count += 1
+
+        return count
+
+
+def get_tool_invocations(
+    session_id: str,
+    agent: Optional[str] = None,
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get tool invocations for a session.
+
+    Args:
+        session_id: Session ID to query
+        agent: Filter by agent name (optional)
+        milestone_number: Filter by milestone (optional)
+        db_path: Custom database path
+
+    Returns:
+        List of tool invocation dicts
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM tool_invocations WHERE session_id = ?"
+        params = [session_id]
+
+        if agent:
+            query += " AND agent = ?"
+            params.append(agent)
+
+        if milestone_number is not None:
+            query += " AND milestone_number = ?"
+            params.append(milestone_number)
+
+        query += " ORDER BY created_at ASC"
+
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def _truncate_str(s: str, max_len: int) -> str:
+    """Truncate a string to max_len, adding ... if truncated."""
+    if len(s) <= max_len:
+        return s
+    return s[:max_len - 3] + "..."

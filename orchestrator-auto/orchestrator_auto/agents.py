@@ -14,6 +14,7 @@ from claude_agent_sdk.types import (
     AssistantMessage,
     ResultMessage,
     TextBlock,
+    UserMessage,
 )
 
 from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT, DEFAULT_CHAT_PROMPT
@@ -101,6 +102,13 @@ class BaseAgent:
         # Persistent event loop for async operations (required for client lifecycle)
         self._loop: Optional[asyncio.AbstractEventLoop] = None
 
+        # File checkpoint/rewind support (SDK 0.1.17+)
+        self._checkpoint_uuid: Optional[str] = None  # Last checkpoint before milestone
+        self._last_message_uuid: Optional[str] = None  # Most recent message UUID
+
+        # Tool invocation tracking (SDK 0.1.22+)
+        self._tool_invocations: List[Dict[str, Any]] = []
+
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """
         Get or create a persistent event loop for this agent.
@@ -163,7 +171,14 @@ class BaseAgent:
         # Send query and receive response
         await client.query(content)
         async for message in client.receive_messages():
-            if isinstance(message, AssistantMessage):
+            # Capture UUID from UserMessage (SDK 0.1.17+)
+            if isinstance(message, UserMessage):
+                if hasattr(message, 'uuid') and message.uuid:
+                    self._last_message_uuid = message.uuid
+                # Capture tool results (SDK 0.1.22+)
+                if hasattr(message, 'tool_use_result') and message.tool_use_result:
+                    self._tool_invocations.append(message.tool_use_result)
+            elif isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         response_text += block.text
@@ -237,6 +252,108 @@ class BaseAgent:
             except Exception:
                 pass
             self._loop = None
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # File Checkpoint/Rewind (SDK 0.1.17+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def set_checkpoint(self) -> Optional[str]:
+        """
+        Mark current state as a checkpoint for potential rewind.
+
+        Call this before starting a milestone to enable rollback if the
+        milestone is rejected.
+
+        Returns:
+            The checkpoint UUID, or None if no message UUID is available
+        """
+        self._checkpoint_uuid = self._last_message_uuid
+        return self._checkpoint_uuid
+
+    def get_checkpoint(self) -> Optional[str]:
+        """Get the current checkpoint UUID."""
+        return self._checkpoint_uuid
+
+    def clear_checkpoint(self) -> None:
+        """Clear the current checkpoint (call after milestone is approved)."""
+        self._checkpoint_uuid = None
+
+    async def rewind_to_checkpoint_async(self) -> bool:
+        """
+        Rewind files to the last checkpoint (async).
+
+        This reverts all file changes made since set_checkpoint() was called.
+
+        Returns:
+            True if rewind was successful, False otherwise
+        """
+        if not self._checkpoint_uuid:
+            return False
+        if not self._client:
+            return False
+        try:
+            await self._client.rewind_files(self._checkpoint_uuid)
+            return True
+        except Exception:
+            # Rewind is best-effort - don't fail if it doesn't work
+            return False
+
+    def rewind_to_checkpoint(self) -> bool:
+        """
+        Rewind files to the last checkpoint (sync wrapper).
+
+        Returns:
+            True if rewind was successful, False otherwise
+        """
+        if not self._checkpoint_uuid:
+            return False
+        loop = self._get_loop()
+        return loop.run_until_complete(self.rewind_to_checkpoint_async())
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # MCP Status (SDK 0.1.23+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def get_mcp_status_async(self) -> Dict[str, Any]:
+        """
+        Get MCP server connection status (async).
+
+        Returns:
+            Dict mapping server names to their connection status
+        """
+        if not self._client:
+            return {}
+        try:
+            return await self._client.get_mcp_status()
+        except Exception:
+            return {}
+
+    def get_mcp_status(self) -> Dict[str, Any]:
+        """
+        Get MCP server connection status (sync wrapper).
+
+        Returns:
+            Dict mapping server names to their connection status
+        """
+        loop = self._get_loop()
+        return loop.run_until_complete(self.get_mcp_status_async())
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tool Invocation Tracking (SDK 0.1.22+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_tool_invocations(self) -> List[Dict[str, Any]]:
+        """
+        Get all tool invocations captured during this agent's session.
+
+        Returns:
+            List of tool invocation results
+        """
+        return self._tool_invocations.copy()
+
+    def clear_tool_invocations(self) -> None:
+        """Clear the tool invocation history."""
+        self._tool_invocations.clear()
 
 
 class PlannerAgent(BaseAgent):

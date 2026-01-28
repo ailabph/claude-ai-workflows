@@ -1254,6 +1254,7 @@ def cli():
 @click.option('--no-rename', is_flag=True, default=False, help='Do not rename plan file to *_done.md on completion')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (.mcp.json)')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
+@click.option('--no-rewind', is_flag=True, default=False, help='Disable automatic file rewind when milestone is rejected')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 @click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
 def start(
@@ -1273,6 +1274,7 @@ def start(
     no_rename: bool,
     mcp_config: Optional[str],
     headless: bool,
+    no_rewind: bool,
     debug: bool,
     tui: bool,
 ):
@@ -1391,6 +1393,7 @@ def start(
             debug=debug,
             mcp_config_path=mcp_config,
             headless=headless,
+            enable_rewind=not no_rewind,
         )
         _current_orchestrator = orch
 
@@ -2213,7 +2216,8 @@ def status(session_id: str, db_path: Optional[str]):
 @click.argument('session_id')
 @click.option('--output', '-o', help='Output file path')
 @click.option('--db-path', '-d', help='Custom database path')
-def export(session_id: str, output: Optional[str], db_path: Optional[str]):
+@click.option('--tools', is_flag=True, help='Include tool invocation audit trail')
+def export(session_id: str, output: Optional[str], db_path: Optional[str], tools: bool):
     """Export session history to a file."""
     try:
         # Initialize database
@@ -2292,6 +2296,31 @@ def export(session_id: str, output: Optional[str], db_path: Optional[str]):
                 content.append("\n")
             content.append("\n---\n\n")
 
+        # Tool Invocations (if requested)
+        tool_invocations = []
+        if tools:
+            tool_invocations = db.get_tool_invocations(session_id, db_path=db_path)
+            if tool_invocations:
+                content.append("## Tool Invocations\n\n")
+                content.append("| Agent | Milestone | Tool | Success | Time |\n")
+                content.append("|-------|-----------|------|---------|------|\n")
+                for inv in tool_invocations:
+                    milestone = inv['milestone_number'] or '-'
+                    success = '✓' if inv['success'] else '✗'
+                    time = inv['created_at'].split('.')[0] if inv['created_at'] else '-'
+                    content.append(f"| {inv['agent']} | {milestone} | {inv['tool_name']} | {success} | {time} |\n")
+                content.append("\n")
+
+                # Detailed invocations with input/output
+                content.append("### Tool Details\n\n")
+                for inv in tool_invocations:
+                    content.append(f"#### {inv['tool_name']} ({inv['agent']})\n\n")
+                    if inv['input_summary']:
+                        content.append(f"**Input:** `{inv['input_summary'][:200]}{'...' if len(inv['input_summary'] or '') > 200 else ''}`\n\n")
+                    if inv['output_summary']:
+                        content.append(f"**Output:** `{inv['output_summary'][:200]}{'...' if len(inv['output_summary'] or '') > 200 else ''}`\n\n")
+                content.append("\n---\n\n")
+
         # Messages
         content.append("## Message History\n\n")
         current_phase = None
@@ -2312,6 +2341,8 @@ def export(session_id: str, output: Optional[str], db_path: Optional[str]):
         click.echo(f"  Messages: {len(messages)}")
         click.echo(f"  Milestones: {len(milestones)}")
         click.echo(f"  Blockers: {len(blockers)}")
+        if tools:
+            click.echo(f"  Tool Invocations: {len(tool_invocations)}")
 
     except Exception as e:
         click.secho(f"✗ Error: {e}", fg="red", bold=True)
@@ -2641,7 +2672,8 @@ def chat(model: str, system_prompt: Optional[str], no_tools: bool, show_activity
 
 @cli.command()
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
-def check(verbose: bool):
+@click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file to verify server connections')
+def check(verbose: bool, mcp_config: Optional[str]):
     """Run health checks on dependencies, permissions, and authentication."""
     import importlib
     import tempfile
@@ -2873,6 +2905,63 @@ def check(verbose: bool):
         click.echo(f"   {click.style('✓', fg='green')} No MCP server processes detected")
 
     click.echo()
+
+    # -------------------------------------------------------------------------
+    # 6. MCP Server Status (SDK 0.1.23+)
+    # -------------------------------------------------------------------------
+    if mcp_config:
+        click.secho("6. MCP Server Status", bold=True)
+
+        try:
+            import asyncio
+            from claude_agent_sdk import ClaudeSDKClient
+            from claude_agent_sdk.types import ClaudeAgentOptions
+            from .config import load_mcp_config_raw
+
+            # Load MCP config
+            mcp_servers = load_mcp_config_raw(mcp_config)
+            if not mcp_servers:
+                click.echo(f"   {click.style('○', fg='yellow')} No MCP servers found in config")
+            else:
+                click.echo(f"   Found {len(mcp_servers)} MCP server(s) in config:")
+                for server_name in mcp_servers:
+                    click.echo(f"      • {server_name}")
+
+                # Test server connections
+                click.echo(f"   Testing connections...")
+
+                async def check_mcp_status():
+                    options = ClaudeAgentOptions(
+                        model="claude-3-5-haiku-20241022",
+                        mcp_servers=mcp_servers,
+                    )
+                    async with ClaudeSDKClient(options) as client:
+                        return await client.get_mcp_status()
+
+                try:
+                    status = asyncio.run(check_mcp_status())
+                    if status:
+                        for server_name, info in status.items():
+                            if info.get('connected', False):
+                                click.echo(f"   {click.style('✓', fg='green')} {server_name}: connected")
+                            else:
+                                error = info.get('error', 'disconnected')
+                                click.echo(f"   {click.style('✗', fg='red')} {server_name}: {error}")
+                                all_passed = False
+                    else:
+                        click.echo(f"   {click.style('○', fg='yellow')} No status returned (servers may not be started)")
+                except Exception as e:
+                    click.echo(f"   {click.style('✗', fg='red')} Status check failed: {e}")
+                    if verbose:
+                        import traceback
+                        traceback.print_exc()
+
+        except ImportError as e:
+            click.echo(f"   {click.style('✗', fg='red')} Missing dependency: {e}")
+        except Exception as e:
+            click.echo(f"   {click.style('✗', fg='red')} Config load failed: {e}")
+
+        click.echo()
 
     # -------------------------------------------------------------------------
     # Summary

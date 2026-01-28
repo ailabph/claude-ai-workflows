@@ -79,6 +79,7 @@ class Orchestrator:
         debug: bool = False,
         mcp_config_path: Optional[str] = None,
         headless: bool = False,
+        enable_rewind: bool = True,
     ):
         """
         Initialize orchestrator.
@@ -100,6 +101,7 @@ class Orchestrator:
             debug: If True, enable debug logging with console output
             mcp_config_path: Optional path to MCP configuration file (.mcp.json)
             headless: If True, run Playwright MCP browser in headless mode
+            enable_rewind: If True, rewind file changes when milestone is rejected (default: True)
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -124,6 +126,7 @@ class Orchestrator:
         self.executor_mcp_config = None
         self._mcp_config_for_db = None  # Store raw config for DB persistence
         self._headless = headless  # Playwright headless mode
+        self._enable_rewind = enable_rewind  # File rewind on milestone rejection
 
         # Initialize database
         db.init_db(db_path)
@@ -949,6 +952,12 @@ The orchestrator will save the file for you.
         while current_milestone <= total_milestones:
             self._output(f"\n--- Milestone {current_milestone}/{total_milestones} ---\n")
 
+            # Set checkpoint before milestone (for potential rewind on rejection)
+            if self._enable_rewind:
+                checkpoint_uuid = executor.set_checkpoint()
+                if checkpoint_uuid and isinstance(checkpoint_uuid, str):
+                    self._output(f"📍 Checkpoint set: {checkpoint_uuid[:8]}...\n")
+
             # Generate milestone prompt
             milestone_prompt = MILESTONE_PROMPT_TEMPLATE.format(
                 feature_description=self.state.feature_description,
@@ -981,6 +990,10 @@ The orchestrator will save the file for you.
                 validation, executor_feedback_response = self._route_to_planner(report_content)
 
                 if validation == "approved":
+                    # Clear checkpoint on approval (no rewind needed)
+                    if self._enable_rewind:
+                        executor.clear_checkpoint()
+
                     # Auto-continue to next milestone
                     completed_milestone = current_milestone
                     current_milestone += 1
@@ -1200,6 +1213,12 @@ The orchestrator will save the file for you.
                         self._output("\n⚠ Planner requested changes (after retry):\n")
                         for issue in issues:
                             self._output(f"  - {issue}\n")
+
+                        # Rewind file changes before executor retries (SDK 0.1.17+)
+                        if self._enable_rewind and self.executor:
+                            if self.executor.rewind_to_checkpoint():
+                                self._output("⟲ Files rewound to checkpoint\n")
+
                         if issues:
                             issues_text = "\n".join([f"- {issue}" for issue in issues])
                         else:
@@ -1248,6 +1267,11 @@ The orchestrator will save the file for you.
             self._output(f"\n⚠ Planner requested changes:\n")
             for issue in issues:
                 self._output(f"  - {issue}\n")
+
+            # Rewind file changes before executor retries (SDK 0.1.17+)
+            if self._enable_rewind and self.executor:
+                if self.executor.rewind_to_checkpoint():
+                    self._output("⟲ Files rewound to checkpoint\n")
 
             # Send feedback to executor and capture response
             # FIX: Return executor's response so main loop can parse it
@@ -1300,6 +1324,12 @@ The orchestrator will save the file for you.
                     self._output(f"\n⚠ Planner requested changes:\n")
                     for issue in issues:
                         self._output(f"  - {issue}\n")
+
+                    # Rewind file changes before executor retries (SDK 0.1.17+)
+                    if self._enable_rewind and self.executor:
+                        if self.executor.rewind_to_checkpoint():
+                            self._output("⟲ Files rewound to checkpoint\n")
+
                     if issues:
                         issues_text = "\n".join([f"- {issue}" for issue in issues])
                     else:

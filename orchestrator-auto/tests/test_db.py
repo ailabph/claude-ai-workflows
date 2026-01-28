@@ -1138,3 +1138,174 @@ class TestMcpConfigPersistence:
 
         assert retrieved is not None
         assert retrieved["servers"]["test-server"]["command"] == "test-cmd"
+
+
+# ============================================================================
+# Tool Invocations Tests (SDK 0.1.22+)
+# ============================================================================
+
+
+class TestToolInvocationsTable:
+    """Test tool_invocations table creation."""
+
+    def test_tool_invocations_table_exists(self, temp_db):
+        """Test that init_db creates tool_invocations table."""
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='table' AND name='tool_invocations'
+            """)
+            result = cursor.fetchone()
+            assert result is not None
+
+    def test_tool_invocations_index_exists(self, temp_db):
+        """Test that tool_invocations index is created."""
+        with db.get_connection(temp_db) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT name FROM sqlite_master
+                WHERE type='index' AND name='idx_tool_invocations_session_id'
+            """)
+            result = cursor.fetchone()
+            assert result is not None
+
+
+class TestToolInvocationsCRUD:
+    """Test tool invocations CRUD operations."""
+
+    def test_save_tool_invocation(self, temp_db):
+        """Test saving a single tool invocation."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        inv_id = db.save_tool_invocation(
+            session_id=session_id,
+            agent="executor",
+            tool_name="Read",
+            milestone_number=1,
+            input_summary="/path/to/file.py",
+            output_summary="File contents...",
+            success=True,
+            db_path=temp_db
+        )
+
+        assert inv_id is not None
+        assert isinstance(inv_id, int)
+
+    def test_get_tool_invocations(self, temp_db):
+        """Test retrieving tool invocations."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        db.save_tool_invocation(
+            session_id=session_id,
+            agent="executor",
+            tool_name="Read",
+            milestone_number=1,
+            db_path=temp_db
+        )
+        db.save_tool_invocation(
+            session_id=session_id,
+            agent="executor",
+            tool_name="Write",
+            milestone_number=1,
+            db_path=temp_db
+        )
+
+        invocations = db.get_tool_invocations(session_id, db_path=temp_db)
+
+        assert len(invocations) == 2
+        assert invocations[0]["tool_name"] == "Read"
+        assert invocations[1]["tool_name"] == "Write"
+
+    def test_get_tool_invocations_filter_by_agent(self, temp_db):
+        """Test filtering tool invocations by agent."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        db.save_tool_invocation(session_id, "planner", "Read", db_path=temp_db)
+        db.save_tool_invocation(session_id, "executor", "Write", db_path=temp_db)
+        db.save_tool_invocation(session_id, "executor", "Edit", db_path=temp_db)
+
+        executor_invs = db.get_tool_invocations(session_id, agent="executor", db_path=temp_db)
+        planner_invs = db.get_tool_invocations(session_id, agent="planner", db_path=temp_db)
+
+        assert len(executor_invs) == 2
+        assert len(planner_invs) == 1
+
+    def test_get_tool_invocations_filter_by_milestone(self, temp_db):
+        """Test filtering tool invocations by milestone."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        db.save_tool_invocation(session_id, "executor", "Read", milestone_number=1, db_path=temp_db)
+        db.save_tool_invocation(session_id, "executor", "Write", milestone_number=1, db_path=temp_db)
+        db.save_tool_invocation(session_id, "executor", "Edit", milestone_number=2, db_path=temp_db)
+
+        m1_invs = db.get_tool_invocations(session_id, milestone_number=1, db_path=temp_db)
+        m2_invs = db.get_tool_invocations(session_id, milestone_number=2, db_path=temp_db)
+
+        assert len(m1_invs) == 2
+        assert len(m2_invs) == 1
+
+    def test_save_tool_invocations_batch(self, temp_db):
+        """Test saving multiple tool invocations in batch."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        invocations = [
+            {"tool_name": "Read", "input": "/file1.py", "output": "content1", "success": True},
+            {"tool_name": "Write", "input": "/file2.py", "output": "ok", "success": True},
+            {"tool_name": "Bash", "input": "ls", "output": "files", "success": False},
+        ]
+
+        count = db.save_tool_invocations_batch(
+            session_id=session_id,
+            agent="executor",
+            invocations=invocations,
+            milestone_number=1,
+            db_path=temp_db
+        )
+
+        assert count == 3
+
+        retrieved = db.get_tool_invocations(session_id, db_path=temp_db)
+        assert len(retrieved) == 3
+        assert retrieved[2]["success"] == 0  # False stored as 0
+
+    def test_save_tool_invocations_batch_empty(self, temp_db):
+        """Test batch save with empty list returns 0."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        count = db.save_tool_invocations_batch(
+            session_id=session_id,
+            agent="executor",
+            invocations=[],
+            db_path=temp_db
+        )
+
+        assert count == 0
+
+    def test_tool_invocation_truncates_long_strings(self, temp_db):
+        """Test that long input/output strings are truncated."""
+        session_id = db.create_session("Test feature", db_path=temp_db)
+
+        long_input = "x" * 1000
+        long_output = "y" * 2000
+
+        invocations = [
+            {"tool_name": "Read", "input": long_input, "output": long_output, "success": True},
+        ]
+
+        db.save_tool_invocations_batch(
+            session_id=session_id,
+            agent="executor",
+            invocations=invocations,
+            db_path=temp_db
+        )
+
+        retrieved = db.get_tool_invocations(session_id, db_path=temp_db)
+
+        # Input truncated to 500 chars
+        assert len(retrieved[0]["input_summary"]) == 500
+        assert retrieved[0]["input_summary"].endswith("...")
+
+        # Output truncated to 1000 chars
+        assert len(retrieved[0]["output_summary"]) == 1000
+        assert retrieved[0]["output_summary"].endswith("...")
