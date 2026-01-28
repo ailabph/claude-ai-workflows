@@ -5,6 +5,30 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-01-28
+
+### Added
+
+- **WatchPanel: Category organization** - Files now displayed in 5 categories instead of a single "Recent Files" list:
+  - **PENDING** - Files waiting to be processed
+  - **ONGOING** - Files currently being processed
+  - **DONE** - Successfully completed files
+  - **PAUSED** - Files paused on blockers
+  - **FAILED** - Files that failed or were skipped
+- **WatchPanel: Category counts** - Each category header shows item count (e.g., "PENDING (3)")
+- **WatchPanel: Color-coded headers** - Category headers change color based on status (ongoing=cyan, done=green, paused=yellow, failed=red)
+- **WatchPanel: Increased height** - Layout B watch panel now has min-height 24, max-height 40 for better visibility
+
+### Fixed
+
+- **TUI: Compact mode action handlers** - Fixed `action_respond`, `action_copy_session_id`, and `action_show_blocker` silently failing in compact mode (non-verbose). Actions now route feedback to StatusBar instead of non-existent LogPanel.
+- **TUI: Unified logging helper** - New `_log_to_ui()` method handles Layout B, Verbose, and Compact modes correctly
+
+### Technical
+
+- **WatchPanel refactor** - Files tracked in per-category dicts with automatic movement between categories on status change
+- **Simplified log helpers** - `_log_info`, `_log_error`, `_log_debug` now delegate to unified `_log_to_ui()`
+
 ## [1.4.0] - 2026-01-28
 
 ### Added
