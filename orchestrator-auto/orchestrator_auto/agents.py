@@ -192,6 +192,8 @@ class BaseAgent:
                         "output_tokens": message.usage.get("output_tokens", 0),
                         "cache_creation_input_tokens": message.usage.get("cache_creation_input_tokens", 0),
                         "cache_read_input_tokens": message.usage.get("cache_read_input_tokens", 0),
+                        # Extended thinking tokens (Claude with extended_thinking enabled)
+                        "thinking_tokens": message.usage.get("thinking_tokens", 0),
                         "model": self.model,
                         "cost_usd": message.total_cost_usd,
                     }

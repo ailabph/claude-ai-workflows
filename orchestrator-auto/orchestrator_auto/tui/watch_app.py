@@ -328,6 +328,19 @@ class WatchTUI(App):
         self._failed: int = 0
         self._paused: int = 0
 
+        # Session-level token tracking (never reset during session)
+        self._session_tokens: int = 0
+        self._session_cost: float = 0.0
+        self._session_api_calls: int = 0
+        self._session_thinking_tokens: int = 0
+        # Per-agent breakdown
+        self._session_planner_tokens: int = 0
+        self._session_executor_tokens: int = 0
+        self._session_explore_tokens: int = 0
+        self._session_planner_cost: float = 0.0
+        self._session_executor_cost: float = 0.0
+        self._session_explore_cost: float = 0.0
+
         # Track currently processing file to handle renames
         self._current_processing_file: Optional[str] = None
 
@@ -813,6 +826,7 @@ class WatchTUI(App):
                     output_tokens=data.get("output_tokens", 0),
                     cache_creation_input_tokens=data.get("cache_creation_tokens", 0),
                     cache_read_input_tokens=data.get("cache_read_tokens", 0),
+                    thinking_tokens=data.get("thinking_tokens", 0),
                     model=data.get("model"),
                     cost_usd=data.get("cost_usd"),
                 )
@@ -1349,52 +1363,82 @@ class WatchTUI(App):
         """Handle token usage report from agent."""
         try:
             total_tokens = message.input_tokens + message.output_tokens
+            thinking_tokens = getattr(message, 'thinking_tokens', 0) or 0
+            cost = message.cost_usd or 0.0
+            agent = message.agent.lower() if message.agent else ""
+
+            # Always update session totals (never reset)
+            self._session_tokens += total_tokens + thinking_tokens
+            self._session_api_calls += 1
+            self._session_cost += cost
+            self._session_thinking_tokens += thinking_tokens
+
+            # Update per-agent session breakdown
+            if "planner" in agent:
+                self._session_planner_tokens += total_tokens + thinking_tokens
+                self._session_planner_cost += cost
+            elif "executor" in agent:
+                self._session_executor_tokens += total_tokens + thinking_tokens
+                self._session_executor_cost += cost
+            elif "explore" in agent:
+                self._session_explore_tokens += total_tokens + thinking_tokens
+                self._session_explore_cost += cost
 
             if self._use_layout_b:
-                # Layout B: update stats panel
+                # Layout B: update stats panel with file + session totals
                 if not hasattr(self, '_lb_total_tokens'):
                     self._lb_total_tokens = 0
                     self._lb_total_cost = 0.0
                     self._lb_total_api_calls = 0
 
-                self._lb_total_tokens += total_tokens
+                self._lb_total_tokens += total_tokens + thinking_tokens
                 self._lb_total_api_calls += 1
-                if message.cost_usd is not None:
-                    self._lb_total_cost += message.cost_usd
+                self._lb_total_cost += cost
 
                 stats_panel = self.query_one("#lb-stats-panel", StatsPanel)
                 stats_panel.add_tokens(
                     message.input_tokens,
-                    message.output_tokens,
-                    message.cost_usd or 0.0
+                    message.output_tokens + thinking_tokens,
+                    cost,
+                    agent=agent
+                )
+                # Update session totals display
+                stats_panel.update_session_stats(
+                    self._session_tokens,
+                    self._session_cost,
+                    self._session_api_calls,
+                    planner_tokens=self._session_planner_tokens,
+                    executor_tokens=self._session_executor_tokens,
+                    explore_tokens=self._session_explore_tokens,
+                    planner_cost=self._session_planner_cost,
+                    executor_cost=self._session_executor_cost,
+                    explore_cost=self._session_explore_cost,
                 )
 
             elif self.verbose:
                 status_panel = self.query_one("#status-panel", StatusPanel)
-                status_panel.add_tokens(total_tokens)
+                status_panel.add_tokens(total_tokens + thinking_tokens)
 
                 # Update cost if provided
-                if message.cost_usd is not None:
-                    status_panel.add_cost(message.cost_usd)
+                if cost > 0:
+                    status_panel.add_cost(cost)
             else:
                 # Compact mode: update sidebar stats
-                # We need to accumulate tokens/cost - store in instance vars
                 if not hasattr(self, '_total_tokens'):
                     self._total_tokens = 0
                     self._total_cost = 0.0
                     self._total_api_calls = 0
 
-                self._total_tokens += total_tokens
+                self._total_tokens += total_tokens + thinking_tokens
                 self._total_api_calls += 1
-                if message.cost_usd is not None:
-                    self._total_cost += message.cost_usd
+                self._total_cost += cost
 
                 sidebar = self.query_one("#sidebar", CompactSidebar)
                 sidebar.update_stats(
-                    self._total_tokens,
-                    self._total_cost,
+                    self._session_tokens,  # Show session totals in compact mode too
+                    self._session_cost,
                     "—",  # elapsed handled separately
-                    self._total_api_calls
+                    self._session_api_calls
                 )
         except Exception:
             pass

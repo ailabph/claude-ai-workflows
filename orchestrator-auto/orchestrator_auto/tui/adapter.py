@@ -150,6 +150,7 @@ class TUIOutputAdapter:
         output_tokens: int,
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
+        thinking_tokens: int = 0,
         model: Optional[str] = None,
         cost_usd: Optional[float] = None
     ) -> None:
@@ -157,11 +158,12 @@ class TUIOutputAdapter:
         Notify TUI of token usage from an API call.
 
         Args:
-            agent: Agent name ("planner" or "executor")
+            agent: Agent name ("planner", "executor", "explore", "commit")
             input_tokens: Number of input tokens used
             output_tokens: Number of output tokens generated
             cache_creation_input_tokens: Tokens used for cache creation
             cache_read_input_tokens: Tokens read from cache
+            thinking_tokens: Extended thinking tokens
             model: Model used
             cost_usd: Cost of the API call in USD
         """
@@ -173,6 +175,7 @@ class TUIOutputAdapter:
                 output_tokens=output_tokens,
                 cache_creation_input_tokens=cache_creation_input_tokens,
                 cache_read_input_tokens=cache_read_input_tokens,
+                thinking_tokens=thinking_tokens,
                 model=model,
                 cost_usd=cost_usd
             )

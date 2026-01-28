@@ -296,16 +296,18 @@ class TokensUsed(Message):
         output_tokens: int,
         cache_creation_input_tokens: int = 0,
         cache_read_input_tokens: int = 0,
+        thinking_tokens: int = 0,
         model: Optional[str] = None,
         cost_usd: Optional[float] = None
     ) -> None:
         """
         Args:
-            agent: Agent name ("planner" or "executor")
+            agent: Agent name ("planner", "executor", "explore", "commit")
             input_tokens: Number of input tokens used
             output_tokens: Number of output tokens generated
             cache_creation_input_tokens: Tokens used for cache creation
             cache_read_input_tokens: Tokens read from cache
+            thinking_tokens: Extended thinking tokens (Claude with extended_thinking)
             model: Model used (e.g., "claude-opus-4-5-20251101")
             cost_usd: Cost of the API call in USD
         """
@@ -314,6 +316,7 @@ class TokensUsed(Message):
         self.output_tokens = output_tokens
         self.cache_creation_input_tokens = cache_creation_input_tokens
         self.cache_read_input_tokens = cache_read_input_tokens
+        self.thinking_tokens = thinking_tokens
         self.model = model
         self.cost_usd = cost_usd
         super().__init__()
