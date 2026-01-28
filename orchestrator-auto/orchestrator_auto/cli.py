@@ -3589,8 +3589,8 @@ def _rename_to_terminal(
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--tui/--no-tui', default=False, help='Launch Textual TUI dashboard')
 @click.option('--verbose', '-v', is_flag=True, default=False, help='TUI: use expanded layout with dual agent panels (default: compact)')
-@click.option('--explore/--no-explore', default=False, help='Run exploration sub-agent before each milestone')
-@click.option('--validate/--no-validate', default=False, help='Run validation pipeline after each milestone')
+@click.option('--explore/--no-explore', default=True, help='Run exploration sub-agent before each milestone (default: enabled)')
+@click.option('--validate/--no-validate', default=True, help='Run validation pipeline after each milestone (default: enabled)')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -3627,7 +3627,7 @@ def watch(
         orchestrator watch ./plans/ --auto-commit
         orchestrator watch ./plans/ --tui
         orchestrator watch ./plans/ --tui --verbose
-        orchestrator watch ./plans/ --explore --validate
+        orchestrator watch ./plans/ --no-explore --no-validate  # disable sub-agents
     """
     # Handle TUI mode
     if tui:
