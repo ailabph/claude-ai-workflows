@@ -526,7 +526,9 @@ class WatchTUI(App):
 
     def _start_watch(self) -> None:
         """Start the watch controller in a worker thread."""
-        if self.verbose:
+        # Start timer for original verbose layout (not Layout B)
+        # Layout B timer is already handled via set_interval in on_mount
+        if self.verbose and not self._use_layout_b:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.start_timer()
         # Compact mode: timer is handled via _update_elapsed_time calls
