@@ -424,6 +424,7 @@ VALIDATE_STATUS_RUNNING = "running"
 VALIDATE_STATUS_PASSED = "passed"
 VALIDATE_STATUS_ISSUES = "issues"
 VALIDATE_STATUS_FAILED = "failed"
+VALIDATE_STATUS_COMPLETED = "completed"  # For overall validation phase status
 
 
 class ExploreStarted(Message):
@@ -480,8 +481,8 @@ class ExploreCompleted(Message):
         self.milestone = milestone
         self.query_count = query_count
         self.success_count = success_count
-        # Computed field for convenience
-        self.failed_count = query_count - success_count
+        # Computed field for convenience (clamped to prevent negative values)
+        self.failed_count = max(0, query_count - success_count)
         super().__init__()
 
 

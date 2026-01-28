@@ -15,6 +15,13 @@ from textual.worker import Worker
 from typing import Optional, Dict, Any, TYPE_CHECKING
 
 from . import messages
+from .messages import (
+    EXPLORE_STATUS_PENDING,
+    EXPLORE_STATUS_RUNNING,
+    EXPLORE_STATUS_COMPLETED,
+    VALIDATE_STATUS_RUNNING,
+    VALIDATE_STATUS_COMPLETED,
+)
 from .adapter import TUIOutputAdapter, TUIInputProvider
 from .bindings import GLOBAL_BINDINGS, WATCH_BINDINGS
 from .widgets import (
@@ -1519,7 +1526,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_explore_status("running")
+            subagent_panel.set_explore_status(EXPLORE_STATUS_RUNNING)
             # Clear any previous queries - they'll be added via EXPLORE_QUERY events
             subagent_panel.clear_explore_queries()
 
@@ -1535,15 +1542,17 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            # Add query if pending (first time seeing it), otherwise update
-            if message.status == "pending":
+            # Add query if pending (first time seeing it), otherwise update/upsert
+            if message.status == EXPLORE_STATUS_PENDING:
                 subagent_panel.add_explore_query(message.query, message.status)
             else:
+                # Pass query for upsert in case index doesn't exist yet
                 subagent_panel.update_explore_query(
                     message.index,
                     message.status,
                     message.tokens_used,
                     message.is_partial,
+                    query=message.query,
                 )
         except Exception as e:
             self._log_debug(f"on_explore_query_update error: {e}")
@@ -1555,7 +1564,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_explore_status("completed")
+            subagent_panel.set_explore_status(EXPLORE_STATUS_COMPLETED)
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_success(
@@ -1571,7 +1580,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_validate_status("running")
+            subagent_panel.set_validate_status(VALIDATE_STATUS_RUNNING)
             # Clear any previous validators - they'll be added via VALIDATOR_STARTED events
             subagent_panel.set_validators([])
 
@@ -1605,11 +1614,10 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_validate_status("completed")
+            subagent_panel.set_validate_status(VALIDATE_STATUS_COMPLETED)
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             if message.total_issues > 0:
-                severity = "high" if message.high_count > 0 else "medium"
                 log_panel.log_warning(
                     f"Validation: {message.total_issues} issues ({message.high_count} high)"
                 )

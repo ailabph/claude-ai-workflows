@@ -28,7 +28,7 @@ class ValidatorStatus:
     medium_count: int = 0
 
 
-class SubAgentPanel(Static):
+class SubAgentPanel(Static, can_focus=True):
     """
     Panel showing exploration and validation sub-agent status.
 
@@ -160,21 +160,30 @@ class SubAgentPanel(Static):
         self._explore_queries = queries
         self._refresh_display()
 
-    def update_explore_query(self, index: int, status: str, tokens: int = 0, partial: bool = False) -> None:
+    def update_explore_query(self, index: int, status: str, tokens: int = 0, partial: bool = False, query: str = "") -> None:
         """
-        Update status of a specific exploration query.
+        Update status of a specific exploration query (upsert semantics).
+
+        If the index doesn't exist, placeholder queries are added up to that index.
+        This handles out-of-order event delivery gracefully.
 
         Args:
             index: Query index (0-based)
             status: New status
             tokens: Tokens used (optional)
             partial: Whether result is partial (optional)
+            query: Query text (used when upserting)
         """
-        if 0 <= index < len(self._explore_queries):
-            self._explore_queries[index].status = status
-            self._explore_queries[index].tokens_used = tokens
-            self._explore_queries[index].is_partial = partial
-            self._refresh_display()
+        # Upsert: extend list with placeholders if index doesn't exist
+        while index >= len(self._explore_queries):
+            self._explore_queries.append(ExplorationQuery(query=f"Query {len(self._explore_queries) + 1}"))
+
+        self._explore_queries[index].status = status
+        self._explore_queries[index].tokens_used = tokens
+        self._explore_queries[index].is_partial = partial
+        if query:
+            self._explore_queries[index].query = query
+        self._refresh_display()
 
     def add_explore_query(self, query: str, status: str = "pending") -> None:
         """

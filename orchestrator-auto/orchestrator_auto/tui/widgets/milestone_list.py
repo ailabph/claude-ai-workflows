@@ -96,7 +96,7 @@ class MilestoneItem(ListItem):
             self._sub_info_label.update(self._format_sub_info())
 
 
-class MilestoneList(Static):
+class MilestoneList(Static, can_focus=True):
     """
     Panel showing milestone progress with checkmarks.
 
