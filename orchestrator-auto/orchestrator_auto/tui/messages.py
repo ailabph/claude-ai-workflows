@@ -410,3 +410,123 @@ class TodoCompleted(Message):
         self.duration = duration
         self.stopped = stopped
         super().__init__()
+
+
+# Sub-agent messages for Layout B
+
+class ExploreStarted(Message):
+    """Exploration sub-agent has started."""
+
+    def __init__(self, queries: list[str]) -> None:
+        """
+        Args:
+            queries: List of exploration query strings
+        """
+        self.queries = queries
+        super().__init__()
+
+
+class ExploreQueryUpdate(Message):
+    """An exploration query status was updated."""
+
+    def __init__(
+        self,
+        index: int,
+        query: str,
+        status: str,
+        tokens_used: int = 0,
+        is_partial: bool = False,
+    ) -> None:
+        """
+        Args:
+            index: Query index (0-based)
+            query: Query text
+            status: Query status ("pending", "running", "completed", "failed")
+            tokens_used: Tokens used for this query
+            is_partial: Whether result was truncated/timed out
+        """
+        self.index = index
+        self.query = query
+        self.status = status
+        self.tokens_used = tokens_used
+        self.is_partial = is_partial
+        super().__init__()
+
+
+class ExploreCompleted(Message):
+    """Exploration sub-agent has completed."""
+
+    def __init__(self, total_queries: int, successful: int, failed: int) -> None:
+        """
+        Args:
+            total_queries: Total number of queries
+            successful: Number of successful queries
+            failed: Number of failed queries
+        """
+        self.total_queries = total_queries
+        self.successful = successful
+        self.failed = failed
+        super().__init__()
+
+
+class ValidateStarted(Message):
+    """Validation pipeline has started."""
+
+    def __init__(self, validators: list[str]) -> None:
+        """
+        Args:
+            validators: List of validator names
+        """
+        self.validators = validators
+        super().__init__()
+
+
+class ValidatorUpdate(Message):
+    """A validator status was updated."""
+
+    def __init__(
+        self,
+        name: str,
+        status: str,
+        issue_count: int = 0,
+        high_count: int = 0,
+        medium_count: int = 0,
+    ) -> None:
+        """
+        Args:
+            name: Validator name
+            status: Status ("pending", "running", "passed", "issues", "failed")
+            issue_count: Total issues found
+            high_count: High severity issues
+            medium_count: Medium severity issues
+        """
+        self.name = name
+        self.status = status
+        self.issue_count = issue_count
+        self.high_count = high_count
+        self.medium_count = medium_count
+        super().__init__()
+
+
+class ValidateCompleted(Message):
+    """Validation pipeline has completed."""
+
+    def __init__(
+        self,
+        total_validators: int,
+        passed: int,
+        with_issues: int,
+        failed: int,
+    ) -> None:
+        """
+        Args:
+            total_validators: Total number of validators
+            passed: Number of validators that passed
+            with_issues: Number of validators that found issues
+            failed: Number of validators that failed/errored
+        """
+        self.total_validators = total_validators
+        self.passed = passed
+        self.with_issues = with_issues
+        self.failed = failed
+        super().__init__()

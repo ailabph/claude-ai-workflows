@@ -67,6 +67,7 @@ class StatsPanel(Static):
         self._cost: float = 0.0
         self._api_calls: int = 0
         self._elapsed: str = "00:00"
+        self._elapsed_seconds: int = 0
 
     def compose(self) -> ComposeResult:
         with Vertical():
@@ -131,6 +132,19 @@ class StatsPanel(Static):
         Args:
             seconds: Elapsed seconds
         """
+        self._elapsed_seconds = seconds
+        self._format_elapsed_from_seconds()
+        self._refresh_display()
+
+    def tick_elapsed(self) -> None:
+        """Increment elapsed time by 1 second."""
+        self._elapsed_seconds += 1
+        self._format_elapsed_from_seconds()
+        self._refresh_display()
+
+    def _format_elapsed_from_seconds(self) -> None:
+        """Format elapsed string from internal seconds counter."""
+        seconds = self._elapsed_seconds
         if seconds >= 3600:
             hours = seconds // 3600
             minutes = (seconds % 3600) // 60
@@ -140,7 +154,6 @@ class StatsPanel(Static):
             minutes = seconds // 60
             secs = seconds % 60
             self._elapsed = f"{minutes:02d}:{secs:02d}"
-        self._refresh_display()
 
     def reset(self) -> None:
         """Reset all statistics."""
@@ -148,6 +161,7 @@ class StatsPanel(Static):
         self._cost = 0.0
         self._api_calls = 0
         self._elapsed = "00:00"
+        self._elapsed_seconds = 0
         self._refresh_display()
 
     def _refresh_display(self) -> None:

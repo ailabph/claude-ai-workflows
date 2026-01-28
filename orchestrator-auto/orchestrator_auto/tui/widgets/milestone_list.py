@@ -15,6 +15,9 @@ class Milestone:
     id: int
     title: str
     status: str  # "pending", "active", "completed", "failed"
+    task_count: Optional[int] = None       # Total tasks in milestone
+    tasks_completed: Optional[int] = None  # Completed tasks
+    files_changed: Optional[int] = None    # Files modified
 
 
 class MilestoneItem(ListItem):
@@ -35,12 +38,28 @@ class MilestoneItem(ListItem):
         self.add_class(f"milestone-{milestone.status}")
 
     def compose(self) -> ComposeResult:
-        """Compose with Horizontal container for proper ListItem rendering."""
+        """Compose with Vertical container for milestone + sub-info."""
         marker = self.MARKERS.get(self.milestone.status, "[ ]")
-        # Wrap in Horizontal to ensure ListItem renders correctly
-        with Horizontal(classes="milestone-row"):
-            yield Label(marker, classes="milestone-marker")
-            yield Label(f" M{self.milestone.id}: {self.milestone.title}", classes="milestone-title")
+        with Vertical(classes="milestone-container"):
+            # Main milestone row
+            with Horizontal(classes="milestone-row"):
+                yield Label(marker, classes="milestone-marker")
+                yield Label(f" M{self.milestone.id}: {self.milestone.title}", classes="milestone-title")
+            # Sub-info row (task progress or files changed)
+            yield Label(self._format_sub_info(), classes="milestone-sub-info", id=f"sub-info-{self.milestone.id}")
+
+    def _format_sub_info(self) -> str:
+        """Format the sub-info line (task progress or files changed)."""
+        m = self.milestone
+        if m.status == "completed" and m.files_changed is not None and m.files_changed > 0:
+            return f"  └ {m.files_changed} files"
+        elif m.status == "active" and m.task_count is not None and m.task_count > 0:
+            completed = m.tasks_completed or 0
+            return f"  └ {completed}/{m.task_count} tasks"
+        elif m.task_count is not None and m.task_count > 0:
+            completed = m.tasks_completed or 0
+            return f"  └ {completed}/{m.task_count} tasks"
+        return ""  # Empty if no info available
 
     def update_status(self, status: str) -> None:
         """Update the milestone status."""
@@ -54,6 +73,27 @@ class MilestoneItem(ListItem):
         marker = self.MARKERS.get(status, "[ ]")
         if self.is_mounted:
             self.query_one(".milestone-marker", Label).update(marker)
+            self._refresh_sub_info()
+
+    def update_tasks(self, tasks_completed: int, task_count: int) -> None:
+        """Update task progress for this milestone."""
+        self.milestone.tasks_completed = tasks_completed
+        self.milestone.task_count = task_count
+        self._refresh_sub_info()
+
+    def update_files(self, files_changed: int) -> None:
+        """Update files changed count for this milestone."""
+        self.milestone.files_changed = files_changed
+        self._refresh_sub_info()
+
+    def _refresh_sub_info(self) -> None:
+        """Refresh the sub-info display."""
+        if self.is_mounted:
+            try:
+                sub_info = self.query_one(f"#sub-info-{self.milestone.id}", Label)
+                sub_info.update(self._format_sub_info())
+            except Exception:
+                pass
 
 
 class MilestoneList(Static):
@@ -98,6 +138,17 @@ class MilestoneList(Static):
         color: $text-muted;
         margin-top: 1;
     }
+
+    MilestoneList .milestone-container {
+        height: auto;
+    }
+
+    MilestoneList .milestone-sub-info {
+        height: 1;
+        color: $text-muted;
+        text-style: italic;
+        padding-left: 2;
+    }
     """
 
     def __init__(self, **kwargs) -> None:
@@ -118,13 +169,17 @@ class MilestoneList(Static):
         Set the list of milestones.
 
         Args:
-            milestones: List of dicts with 'id', 'title', and optionally 'status'
+            milestones: List of dicts with 'id', 'title', and optionally 'status',
+                       'task_count', 'tasks_completed', 'files_changed'
         """
         self._milestones = [
             Milestone(
                 id=m.get("id", i + 1),
                 title=m.get("title", f"Milestone {i + 1}"),
-                status=m.get("status", "pending")
+                status=m.get("status", "pending"),
+                task_count=m.get("task_count"),
+                tasks_completed=m.get("tasks_completed"),
+                files_changed=m.get("files_changed"),
             )
             for i, m in enumerate(milestones)
         ]
@@ -218,6 +273,49 @@ class MilestoneList(Static):
             self.query_one("#progress-label", Label).update(text)
         except Exception:
             pass
+
+    def update_milestone_tasks(
+        self,
+        milestone_num: int,
+        tasks_completed: int,
+        tasks_total: int,
+    ) -> None:
+        """
+        Update task progress for a milestone.
+
+        Args:
+            milestone_num: Milestone number (1-indexed)
+            tasks_completed: Number of completed tasks
+            tasks_total: Total number of tasks
+        """
+        for milestone in self._milestones:
+            if milestone.id == milestone_num:
+                milestone.tasks_completed = tasks_completed
+                milestone.task_count = tasks_total
+                break
+
+        if milestone_num in self._milestone_items:
+            self._milestone_items[milestone_num].update_tasks(tasks_completed, tasks_total)
+
+    def update_milestone_files(
+        self,
+        milestone_num: int,
+        files_count: int,
+    ) -> None:
+        """
+        Update files changed count for a milestone.
+
+        Args:
+            milestone_num: Milestone number (1-indexed)
+            files_count: Number of files changed
+        """
+        for milestone in self._milestones:
+            if milestone.id == milestone_num:
+                milestone.files_changed = files_count
+                break
+
+        if milestone_num in self._milestone_items:
+            self._milestone_items[milestone_num].update_files(files_count)
 
     @property
     def milestones(self) -> List[Milestone]:

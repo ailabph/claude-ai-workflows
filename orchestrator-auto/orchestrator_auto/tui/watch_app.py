@@ -29,6 +29,13 @@ from .widgets import (
     CompactSidebar,
     AgentTogglePanel,
     StatusBar,
+    # Layout B widgets
+    HeaderBar,
+    MilestoneProgressBar,
+    StatsPanel,
+    SubAgentPanel,
+    ExplorationQuery,
+    ValidatorStatus,
 )
 from .screens import HelpScreen, GitDiffScreen, BlockerModal
 from ..config import get_project_identity
@@ -154,8 +161,76 @@ class WatchTUI(App):
     }
     """
 
-    # Combined CSS - both verbose and compact rules (non-conflicting IDs)
-    CSS = CSS_VERBOSE + CSS_COMPACT
+    # Layout B CSS (Sub-Agent Aware verbose layout)
+    CSS_LAYOUT_B = """
+    /* Header and progress bar - full width */
+    #header-bar {
+        dock: top;
+        height: 1;
+    }
+
+    #progress-bar {
+        dock: top;
+        height: 3;
+    }
+
+    /* Main 3-column content area */
+    #layout-b-content {
+        height: 1fr;
+        width: 100%;
+    }
+
+    /* Left column: Milestones */
+    #lb-left-col {
+        width: 1fr;
+        min-width: 18;
+        max-width: 25;
+        height: 100%;
+    }
+
+    #lb-milestone-list {
+        height: 1fr;
+    }
+
+    /* Middle column: Sub-agents + Stats */
+    #lb-middle-col {
+        width: 1fr;
+        min-width: 18;
+        max-width: 25;
+        height: 100%;
+    }
+
+    #lb-subagent-panel {
+        height: 1fr;
+    }
+
+    #lb-stats-panel {
+        height: auto;
+        max-height: 5;
+    }
+
+    /* Right column: Executor output */
+    #lb-right-col {
+        width: 3fr;
+        min-width: 40;
+        height: 100%;
+    }
+
+    #lb-executor-output {
+        height: 1fr;
+    }
+
+    /* Bottom: Log panel */
+    #lb-log-panel {
+        dock: bottom;
+        height: 8;
+        min-height: 4;
+        max-height: 12;
+    }
+    """
+
+    # Combined CSS - all layout rules (non-conflicting IDs)
+    CSS = CSS_VERBOSE + CSS_COMPACT + CSS_LAYOUT_B
 
     BINDINGS = GLOBAL_BINDINGS + WATCH_BINDINGS
 
@@ -244,10 +319,19 @@ class WatchTUI(App):
         # Phase 2: Focus tracking for panel navigation
         # Focusable panels depend on layout mode
         if self.verbose:
-            self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
+            if self._use_layout_b:
+                self._focusable_panels = ["#lb-executor-output", "#lb-log-panel"]
+            else:
+                self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
         else:
             self._focusable_panels = ["#agent-panel"]
         self._focused_panel_index: int = -1  # -1 means no panel focused
+
+    @property
+    def _use_layout_b(self) -> bool:
+        """Determine if Layout B (sub-agent aware) should be used."""
+        # Layout B is used when verbose AND at least one sub-agent is enabled
+        return self.verbose and (self.explore or self.validate)
 
     def _get_repo_name(self) -> str:
         """Get repository name from git or directory name."""
@@ -298,8 +382,37 @@ class WatchTUI(App):
         """Compose the TUI layout with containers."""
         yield Header()
 
-        if self.verbose:
-            # Verbose layout: 3 columns with dual agent panels
+        if self._use_layout_b:
+            # Layout B: Sub-agent aware verbose layout
+            yield HeaderBar(
+                watch_dir=str(self.plans_dir),
+                poll_interval=self.poll_interval,
+                id="header-bar",
+            )
+            yield MilestoneProgressBar(id="progress-bar")
+
+            with Horizontal(id="layout-b-content"):
+                # Left column: Milestones
+                with Vertical(id="lb-left-col"):
+                    yield MilestoneList(id="lb-milestone-list")
+
+                # Middle column: Sub-agents + Stats
+                with Vertical(id="lb-middle-col"):
+                    yield SubAgentPanel(id="lb-subagent-panel")
+                    yield StatsPanel(id="lb-stats-panel")
+
+                # Right column: Executor output
+                with Vertical(id="lb-right-col"):
+                    yield AgentOutput(
+                        id="lb-executor-output",
+                        agent_filter="executor",
+                        header_title="EXECUTOR OUTPUT"
+                    )
+
+            yield LogPanel(id="lb-log-panel", show_filter_hints=True)
+
+        elif self.verbose:
+            # Verbose layout: 3 columns with dual agent panels (legacy)
             with Horizontal(id="main-row"):
                 with Vertical(id="left-col"):
                     yield WatchPanel(id="watch-panel")
@@ -334,7 +447,29 @@ class WatchTUI(App):
         # Set repo/branch in subtitle
         self._update_subtitle()
 
-        if self.verbose:
+        if self._use_layout_b:
+            # Layout B: Sub-agent aware verbose layout
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_info("Watch Mode TUI Started (Layout B)")
+            log_panel.log_info(f"Watching: {self.plans_dir}")
+            if self.explore:
+                log_panel.log_info("Exploration sub-agent enabled")
+            if self.validate:
+                log_panel.log_info("Validation pipeline enabled")
+
+            # Initialize header bar with git status
+            header_bar = self.query_one("#header-bar", HeaderBar)
+            header_bar.update_git(self._get_branch_name(), 0)
+
+            # Initialize sub-agent panel with enabled states
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.set_enabled(self.explore, self.validate)
+
+            # Initialize stats panel
+            stats_panel = self.query_one("#lb-stats-panel", StatsPanel)
+            stats_panel.update_stats(0, 0.0, 0, "00:00")
+
+        elif self.verbose:
             # Verbose mode: use LogPanel for logging
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_info("Watch Mode TUI Started (verbose)")
@@ -356,12 +491,17 @@ class WatchTUI(App):
             sidebar = self.query_one("#sidebar", CompactSidebar)
             sidebar.update_current_file("—", 0, 0, "STARTING")
 
-        # Start elapsed timer (only for verbose mode with StatusPanel)
-        if self.verbose:
+        # Start elapsed timer
+        if self._use_layout_b:
+            self._timer = self.set_interval(1.0, self._update_elapsed_layout_b)
+        elif self.verbose:
             self._timer = self.set_interval(1.0, self._update_elapsed)
 
-        # Start git status refresh timer (every 5 seconds) - only for verbose mode
-        if self.verbose:
+        # Start git status refresh timer (every 5 seconds)
+        if self._use_layout_b:
+            self.set_interval(5.0, self._refresh_git_status_layout_b)
+            self._refresh_git_status_layout_b()
+        elif self.verbose:
             self.set_interval(5.0, self._refresh_git_status)
             self._refresh_git_status()
 
@@ -654,10 +794,126 @@ class WatchTUI(App):
                 )
             )
 
+        # Sub-agent events (Layout B)
+        elif event == WatchEvent.EXPLORE_STARTED:
+            self.call_from_thread(
+                self.post_message,
+                messages.ExploreStarted(
+                    queries=data.get("queries", []),
+                )
+            )
+
+        elif event == WatchEvent.EXPLORE_QUERY:
+            self.call_from_thread(
+                self.post_message,
+                messages.ExploreQueryUpdate(
+                    index=data.get("index", 0),
+                    query=data.get("query", ""),
+                    status=data.get("status", "pending"),
+                    tokens_used=data.get("tokens_used", 0),
+                    is_partial=data.get("is_partial", False),
+                )
+            )
+
+        elif event == WatchEvent.EXPLORE_QUERY_DONE:
+            self.call_from_thread(
+                self.post_message,
+                messages.ExploreQueryUpdate(
+                    index=data.get("index", 0),
+                    query=data.get("query", ""),
+                    status=data.get("status", "completed"),
+                    tokens_used=data.get("tokens_used", 0),
+                    is_partial=data.get("is_partial", False),
+                )
+            )
+
+        elif event == WatchEvent.EXPLORE_COMPLETED:
+            self.call_from_thread(
+                self.post_message,
+                messages.ExploreCompleted(
+                    total_queries=data.get("total_queries", 0),
+                    successful=data.get("successful", 0),
+                    failed=data.get("failed", 0),
+                )
+            )
+
+        elif event == WatchEvent.VALIDATE_STARTED:
+            self.call_from_thread(
+                self.post_message,
+                messages.ValidateStarted(
+                    validators=data.get("validators", []),
+                )
+            )
+
+        elif event == WatchEvent.VALIDATOR_STARTED:
+            self.call_from_thread(
+                self.post_message,
+                messages.ValidatorUpdate(
+                    name=data.get("name", ""),
+                    status="running",
+                )
+            )
+
+        elif event == WatchEvent.VALIDATOR_DONE:
+            self.call_from_thread(
+                self.post_message,
+                messages.ValidatorUpdate(
+                    name=data.get("name", ""),
+                    status=data.get("status", "passed"),
+                    issue_count=data.get("issue_count", 0),
+                    high_count=data.get("high_count", 0),
+                    medium_count=data.get("medium_count", 0),
+                )
+            )
+
+        elif event == WatchEvent.VALIDATE_COMPLETED:
+            self.call_from_thread(
+                self.post_message,
+                messages.ValidateCompleted(
+                    total_validators=data.get("total_validators", 0),
+                    passed=data.get("passed", 0),
+                    with_issues=data.get("with_issues", 0),
+                    failed=data.get("failed", 0),
+                )
+            )
+
     def _reset_for_new_file(self, filename: str) -> None:
         """Reset UI elements for processing a new file."""
         try:
-            if self.verbose:
+            if self._use_layout_b:
+                # Layout B: Reset progress bar, milestone list, sub-agent panel, stats
+                progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+                progress_bar.update_progress(
+                    current_file=filename,
+                    current_milestone=0,
+                    total_milestones=0,
+                    milestone_names=[],
+                    milestone_statuses=[],
+                )
+
+                milestone_list = self.query_one("#lb-milestone-list", MilestoneList)
+                milestone_list.set_milestones([])
+
+                subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+                subagent_panel.reset()
+                subagent_panel.set_enabled(self.explore, self.validate)
+
+                stats_panel = self.query_one("#lb-stats-panel", StatsPanel)
+                stats_panel.reset()
+
+                # Reset Layout B token/cost tracking
+                self._lb_total_tokens = 0
+                self._lb_total_cost = 0.0
+                self._lb_total_api_calls = 0
+
+                executor_output = self.query_one("#lb-executor-output", AgentOutput)
+                executor_output.clear_output()
+                executor_output.write_message(f"Processing: {filename[:50]}...", "bold")
+
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+                log_panel.log_info(f"Processing: {filename}")
+
+            elif self.verbose:
                 # Verbose mode: reset StatusPanel, MilestoneList, AgentOutput panels
                 status_panel = self.query_one("#status-panel", StatusPanel)
                 status_panel.update_phase("STARTING", "ACTIVE")
@@ -739,11 +995,45 @@ class WatchTUI(App):
         except Exception:
             pass
 
+    def _update_elapsed_layout_b(self) -> None:
+        """Update elapsed time for Layout B."""
+        try:
+            # Update header bar clock
+            header_bar = self.query_one("#header-bar", HeaderBar)
+            header_bar.update_time()
+
+            # Update stats panel elapsed time
+            stats_panel = self.query_one("#lb-stats-panel", StatsPanel)
+            stats_panel.tick_elapsed()
+        except Exception:
+            pass
+
+    def _refresh_git_status_layout_b(self) -> None:
+        """Refresh git status for Layout B header bar."""
+        try:
+            header_bar = self.query_one("#header-bar", HeaderBar)
+            branch = self._get_branch_name()
+            # Count uncommitted changes
+            result = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(self.plans_dir),
+                capture_output=True,
+                text=True,
+                timeout=2.0
+            )
+            changes = len(result.stdout.strip().split('\n')) if result.stdout.strip() else 0
+            header_bar.update_git(branch, changes)
+        except Exception:
+            pass
+
     # Message handlers
 
     def on_watch_started(self, message: messages.WatchStarted) -> None:
         """Handle watch started."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_success(f"Watching {message.directory}")
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_config(
                 message.directory,
@@ -760,7 +1050,13 @@ class WatchTUI(App):
 
     def on_watch_stopped(self, message: messages.WatchStopped) -> None:
         """Handle watch stopped."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_success(
+                f"Watch stopped: {message.completed} completed, "
+                f"{message.failed} failed, {message.paused} paused"
+            )
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_stopped()
             watch_panel.update_counts(message.completed, message.failed, message.paused)
@@ -788,7 +1084,11 @@ class WatchTUI(App):
         """Handle watch paused on blocker."""
         self._paused_session_id = message.session_id  # Track for in-TUI response
 
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_warning(f"Paused on blocker: {message.plan_path}")
+            log_panel.log_info("Press 'r' to respond to blocker")
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_paused(message.session_id, message.plan_path)
 
@@ -804,7 +1104,25 @@ class WatchTUI(App):
 
     def on_watch_file_updated(self, message: messages.WatchFileUpdated) -> None:
         """Handle file status update."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            if message.status == "processing":
+                log_panel.log_info(f"Found: {message.filename}")
+                # Update progress bar with current file
+                progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+                progress_bar.update_progress(current_file=message.filename)
+            elif message.status == "completed":
+                log_panel.log_success(f"Completed: {message.filename}")
+            elif message.status == "failed":
+                error_msg = f": {message.error}" if message.error else ""
+                log_panel.log_error(f"Failed: {message.filename}{error_msg}")
+            elif message.status == "paused":
+                log_panel.log_warning(f"Paused: {message.filename}")
+            elif message.status == "skipped":
+                log_panel.log_warning(f"Skipped: {message.filename}")
+            elif message.status == "converted":
+                log_panel.log_info(f"Converted: {message.filename}")
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.update_file(
                 message.filename,
@@ -866,6 +1184,7 @@ class WatchTUI(App):
 
         # Build milestones list from names
         milestones = []
+        milestone_statuses = []
         if message.milestone_names:
             for i, name in enumerate(message.milestone_names):
                 milestone_num = i + 1
@@ -876,8 +1195,27 @@ class WatchTUI(App):
                 else:
                     status = "pending"
                 milestones.append({"id": milestone_num, "title": name, "status": status})
+                milestone_statuses.append(status)
 
-        if self.verbose:
+        if self._use_layout_b:
+            # Layout B: Update progress bar, milestone list, log
+            progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+            progress_bar.update_progress(
+                current_file=self._current_processing_file or message.feature or "—",
+                current_milestone=message.current_milestone,
+                total_milestones=message.milestone_count,
+                milestone_names=message.milestone_names or [],
+                milestone_statuses=milestone_statuses,
+            )
+
+            if milestones:
+                milestone_list = self.query_one("#lb-milestone-list", MilestoneList)
+                milestone_list.set_milestones(milestones)
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_info(f"Session: {message.session_id[:8]}...")
+
+        elif self.verbose:
             status_panel = self.query_one("#status-panel", StatusPanel)
             status_panel.update_session(message.session_id)
             status_panel.update_feature(message.feature or "")
@@ -915,7 +1253,11 @@ class WatchTUI(App):
     def on_chunk_received(self, message: messages.ChunkReceived) -> None:
         """Handle chunk received from agent."""
         try:
-            if self.verbose:
+            if self._use_layout_b:
+                # Layout B: write to executor output panel only
+                executor_output = self.query_one("#lb-executor-output", AgentOutput)
+                executor_output.write_chunk(message.chunk, message.agent)
+            elif self.verbose:
                 # Verbose mode: write to both output panels - they filter based on agent
                 planner_output = self.query_one("#planner-output", AgentOutput)
                 planner_output.write_chunk(message.chunk, message.agent)
@@ -937,7 +1279,26 @@ class WatchTUI(App):
         try:
             total_tokens = message.input_tokens + message.output_tokens
 
-            if self.verbose:
+            if self._use_layout_b:
+                # Layout B: update stats panel
+                if not hasattr(self, '_lb_total_tokens'):
+                    self._lb_total_tokens = 0
+                    self._lb_total_cost = 0.0
+                    self._lb_total_api_calls = 0
+
+                self._lb_total_tokens += total_tokens
+                self._lb_total_api_calls += 1
+                if message.cost_usd is not None:
+                    self._lb_total_cost += message.cost_usd
+
+                stats_panel = self.query_one("#lb-stats-panel", StatsPanel)
+                stats_panel.add_tokens(
+                    message.input_tokens,
+                    message.output_tokens,
+                    message.cost_usd or 0.0
+                )
+
+            elif self.verbose:
                 status_panel = self.query_one("#status-panel", StatusPanel)
                 status_panel.add_tokens(total_tokens)
 
@@ -976,7 +1337,33 @@ class WatchTUI(App):
         current_milestone = getattr(state, 'current_milestone', 0)
         total_milestones = getattr(state, 'total_milestones', 0)
 
-        if self.verbose:
+        if self._use_layout_b:
+            # Layout B: Update progress bar, milestone list, log
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            milestone_list = self.query_one("#lb-milestone-list", MilestoneList)
+            progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+
+            if message.previous_phase and message.previous_phase != phase:
+                log_panel.log_phase_change(phase.upper())
+
+            if total_milestones > 0 and current_milestone > 0:
+                # Update milestone list highlighting
+                milestone_list.set_current_milestone(current_milestone)
+
+                # Update progress bar - rebuild statuses based on current milestone
+                milestone_names = [m.title for m in milestone_list.milestones]
+                milestone_statuses = []
+                for m in milestone_list.milestones:
+                    milestone_statuses.append(m.status)
+
+                progress_bar.update_progress(
+                    current_milestone=current_milestone,
+                    total_milestones=total_milestones,
+                    milestone_names=milestone_names,
+                    milestone_statuses=milestone_statuses,
+                )
+
+        elif self.verbose:
             # Verbose mode: use StatusPanel, LogPanel, MilestoneList
             status_panel = self.query_one("#status-panel", StatusPanel)
             log_panel = self.query_one("#log-panel", LogPanel)
@@ -1025,7 +1412,10 @@ class WatchTUI(App):
 
     def on_output_received(self, message: messages.OutputReceived) -> None:
         """Handle general output message."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log(message.message, message.level)
+        elif self.verbose:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log(message.message, message.level)
         else:
@@ -1034,7 +1424,10 @@ class WatchTUI(App):
 
     def on_input_requested(self, message: messages.InputRequested) -> None:
         """Handle input request - show input modal."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_warning(f"Input requested: {message.prompt_text}")
+        elif self.verbose:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_warning(f"Input requested: {message.prompt_text}")
         else:
@@ -1044,7 +1437,21 @@ class WatchTUI(App):
 
     def on_milestone_updated(self, message: messages.MilestoneUpdated) -> None:
         """Handle milestone status update."""
-        if self.verbose:
+        if self._use_layout_b:
+            milestone_list = self.query_one("#lb-milestone-list", MilestoneList)
+            milestone_list.update_milestone(message.milestone_id, message.status, message.title)
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            if message.status == "active":
+                log_panel.log_milestone_start(message.milestone_id, message.title)
+            elif message.status == "completed":
+                log_panel.log_milestone_complete(message.milestone_id)
+
+            # Update progress bar
+            progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+            progress_bar.set_milestone_status(message.milestone_id, message.status)
+
+        elif self.verbose:
             milestone_list = self.query_one("#milestone-list", MilestoneList)
             milestone_list.update_milestone(message.milestone_id, message.status, message.title)
 
@@ -1066,7 +1473,20 @@ class WatchTUI(App):
 
     def on_milestones_loaded(self, message: messages.MilestonesLoaded) -> None:
         """Handle milestones loaded from plan."""
-        if self.verbose:
+        if self._use_layout_b:
+            milestone_list = self.query_one("#lb-milestone-list", MilestoneList)
+            milestone_list.set_milestones(message.milestones)
+
+            # Update progress bar
+            milestone_names = [m.get("title", "") for m in message.milestones]
+            milestone_statuses = [m.get("status", "pending") for m in message.milestones]
+            progress_bar = self.query_one("#progress-bar", MilestoneProgressBar)
+            progress_bar.update_progress(
+                total_milestones=len(message.milestones),
+                milestone_names=milestone_names,
+                milestone_statuses=milestone_statuses,
+            )
+        elif self.verbose:
             milestone_list = self.query_one("#milestone-list", MilestoneList)
             milestone_list.set_milestones(message.milestones)
         else:
@@ -1082,12 +1502,127 @@ class WatchTUI(App):
 
     def on_workflow_error(self, message: messages.WorkflowError) -> None:
         """Handle workflow error."""
-        if self.verbose:
+        if self._use_layout_b:
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_error(f"Error: {message.error}")
+        elif self.verbose:
             log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_error(f"Error: {message.error}")
         else:
             status_bar = self.query_one("#status-bar", StatusBar)
             status_bar.log(f"Error: {message.error[:40]}...", "error")
+
+    # Sub-agent message handlers (Layout B)
+
+    def on_explore_started(self, message: messages.ExploreStarted) -> None:
+        """Handle exploration started."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.set_explore_status("running")
+            # Initialize queries with pending status
+            queries = [
+                ExplorationQuery(query=q, status="pending")
+                for q in message.queries
+            ]
+            subagent_panel.set_explore_queries(queries)
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_info(f"Exploring: {len(message.queries)} queries")
+        except Exception:
+            pass
+
+    def on_explore_query_update(self, message: messages.ExploreQueryUpdate) -> None:
+        """Handle exploration query status update."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.update_explore_query(
+                message.index,
+                message.status,
+                message.tokens_used,
+                message.is_partial,
+            )
+        except Exception:
+            pass
+
+    def on_explore_completed(self, message: messages.ExploreCompleted) -> None:
+        """Handle exploration completed."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.set_explore_status("completed")
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_success(
+                f"Exploration complete: {message.successful}/{message.total_queries} queries"
+            )
+        except Exception:
+            pass
+
+    def on_validate_started(self, message: messages.ValidateStarted) -> None:
+        """Handle validation started."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.set_validate_status("running")
+            # Initialize validators with pending status
+            validators = [
+                ValidatorStatus(name=v, status="pending")
+                for v in message.validators
+            ]
+            subagent_panel.set_validators(validators)
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            log_panel.log_info(f"Validating: {len(message.validators)} validators")
+        except Exception:
+            pass
+
+    def on_validator_update(self, message: messages.ValidatorUpdate) -> None:
+        """Handle validator status update."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.update_validator(
+                message.name,
+                message.status,
+                message.issue_count,
+                message.high_count,
+                message.medium_count,
+            )
+        except Exception:
+            pass
+
+    def on_validate_completed(self, message: messages.ValidateCompleted) -> None:
+        """Handle validation completed."""
+        if not self._use_layout_b:
+            return
+
+        try:
+            subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            subagent_panel.set_validate_status("completed")
+
+            log_panel = self.query_one("#lb-log-panel", LogPanel)
+            if message.with_issues > 0:
+                log_panel.log_warning(
+                    f"Validation: {message.passed} passed, {message.with_issues} with issues"
+                )
+            else:
+                log_panel.log_success(
+                    f"Validation: {message.passed}/{message.total_validators} passed"
+                )
+        except Exception:
+            pass
 
     # Actions
 
@@ -1131,7 +1666,13 @@ class WatchTUI(App):
 
     def action_respond(self) -> None:
         """Open input modal to respond to a paused blocker."""
-        log_panel = self.query_one("#log-panel", LogPanel)
+        try:
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
+        except Exception:
+            return
 
         if not self._paused_session_id:
             log_panel.log_warning("No paused session to respond to")
@@ -1237,7 +1778,10 @@ class WatchTUI(App):
     def _log_info(self, message: str) -> None:
         """Helper to log info from worker thread."""
         try:
-            log_panel = self.query_one("#log-panel", LogPanel)
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_info(message)
         except Exception:
             pass
@@ -1245,14 +1789,23 @@ class WatchTUI(App):
     def _log_error(self, message: str) -> None:
         """Helper to log error (safe for use anywhere including worker threads)."""
         try:
-            log_panel = self.query_one("#log-panel", LogPanel)
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.log_error(message)
         except Exception:
             pass  # Truly silent - can't log if log panel is unavailable
 
     def action_copy_session_id(self) -> None:
         """Copy current or paused session ID to clipboard."""
-        log_panel = self.query_one("#log-panel", LogPanel)
+        try:
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
+        except Exception:
+            return
 
         session_id = self._current_session_id or self._paused_session_id
         if session_id:
@@ -1265,7 +1818,13 @@ class WatchTUI(App):
         """Show full blocker question in modal."""
         from .. import db
 
-        log_panel = self.query_one("#log-panel", LogPanel)
+        try:
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
+        except Exception:
+            return
 
         session_id = self._paused_session_id or self._current_session_id
         if not session_id:
@@ -1383,7 +1942,10 @@ class WatchTUI(App):
     def action_filter_errors(self) -> None:
         """Set log filter to errors only."""
         try:
-            log_panel = self.query_one("#log-panel", LogPanel)
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(1)
             log_panel.log_system("Filter: errors only")
         except Exception:
@@ -1392,7 +1954,10 @@ class WatchTUI(App):
     def action_filter_warnings(self) -> None:
         """Set log filter to errors + warnings."""
         try:
-            log_panel = self.query_one("#log-panel", LogPanel)
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(2)
             log_panel.log_system("Filter: warnings+")
         except Exception:
@@ -1401,7 +1966,10 @@ class WatchTUI(App):
     def action_filter_all(self) -> None:
         """Set log filter to info+ (excludes debug)."""
         try:
-            log_panel = self.query_one("#log-panel", LogPanel)
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
             log_panel.set_filter_level(3)
             log_panel.log_system("Filter: info+")
         except Exception:
