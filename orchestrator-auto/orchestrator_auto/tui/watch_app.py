@@ -966,10 +966,10 @@ class WatchTUI(App):
     def _update_watch_counts(self) -> None:
         """Update the watch panel counts."""
         try:
-            if self.verbose:
+            if self.verbose and not self._use_layout_b:
                 watch_panel = self.query_one("#watch-panel", WatchPanel)
                 watch_panel.update_counts(self._completed, self._failed, self._paused)
-            else:
+            elif not self.verbose:
                 sidebar = self.query_one("#sidebar", CompactSidebar)
                 sidebar.update_queue_counts(self._completed, self._failed, self._paused)
         except Exception:
@@ -1174,10 +1174,10 @@ class WatchTUI(App):
 
     def on_watch_pending_updated(self, message: messages.WatchPendingUpdated) -> None:
         """Handle pending files list update."""
-        if self.verbose:
+        if self.verbose and not self._use_layout_b:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.sync_pending_files(message.pending_files)
-        else:
+        elif not self.verbose:
             # Compact mode: update sidebar file list
             sidebar = self.query_one("#sidebar", CompactSidebar)
             sidebar.clear_files()
@@ -1995,7 +1995,13 @@ class WatchTUI(App):
     def _set_polling_paused(self, paused: bool) -> None:
         """Update UI when polling is paused/resumed."""
         try:
-            if self.verbose:
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+                if paused:
+                    log_panel.log_warning("Polling paused - press 'p' to resume")
+                else:
+                    log_panel.log_info("Polling resumed")
+            elif self.verbose:
                 watch_panel = self.query_one("#watch-panel", WatchPanel)
                 watch_panel.set_polling_paused(paused)
 
