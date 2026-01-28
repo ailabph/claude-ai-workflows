@@ -518,14 +518,16 @@ class TestWatchControllerExplorationContext:
             mock_result.is_success.return_value = True
             mock_result.query = f"query {i}"
             mock_result.findings = "x" * 1000  # 1000 chars each
+            results.append(mock_result)  # FIX: was missing append
 
         controller._exploration_results[1] = results
 
         context = controller.get_exploration_context(1)
 
-        # Context should be limited (10 * 1000 = 10000 > 4000 limit)
-        if context:
-            assert len(context) <= controller.EXPLORATION_CONTEXT_MAX_CHARS + 500  # Allow for formatting
+        # Context should exist and be limited (10 * 1000 = 10000 > 4000 limit)
+        assert context is not None, "Expected context with 10 results"
+        assert len(context) <= controller.EXPLORATION_CONTEXT_MAX_CHARS + 500  # Allow for formatting
+        assert "[omitted due to size limit]" in context  # Should have truncation message
 
     def test_format_exploration_context_structure(self, tmp_path):
         """Formatted context has expected structure."""

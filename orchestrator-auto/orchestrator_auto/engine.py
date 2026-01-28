@@ -980,7 +980,7 @@ The orchestrator will save the file for you.
                     exploration_context = self._exploration_context_provider(current_milestone)
                     if exploration_context:
                         self._output("📚 Injecting exploration context...\n")
-                        milestone_prompt = exploration_context + "\n" + milestone_prompt
+                        milestone_prompt = exploration_context + "\n\n" + milestone_prompt
                 except Exception as e:
                     # Don't fail milestone if context injection fails
                     self._output(f"⚠ Could not inject exploration context: {e}\n")

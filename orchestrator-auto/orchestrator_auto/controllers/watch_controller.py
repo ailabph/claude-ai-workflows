@@ -827,6 +827,8 @@ class WatchController:
             })
 
             # Store results for context injection into Executor prompt
+            # Clear any stale results first (memory management - we only need current milestone)
+            self._exploration_results.clear()
             self._exploration_results[milestone_num] = results
 
         except Exception as e:
