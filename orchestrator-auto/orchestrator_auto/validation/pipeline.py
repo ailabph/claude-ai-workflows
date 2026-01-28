@@ -248,15 +248,23 @@ class ValidationPipeline:
                 )
 
         # Mark pending tasks as timed out (preserve completed results)
-        for task in pending:
-            task.cancel()
-            validator = tasks[task]
-            final_results.append(
-                ValidationResult(
-                    validator_name=validator.name,
-                    error="Pipeline timeout (incomplete)",
+        if pending:
+            # Cancel all pending tasks
+            for task in pending:
+                task.cancel()
+
+            # Await cancellation to avoid "Task was destroyed but pending" warnings
+            await asyncio.gather(*pending, return_exceptions=True)
+
+            # Record timeout results
+            for task in pending:
+                validator = tasks[task]
+                final_results.append(
+                    ValidationResult(
+                        validator_name=validator.name,
+                        error="Pipeline timeout (incomplete)",
+                    )
                 )
-            )
 
         total_duration_ms = int((time.time() - start_time) * 1000)
 

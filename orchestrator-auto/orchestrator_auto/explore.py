@@ -94,6 +94,22 @@ class ExplorationResult:
         return self.error is None and bool(self.findings)
 
 
+@dataclass
+class _ExplorationAccumulator:
+    """
+    Mutable accumulator for exploration results.
+
+    Used to preserve partial results on timeout - the accumulator is updated
+    in-place during _run_exploration, so even if the call times out, we have
+    whatever was collected before the timeout.
+    """
+
+    findings: str = ""
+    tokens_used: int = 0
+    assistant_turns: int = 0
+    sources: List[str] = field(default_factory=list)
+
+
 class ExplorationError(Exception):
     """
     Exception raised when exploration fails.
@@ -190,19 +206,18 @@ class ExploreSubAgent:
             max_tokens=self.max_tokens,
         )
 
-        findings = ""
-        sources: List[str] = []
-        tokens_used = 0
+        # Use mutable accumulator to preserve partial results on timeout
+        accumulator = _ExplorationAccumulator()
         is_partial = False
         error = None
-        turns = 0
 
         try:
             async with ClaudeSDKClient(options) as client:
                 # Run exploration with timeout - single query execution
+                # Accumulator is updated in-place, so partial results survive timeout
                 try:
-                    findings, tokens_used, turns, sources = await asyncio.wait_for(
-                        self._run_exploration(client, prompt, on_progress),
+                    await asyncio.wait_for(
+                        self._run_exploration(client, prompt, on_progress, accumulator),
                         timeout=self.timeout
                     )
                 except asyncio.TimeoutError:
@@ -211,7 +226,7 @@ class ExploreSubAgent:
                         on_progress("[Exploration timeout - returning partial results]")
 
                 # Check if we hit turn limit
-                if turns >= self.max_turns:
+                if accumulator.assistant_turns >= self.max_turns:
                     is_partial = True
 
         except Exception as e:
@@ -222,9 +237,9 @@ class ExploreSubAgent:
 
         return ExplorationResult(
             query=query,
-            findings=findings,
-            sources_consulted=sources,
-            tokens_used=tokens_used,
+            findings=accumulator.findings,
+            sources_consulted=accumulator.sources,
+            tokens_used=accumulator.tokens_used,
             duration_ms=duration_ms,
             is_partial=is_partial,
             error=error,
@@ -289,52 +304,49 @@ class ExploreSubAgent:
         client: ClaudeSDKClient,
         prompt: str,
         on_progress: Optional[Callable[[str], None]],
-    ) -> tuple:
+        accumulator: _ExplorationAccumulator,
+    ) -> None:
         """
-        Run the exploration query and extract results.
+        Run the exploration query and collect results into accumulator.
 
-        Single execution path - sends query once and collects all results.
+        Updates accumulator in-place so partial results are preserved on timeout.
 
         Args:
             client: SDK client instance
             prompt: Exploration prompt
             on_progress: Optional progress callback
+            accumulator: Mutable accumulator for results (updated in-place)
 
-        Returns:
-            Tuple of (findings_text, tokens_used, assistant_turns, sources_consulted)
+        Note:
+            sources_consulted is not yet implemented - the SDK doesn't currently
+            expose which files were read during exploration. This is a TODO for
+            future SDK integration.
         """
-        findings = ""
-        tokens_used = 0
-        assistant_turns = 0  # Count only assistant responses, not all messages
-        sources: List[str] = []
-
         await client.query(prompt)
 
         async for message in client.receive_messages():
             if isinstance(message, AssistantMessage):
                 # Count assistant turns (not every message)
-                assistant_turns += 1
+                accumulator.assistant_turns += 1
 
                 for block in message.content:
                     if isinstance(block, TextBlock):
-                        findings += block.text
+                        accumulator.findings += block.text
                         if on_progress:
                             on_progress(block.text[:100])
 
                 # Check turn limit after processing assistant message
-                if assistant_turns >= self.max_turns:
+                if accumulator.assistant_turns >= self.max_turns:
                     break
 
             elif isinstance(message, ResultMessage):
                 # Capture token usage from final result
                 if message.usage:
-                    tokens_used = (
+                    accumulator.tokens_used = (
                         message.usage.get("input_tokens", 0) +
                         message.usage.get("output_tokens", 0)
                     )
                 break
-
-        return findings, tokens_used, assistant_turns, sources
 
 
 def compact_findings(results: List[ExplorationResult]) -> str:

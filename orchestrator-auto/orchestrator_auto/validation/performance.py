@@ -122,6 +122,27 @@ class PerformanceValidator(BaseValidator):
         super().__init__(severity_threshold, enabled_checks)
         self.checks = PERFORMANCE_CHECKS
 
+    def _is_multiline_check(self, check_info: Dict[str, Any]) -> bool:
+        """
+        Determine if a check should be treated as multiline.
+
+        Returns True if:
+        - Explicit "multiline": True flag is set, OR
+        - Any pattern in the check contains a literal newline escape (\\n)
+
+        This guards against forgetting to set the multiline flag for patterns
+        that span multiple lines.
+        """
+        if check_info.get("multiline", False):
+            return True
+
+        # Auto-detect: if any pattern contains \n, treat as multiline
+        for pattern in check_info.get("patterns", []):
+            if r"\n" in pattern:
+                return True
+
+        return False
+
     async def validate(
         self,
         changed_files: List[Path],
@@ -202,7 +223,8 @@ class PerformanceValidator(BaseValidator):
                         continue
 
                     # Skip multiline patterns - they're checked on aggregated content
-                    if check_info.get("multiline", False):
+                    # Uses auto-detection: patterns containing \n are treated as multiline
+                    if self._is_multiline_check(check_info):
                         continue
 
                     for pattern in check_info["patterns"]:
@@ -227,8 +249,8 @@ class PerformanceValidator(BaseValidator):
                 if not self.should_run_check(check_name):
                     continue
 
-                # Only run multiline patterns here
-                if not check_info.get("multiline", False):
+                # Only run multiline patterns here (including auto-detected)
+                if not self._is_multiline_check(check_info):
                     continue
 
                 for pattern in check_info["patterns"]:
