@@ -968,3 +968,180 @@ class TestEmptyResponseRetry:
         assert mock_planner.send_message.call_count >= 2
         # Result should be blocked (unparseable falls through to blocker)
         assert result_type == "blocked"
+
+
+class TestOrchestratorExplorationContext:
+    """Tests for exploration context injection into milestone prompts."""
+
+    def test_init_with_exploration_context_provider(self, temp_db):
+        """Orchestrator accepts exploration_context_provider parameter."""
+        provider = Mock(return_value="Test context")
+
+        orch = Orchestrator(
+            feature_description="Test",
+            db_path=temp_db,
+            exploration_context_provider=provider,
+        )
+
+        assert orch._exploration_context_provider is provider
+
+    def test_init_without_exploration_context_provider(self, temp_db):
+        """Orchestrator works without exploration_context_provider (backward compatible)."""
+        orch = Orchestrator(
+            feature_description="Test",
+            db_path=temp_db,
+        )
+
+        assert orch._exploration_context_provider is None
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_context_injected_into_milestone_prompt(
+        self, mock_create_planner, mock_create_executor, temp_db, tmp_path
+    ):
+        """Exploration context is prepended to milestone prompt."""
+        # Setup mocks
+        mock_executor = MagicMock()
+        mock_executor.set_checkpoint.return_value = None
+        mock_executor.send_message.return_value = (
+            "[PROGRESS_REPORT]\n## Milestone 1 - COMPLETED\n[/PROGRESS_REPORT]"
+        )
+        mock_create_executor.return_value = mock_executor
+
+        mock_planner = MagicMock()
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED] Good work!"
+        mock_create_planner.return_value = mock_planner
+
+        # Create plan file
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+
+        # Create provider that returns context
+        exploration_context = "## Exploration Context\n\nFound patterns in auth.py"
+        provider = Mock(return_value=exploration_context)
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None,
+            exploration_context_provider=provider,
+        )
+
+        # Set state for execution
+        orch.state.phase = "execution"
+        orch.state.current_milestone = 1
+        orch.state.total_milestones = 1
+
+        # Run execution (will complete after one milestone)
+        try:
+            orch.start()
+        except Exception:
+            pass  # May fail on cleanup, that's fine
+
+        # Verify provider was called with milestone number
+        provider.assert_called_with(1)
+
+        # Verify executor received prompt with context prepended
+        executor_call_args = mock_executor.send_message.call_args
+        if executor_call_args:
+            prompt = executor_call_args[0][0]
+            assert "## Exploration Context" in prompt
+            assert "Found patterns in auth.py" in prompt
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_context_not_injected_when_provider_returns_none(
+        self, mock_create_planner, mock_create_executor, temp_db, tmp_path
+    ):
+        """No context injection when provider returns None."""
+        mock_executor = MagicMock()
+        mock_executor.set_checkpoint.return_value = None
+        mock_executor.send_message.return_value = (
+            "[PROGRESS_REPORT]\n## Milestone 1 - COMPLETED\n[/PROGRESS_REPORT]"
+        )
+        mock_create_executor.return_value = mock_executor
+
+        mock_planner = MagicMock()
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED]"
+        mock_create_planner.return_value = mock_planner
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+
+        # Provider returns None (no exploration results)
+        provider = Mock(return_value=None)
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: None,
+            exploration_context_provider=provider,
+        )
+
+        orch.state.phase = "execution"
+        orch.state.current_milestone = 1
+        orch.state.total_milestones = 1
+
+        try:
+            orch.start()
+        except Exception:
+            pass
+
+        # Verify executor prompt does NOT contain exploration context header
+        executor_call_args = mock_executor.send_message.call_args
+        if executor_call_args:
+            prompt = executor_call_args[0][0]
+            assert "## Exploration Context" not in prompt
+
+    @patch("orchestrator_auto.engine.create_executor_agent")
+    @patch("orchestrator_auto.engine.create_planner_agent")
+    def test_context_injection_error_does_not_break_execution(
+        self, mock_create_planner, mock_create_executor, temp_db, tmp_path
+    ):
+        """Provider exceptions are caught and execution continues."""
+        mock_executor = MagicMock()
+        mock_executor.set_checkpoint.return_value = None
+        mock_executor.send_message.return_value = (
+            "[PROGRESS_REPORT]\n## Milestone 1 - COMPLETED\n[/PROGRESS_REPORT]"
+        )
+        mock_create_executor.return_value = mock_executor
+
+        mock_planner = MagicMock()
+        mock_planner.send_message.return_value = "[MILESTONE_APPROVED]"
+        mock_create_planner.return_value = mock_planner
+
+        plan_file = tmp_path / "plan.md"
+        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+
+        # Provider raises exception
+        provider = Mock(side_effect=Exception("Provider failed"))
+
+        # Capture output to verify warning was logged
+        output_messages = []
+
+        orch = Orchestrator(
+            feature_description="Test feature",
+            db_path=temp_db,
+            plan_path=str(plan_file),
+            on_output=lambda x: output_messages.append(x),
+            exploration_context_provider=provider,
+        )
+
+        orch.state.phase = "execution"
+        orch.state.current_milestone = 1
+        orch.state.total_milestones = 1
+
+        # Should not raise - execution should continue
+        try:
+            orch.start()
+        except Exception:
+            pass
+
+        # Verify warning was output
+        output_text = "".join(output_messages)
+        assert "Could not inject exploration context" in output_text
+
+        # Verify executor was still called (execution continued)
+        assert mock_executor.send_message.called

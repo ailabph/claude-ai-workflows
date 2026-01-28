@@ -80,6 +80,7 @@ class Orchestrator:
         mcp_config_path: Optional[str] = None,
         headless: bool = False,
         enable_rewind: bool = True,
+        exploration_context_provider: Optional[Callable[[int], Optional[str]]] = None,
     ):
         """
         Initialize orchestrator.
@@ -102,6 +103,9 @@ class Orchestrator:
             mcp_config_path: Optional path to MCP configuration file (.mcp.json)
             headless: If True, run Playwright MCP browser in headless mode
             enable_rewind: If True, rewind file changes when milestone is rejected (default: True)
+            exploration_context_provider: Optional callback that returns exploration context
+                for a milestone number. If provided, context is injected into the milestone
+                prompt before sending to the Executor.
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -127,6 +131,7 @@ class Orchestrator:
         self._mcp_config_for_db = None  # Store raw config for DB persistence
         self._headless = headless  # Playwright headless mode
         self._enable_rewind = enable_rewind  # File rewind on milestone rejection
+        self._exploration_context_provider = exploration_context_provider
 
         # Initialize database
         db.init_db(db_path)
@@ -968,6 +973,17 @@ The orchestrator will save the file for you.
                 milestone_tasks=f"Execute Milestone {current_milestone} from the plan",
                 next_milestone_number=current_milestone + 1
             )
+
+            # Inject exploration context if available
+            if self._exploration_context_provider:
+                try:
+                    exploration_context = self._exploration_context_provider(current_milestone)
+                    if exploration_context:
+                        self._output("📚 Injecting exploration context...\n")
+                        milestone_prompt = exploration_context + "\n" + milestone_prompt
+                except Exception as e:
+                    # Don't fail milestone if context injection fails
+                    self._output(f"⚠ Could not inject exploration context: {e}\n")
 
             # Send to executor with activity indicator
             self._output("→ Sending milestone to Executor...\n")

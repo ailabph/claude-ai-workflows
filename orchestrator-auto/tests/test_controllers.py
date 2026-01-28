@@ -419,3 +419,127 @@ class TestWatchControllerState:
         assert controller._should_stop is False
         controller.stop()
         assert controller._should_stop is True
+
+
+class TestWatchControllerExplorationContext:
+    """Tests for exploration context storage and retrieval."""
+
+    def test_exploration_results_storage_init(self, tmp_path):
+        """Controller initializes with empty exploration results dict."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+        assert controller._exploration_results == {}
+
+    def test_get_exploration_context_returns_none_when_empty(self, tmp_path):
+        """get_exploration_context returns None when no results stored."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+        assert controller.get_exploration_context(1) is None
+
+    def test_get_exploration_context_returns_formatted_context(self, tmp_path):
+        """get_exploration_context returns formatted context when results exist."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        # Create mock exploration result
+        mock_result = MagicMock()
+        mock_result.is_success.return_value = True
+        mock_result.query = "find auth patterns"
+        mock_result.findings = "Found auth middleware in src/auth.py"
+
+        controller._exploration_results[1] = [mock_result]
+
+        context = controller.get_exploration_context(1)
+
+        assert context is not None
+        assert "## Exploration Context" in context
+        assert "find auth patterns" in context
+        assert "Found auth middleware" in context
+
+    def test_get_exploration_context_clears_after_retrieval(self, tmp_path):
+        """get_exploration_context clears results after retrieval (memory management)."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        mock_result = MagicMock()
+        mock_result.is_success.return_value = True
+        mock_result.query = "test query"
+        mock_result.findings = "test findings"
+
+        controller._exploration_results[1] = [mock_result]
+
+        # First call returns context
+        context = controller.get_exploration_context(1)
+        assert context is not None
+
+        # Second call returns None (cleared)
+        context = controller.get_exploration_context(1)
+        assert context is None
+
+    def test_get_exploration_context_filters_failed_results(self, tmp_path):
+        """get_exploration_context excludes failed results."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        # Create failed result
+        failed_result = MagicMock()
+        failed_result.is_success.return_value = False
+        failed_result.query = "failed query"
+        failed_result.findings = ""
+
+        controller._exploration_results[1] = [failed_result]
+
+        # Should return None since no successful results
+        context = controller.get_exploration_context(1)
+        assert context is None
+
+    def test_exploration_context_truncates_long_findings(self, tmp_path):
+        """Long findings are truncated to prevent prompt bloat."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        # Create result with very long findings
+        mock_result = MagicMock()
+        mock_result.is_success.return_value = True
+        mock_result.query = "test query"
+        mock_result.findings = "x" * 5000  # Exceeds EXPLORATION_CONTEXT_MAX_PER_QUERY
+
+        controller._exploration_results[1] = [mock_result]
+
+        context = controller.get_exploration_context(1)
+
+        assert context is not None
+        assert "[...truncated due to length]" in context
+        # Should be truncated, not full 5000 chars
+        assert len(context) < 5000
+
+    def test_exploration_context_limits_total_size(self, tmp_path):
+        """Total context size is limited to prevent prompt bloat."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        # Create multiple results that together exceed total limit
+        results = []
+        for i in range(10):
+            mock_result = MagicMock()
+            mock_result.is_success.return_value = True
+            mock_result.query = f"query {i}"
+            mock_result.findings = "x" * 1000  # 1000 chars each
+
+        controller._exploration_results[1] = results
+
+        context = controller.get_exploration_context(1)
+
+        # Context should be limited (10 * 1000 = 10000 > 4000 limit)
+        if context:
+            assert len(context) <= controller.EXPLORATION_CONTEXT_MAX_CHARS + 500  # Allow for formatting
+
+    def test_format_exploration_context_structure(self, tmp_path):
+        """Formatted context has expected structure."""
+        controller = WatchController(plans_dir=tmp_path, explore_enabled=True)
+
+        mock_result = MagicMock()
+        mock_result.is_success.return_value = True
+        mock_result.query = "find patterns"
+        mock_result.findings = "Pattern found"
+
+        context = controller._format_exploration_context([mock_result])
+
+        # Check structure
+        assert context.startswith("## Exploration Context")
+        assert "### Query: find patterns" in context
+        assert "Pattern found" in context
+        assert context.strip().endswith("---")

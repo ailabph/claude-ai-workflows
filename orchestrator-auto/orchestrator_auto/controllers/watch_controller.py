@@ -19,6 +19,7 @@ from ..config import get_planner_model, get_executor_model, get_project_identity
 if TYPE_CHECKING:
     from ..io import InputProvider
     from ..telegram import TelegramNotifier
+    from ..explore import ExplorationResult
 
 
 class WatchEvent(Enum):
@@ -191,6 +192,10 @@ class WatchController:
         # Milestone tracking for sub-agent triggers
         self._last_milestone = 0
         self._current_milestone_names: List[str] = []
+
+        # Exploration results storage for context injection
+        # Key: milestone number, Value: list of ExplorationResult
+        self._exploration_results: Dict[int, List["ExplorationResult"]] = {}
 
     def get_state(self) -> WatchState:
         """Get current watch state."""
@@ -423,6 +428,11 @@ class WatchController:
 
         # Create and run orchestrator
         try:
+            # Create context provider if exploration is enabled
+            exploration_provider = None
+            if self.explore_enabled:
+                exploration_provider = self.get_exploration_context
+
             orch = Orchestrator(
                 feature_description=feature,
                 db_path=self.db_path,
@@ -438,6 +448,7 @@ class WatchController:
                 telegram_notifier=self.telegram_notifier,
                 mcp_config_path=self.mcp_config_path,
                 headless=self.headless,
+                exploration_context_provider=exploration_provider,
             )
 
             # Emit session started event BEFORE blocking start() call
@@ -815,6 +826,9 @@ class WatchController:
                 "success_count": sum(1 for r in results if r.is_success()),
             })
 
+            # Store results for context injection into Executor prompt
+            self._exploration_results[milestone_num] = results
+
         except Exception as e:
             self.on_event(WatchEvent.WARNING, {
                 "message": f"Exploration failed: {e}"
@@ -897,6 +911,88 @@ class WatchController:
             self.on_event(WatchEvent.WARNING, {
                 "message": f"Validation failed: {e}"
             })
+
+    # =========================================================================
+    # Exploration Context Injection
+    # =========================================================================
+
+    # Limits for exploration context to avoid bloating the prompt
+    EXPLORATION_CONTEXT_MAX_CHARS = 4000
+    EXPLORATION_CONTEXT_MAX_PER_QUERY = 1500
+
+    def get_exploration_context(self, milestone_num: int) -> Optional[str]:
+        """
+        Get formatted exploration context for a milestone.
+
+        This method is designed to be passed to Orchestrator as a callback.
+        It retrieves and formats exploration results, then clears them from
+        storage to free memory.
+
+        Args:
+            milestone_num: The milestone number to get context for
+
+        Returns:
+            Formatted context string, or None if no results available
+        """
+        results = self._exploration_results.pop(milestone_num, None)
+        if not results:
+            return None
+
+        # Filter to successful results only
+        successful = [r for r in results if r.is_success()]
+        if not successful:
+            return None
+
+        return self._format_exploration_context(successful)
+
+    def _format_exploration_context(
+        self, results: List["ExplorationResult"]
+    ) -> str:
+        """
+        Format exploration results as context for the Executor.
+
+        Applies truncation limits to prevent prompt bloat.
+
+        Args:
+            results: List of successful ExplorationResult objects
+
+        Returns:
+            Formatted markdown string with exploration findings
+        """
+        lines = [
+            "## Exploration Context",
+            "",
+            "The following codebase patterns were discovered before this milestone.",
+            "Use these to guide your implementation - do not re-explore these areas.",
+            ""
+        ]
+
+        total_chars = 0
+        for result in results:
+            # Truncate findings if too long
+            findings = result.findings
+            if len(findings) > self.EXPLORATION_CONTEXT_MAX_PER_QUERY:
+                findings = (
+                    findings[:self.EXPLORATION_CONTEXT_MAX_PER_QUERY]
+                    + "\n\n[...truncated due to length]"
+                )
+
+            # Build entry
+            entry = f"### Query: {result.query}\n\n{findings}\n\n"
+
+            # Check total limit
+            if total_chars + len(entry) > self.EXPLORATION_CONTEXT_MAX_CHARS:
+                lines.append(
+                    "[Additional exploration results omitted due to size limit]"
+                )
+                break
+
+            lines.append(entry)
+            total_chars += len(entry)
+
+        lines.append("---\n")
+
+        return "\n".join(lines)
 
     def run(self) -> WatchState:
         """
