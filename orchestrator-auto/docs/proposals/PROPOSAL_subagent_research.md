@@ -1,6 +1,6 @@
 # Proposal: Context-Isolated Research Agents
 
-**Status:** Approved
+**Status:** Approved by: CTO, 2026-01-28
 **Phase:** 2 (Deferred)
 **Author:** Engineering Team
 **Created:** 2026-01-28
@@ -206,10 +206,16 @@ research:
         - developer.mozilla.org
         - react.dev
     web_search:
-      enabled: false            # Disabled by default
+      enabled: false            # Disabled by default (security posture)
+      allowed_domains: []       # Deny-by-default; explicit allowlist required
     github:
       enabled: true
       max_issues: 10
+
+  # Governance: Source citation requirement
+  citation:
+    required: true              # All findings must cite sources
+    uncited_severity: warning   # Uncited claims downgraded to WARNING
 
   auto_research:
     enabled: true
@@ -285,7 +291,32 @@ orchestrator status <session-id>
 | Research takes too long | Parallel queries, timeouts |
 | Wrong research direction | Main agent can request clarification |
 | API cost increase | Use Haiku, cache results |
-| Hallucinated research | Always cite sources in summary |
+| Hallucinated research | Mandatory source citation (see governance below) |
+
+### Source Citation Governance
+
+Research agents must cite sources for all findings. This prevents hallucinated information from polluting the main agent's context.
+
+**Rules:**
+1. Every finding must include source reference (file path, URL, or document name)
+2. Uncited claims are automatically downgraded to `WARNING` severity
+3. Summary format enforces `### Sources Consulted` section
+4. Web search results must include URL for each claim
+
+**Example enforcement:**
+```python
+class ResearchResult:
+    findings: List[Finding]
+
+    def validate_citations(self) -> List[str]:
+        """Returns list of uncited findings (downgraded to WARNING)."""
+        uncited = []
+        for f in self.findings:
+            if not f.source:
+                f.severity = Severity.WARNING
+                uncited.append(f.claim[:50] + "...")
+        return uncited
+```
 
 ## Cost Analysis
 

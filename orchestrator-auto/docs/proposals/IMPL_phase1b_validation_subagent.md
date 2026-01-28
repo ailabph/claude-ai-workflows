@@ -31,16 +31,30 @@ Implement specialized validation sub-agents that analyze code changes after mile
 
 ### Rewind Integration Requirements
 
-- [ ] **REWIND-1**: HIGH severity triggers `executor.rewind_to_checkpoint()`
+- [ ] **REWIND-1**: HIGH severity triggers `executor.rewind_to_checkpoint()` (public API)
+  - Uses SDK `rewind_files()` internally
 - [ ] **REWIND-2**: Rewind only occurs if checkpoint exists (graceful skip otherwise)
 - [ ] **REWIND-3**: Validation findings passed to executor as fix instructions
 - [ ] **REWIND-4**: Rewind event logged to session for audit trail
 
+> **API Naming:** `executor.rewind_to_checkpoint()` is the canonical public API. It wraps the SDK's `rewind_files(user_message_id)` method internally. Async variant is `executor.rewind_to_checkpoint_async()`.
+
 ### Governance Requirements (Mandatory)
 
 - [ ] **GOV-1**: Token cap per validator: **max 15,000 tokens**
-  - Validators analyze diffs, not full files
   - Exceeded = validator skipped with warning
+
+### Validator Input Contract
+
+Validators receive a defined input contract to ensure consistent, efficient analysis:
+
+| Input | Type | Description |
+|-------|------|-------------|
+| **Primary: Unified diff** | `str` | Git-style unified diff of all changes |
+| **Primary: File paths** | `List[Path]` | List of changed file paths |
+| **Secondary: File content** | `Callable[[Path], str]` | On-demand fetch for line context when needed |
+
+> **Note:** Validators should primarily analyze the diff. Full file content is fetched on-demand only when a pattern match requires surrounding context (e.g., to check if SQL injection is in a parameterized query wrapper).
 
 - [ ] **GOV-2**: Turn cap per validator: **max 3 turns**
   - Validators should be decisive, not exploratory
@@ -153,7 +167,8 @@ class ValidationPipeline:
 ```python
 # In engine.py, after validation
 if validation_report.has_high_severity:
-    # Trigger rewind
+    # Trigger rewind using canonical API
+    # executor.rewind_to_checkpoint() -> SDK rewind_files() internally
     if self.enable_rewind and executor.get_checkpoint():
         rewind_success = await executor.rewind_to_checkpoint_async()
         if rewind_success:

@@ -10,7 +10,9 @@
 
 ## Summary
 
-Implement the ability for the Executor agent to spawn lightweight Explore sub-agents before milestone execution. Sub-agents perform read-only codebase exploration and return summarized findings to enrich the executor's context.
+Implement the ability for the Executor agent to spawn lightweight Explore sub-agents before milestone execution. Sub-agents perform read-only codebase exploration and return structured findings (file paths, pattern names, key snippets) with light compaction to enrich the executor's context.
+
+> **Distinction from Research:** Exploration returns structured findings with minimal processing. Research agents (Phase 2) perform full summarization of large content bodies. This separation keeps Exploration simple and fast.
 
 ---
 
@@ -20,7 +22,7 @@ Implement the ability for the Executor agent to spawn lightweight Explore sub-ag
 
 - [ ] **AC-1**: Executor can spawn Explore sub-agent via `_run_exploration()` method
 - [ ] **AC-2**: Explore sub-agent has access only to read-only tools: `Glob`, `Grep`, `Read`
-- [ ] **AC-3**: Exploration results are summarized before injection into executor context
+- [ ] **AC-3**: Exploration results are lightly compacted (structured findings) before injection into executor context - not full summarization
 - [ ] **AC-4**: CLI flag `--explore` enables exploration (default when `auto_explore: true`)
 - [ ] **AC-5**: CLI flag `--no-explore` disables exploration for simple tasks
 - [ ] **AC-6**: CLI flag `--explore-query "..."` allows custom exploration queries
@@ -80,7 +82,7 @@ Implement the ability for the Executor agent to spawn lightweight Explore sub-ag
 
 | File | Changes |
 |------|---------|
-| `agents.py` | Add `_run_exploration()`, `_summarize_exploration()` to ExecutorAgent |
+| `agents.py` | Add `_run_exploration()`, `_compact_findings()` to ExecutorAgent |
 | `engine.py` | Call exploration before milestone execution when enabled |
 | `cli.py` | Add `--explore`, `--no-explore`, `--explore-query` flags |
 | `config.py` | Add `executor.auto_explore`, `executor.explore_max_turns` |
@@ -113,7 +115,7 @@ class ExploreSubAgent:
 ```yaml
 # config.yaml
 executor:
-  auto_explore: true           # Default: false
+  auto_explore: false          # Initial default: false; recommend true after validation
   explore_max_turns: 5         # Default: 5
   explore_max_tokens: 25000    # Default: 25000
   explore_timeout: 30          # Default: 30 seconds
@@ -135,7 +137,7 @@ executor:
 - [ ] `test_explore_timeout_returns_partial` - Verify graceful timeout
 - [ ] `test_explore_failure_does_not_block_execution` - Verify fallback
 - [ ] `test_explore_error_logged_to_db` - Verify error persistence
-- [ ] `test_explore_results_summarized` - Verify summarization
+- [ ] `test_explore_results_compacted` - Verify light compaction (not full summarization)
 
 ### Integration Tests
 

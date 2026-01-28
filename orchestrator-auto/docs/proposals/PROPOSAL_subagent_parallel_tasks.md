@@ -1,6 +1,6 @@
 # Proposal: Parallel Task Execution with Sub-Agents
 
-**Status:** Approved
+**Status:** Approved by: CTO, 2026-01-28
 **Phase:** 3 (Final)
 **Author:** Engineering Team
 **Created:** 2026-01-28
@@ -209,11 +209,53 @@ orchestrator status <session-id>
 
 | Risk | Mitigation |
 |------|------------|
-| Race conditions in file edits | Sub-agents work on separate files |
+| Race conditions in file edits | File-ownership enforcement (see below) |
 | Increased API costs | Parallel agents may use more tokens total |
 | Dependency misdetection | Conservative dependency analysis, main agent validates |
 | Sub-agent failures | Fail-fast with clear error aggregation |
 | Context isolation issues | Each sub-agent gets focused context only |
+
+### File-Ownership Guardrail (Mandatory)
+
+To prevent race conditions and conflicting writes, parallel sub-agents operate under strict file-ownership rules:
+
+```python
+class FileOwnership:
+    """Tracks file ownership across parallel sub-agents."""
+
+    def __init__(self):
+        self._owners: Dict[Path, str] = {}  # file -> agent_id
+        self._lock = asyncio.Lock()
+
+    async def claim(self, agent_id: str, files: List[Path]) -> bool:
+        """Claim ownership of files. Returns False if any file is already owned."""
+        async with self._lock:
+            for f in files:
+                if f in self._owners and self._owners[f] != agent_id:
+                    return False  # Conflict detected
+            for f in files:
+                self._owners[f] = agent_id
+            return True
+
+    async def release(self, agent_id: str):
+        """Release all files owned by agent."""
+        async with self._lock:
+            self._owners = {f: o for f, o in self._owners.items() if o != agent_id}
+```
+
+**Enforcement rules:**
+1. Parent agent allocates file ownership per sub-agent before spawning
+2. Sub-agents can only write to files they own
+3. Validation step rejects milestone if overlapping writes detected
+4. Conflict triggers sequential re-execution (fallback to safe mode)
+
+**Example allocation:**
+```
+Milestone: "Add user auth with tests and docs"
+├── Implementation agent: owns src/auth/*.py
+├── Test agent: owns tests/test_auth*.py
+└── Docs agent: owns docs/auth.md
+```
 
 ## Cost Analysis
 

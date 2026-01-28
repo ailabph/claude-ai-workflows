@@ -1,6 +1,6 @@
 # Proposal: Executor Exploration Sub-Agents
 
-**Status:** Approved
+**Status:** Approved by: CTO, 2026-01-28
 **Phase:** 1A (First Priority)
 **Author:** Engineering Team
 **Created:** 2026-01-28
@@ -50,11 +50,14 @@ Add an **optional exploration phase** before milestone execution:
 │     - "Locate files related to Y"                               │
 │     - "Identify naming conventions for Z"                       │
 │                                                                 │
-│  2. Receive summarized exploration results                      │
+│  2. Receive structured findings (light compaction, not full     │
+│     summarization - distinct from Research agent)               │
 │                                                                 │
 │  3. Execute milestone with context-aware implementation         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> **Note:** Exploration returns structured findings with light compaction (file paths, pattern names, key snippets). This is distinct from Research agents which perform full summarization of large content bodies.
 
 ### Architecture
 
@@ -94,7 +97,7 @@ class ExecutorAgent(BaseAgent):
 ```yaml
 # config.yaml
 executor:
-  auto_explore: true           # Enable automatic exploration
+  auto_explore: false          # Initial default: false (enable after validation)
   explore_max_turns: 5         # Limit exploration depth
   explore_patterns:            # What to look for
     - "existing implementations"
