@@ -636,20 +636,109 @@ M0 (Prerequisite: WatchController Integration)
 **Tasks:**
 1. Add `--explore` and `--validate` CLI flags to `orchestrator watch`
 2. Import `ExploreSubAgent` and `ValidationPipeline` in `WatchController`
-3. Call `ExploreSubAgent.explore_multiple_async()` before milestone execution (when `--explore` enabled)
-4. Call `ValidationPipeline.run()` after milestone completion (when `--validate` enabled)
-5. Add new `WatchEvent` enum values for sub-agent lifecycle
-6. Emit events during exploration and validation phases
+3. Implement milestone boundary detection (see below)
+4. Call `ExploreSubAgent.explore_multiple_async()` at milestone start (when `--explore` enabled)
+5. Call `ValidationPipeline.run()` at milestone completion (when `--validate` enabled)
+6. Add new `WatchEvent` enum values for sub-agent lifecycle
+7. Emit events during exploration and validation phases
+
+#### Milestone Boundary Detection
+
+The `on_state_change` callback receives the full `WorkflowState` object on every state transition. To detect milestone boundaries:
+
+```python
+# In WatchController.__init__():
+self._last_milestone = 0
+
+# Create wrapper callback that intercepts milestone changes:
+def _on_state_change_wrapper(state: WorkflowState) -> None:
+    current = state.current_milestone
+
+    # Detect milestone START (current increased)
+    if current > self._last_milestone:
+        # Trigger exploration BEFORE executor runs
+        if self.explore_enabled:
+            self._run_exploration(state)
+
+    # Detect milestone COMPLETION (check phase == EXECUTION and status indicates approval)
+    # Note: MILESTONE_APPROVED transitions keep phase=EXECUTION but increment milestone
+    if current > self._last_milestone and self._last_milestone > 0:
+        # Previous milestone just completed - run validation
+        if self.validate_enabled:
+            self._run_validation(self._last_milestone)
+
+    self._last_milestone = current
+
+    # Forward to original callback
+    if self.on_state_change:
+        self.on_state_change(state)
+```
+
+**Alternative approach:** Add explicit `on_milestone_start` and `on_milestone_complete` callbacks to `Orchestrator` class. This is cleaner but requires modifying `engine.py`.
+
+#### Validation Inputs Acquisition
+
+Use existing functions from `git.py`:
+
+```python
+from ..git import get_changed_files, get_full_diff
+from pathlib import Path
+
+def _run_validation(self, milestone_num: int) -> None:
+    """Run validation pipeline after milestone completion."""
+    # Get changed files as Path objects
+    changed_file_strings = get_changed_files(str(self.plans_dir))
+    changed_files = [Path(f) for f in changed_file_strings]
+
+    # Get unified diff (staged + unstaged changes)
+    diff = get_full_diff(str(self.plans_dir))
+
+    # Build milestone context
+    context = f"Milestone {milestone_num}"
+
+    # Run pipeline
+    self._emit(WatchEvent.VALIDATE_STARTED)
+    report = await self.pipeline.run(changed_files, diff, context)
+    # ... emit per-validator events ...
+    self._emit(WatchEvent.VALIDATE_COMPLETED)
+```
+
+**Note on staged vs unstaged:** `get_full_diff()` returns `git diff HEAD` which includes both staged and unstaged changes. This captures all work done during the milestone. If validation should only cover staged changes, use `get_staged_diff()` instead.
+
+#### Exploration Query Generation
+
+Use existing `generate_exploration_queries()` from `explore.py`:
+
+```python
+from ..explore import ExploreSubAgent, generate_exploration_queries
+
+def _run_exploration(self, state: WorkflowState) -> None:
+    """Run exploration before milestone execution."""
+    # Get milestone text from plan
+    milestone_text = self._get_milestone_text(state.current_milestone)
+
+    # Generate queries from milestone description
+    queries = generate_exploration_queries(milestone_text)
+
+    self._emit(WatchEvent.EXPLORE_STARTED)
+    for i, query in enumerate(queries):
+        self._emit(WatchEvent.EXPLORE_QUERY, {"index": i, "query": query, "status": "pending"})
+
+    results = await self.explore_agent.explore_multiple_async(queries)
+    # ... emit per-query completion events ...
+    self._emit(WatchEvent.EXPLORE_COMPLETED)
+```
 
 **Acceptance Criteria:**
 - `orchestrator watch ./plans --explore --validate` runs without error
-- Exploration queries generated from milestone text
-- Validation runs on changed files after each milestone
+- Exploration queries generated from milestone text via `generate_exploration_queries()`
+- Validation runs on changed files via `git.get_changed_files()` + `git.get_full_diff()`
+- Milestone boundaries detected via `on_state_change` callback wrapper
 - Events emitted (verifiable via log panel)
 
 **Files:**
 - `cli.py` (add `--explore`, `--validate` flags)
-- `controllers/watch_controller.py` (import and call sub-agents)
+- `controllers/watch_controller.py` (import sub-agents, add wrapper callback, implement `_run_exploration` and `_run_validation`)
 
 **Why This is Prerequisite:**
 The `SubAgentPanel` widget depends on receiving `EXPLORE_*` and `VALIDATE_*` events from `WatchController`. Without this wiring, the panel would remain empty.
