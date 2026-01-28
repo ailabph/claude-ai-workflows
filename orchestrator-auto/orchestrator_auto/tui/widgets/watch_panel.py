@@ -1,8 +1,8 @@
 """
 Watch panel widget for displaying watch mode status.
 
-Shows directory being watched, poll interval, pending files,
-and status of recently processed files.
+Shows directory being watched, poll interval, and files
+organized by category: Pending, Ongoing, Done.
 """
 
 from pathlib import Path
@@ -73,17 +73,33 @@ class WatchFileItem(ListItem):
 
 class WatchPanel(Static):
     """
-    Panel showing watch mode status and files.
+    Panel showing watch mode status and files organized by category.
 
     Displays:
     - Directory being watched
     - Poll interval
     - Auto-convert setting
     - Watch status (watching/paused/stopped)
-    - Pending files count
     - Status counts (completed/failed/paused)
-    - List of recent files with their status
+    - Files by category: PENDING, ONGOING, DONE
     """
+
+    # Map statuses to categories
+    CATEGORY_PENDING = "pending"
+    CATEGORY_ONGOING = "ongoing"
+    CATEGORY_DONE = "done"
+    CATEGORY_PAUSED = "paused"
+    CATEGORY_FAILED = "failed"
+
+    STATUS_TO_CATEGORY = {
+        "pending": CATEGORY_PENDING,
+        "processing": CATEGORY_ONGOING,
+        "completed": CATEGORY_DONE,
+        "failed": CATEGORY_FAILED,
+        "paused": CATEGORY_PAUSED,
+        "skipped": CATEGORY_FAILED,
+        "converted": None,  # Transitional, keeps current category
+    }
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -95,8 +111,13 @@ class WatchPanel(Static):
         self._completed: int = 0
         self._failed: int = 0
         self._paused: int = 0
-        self._pending_count: int = 0
-        self._files: Dict[str, WatchFileItem] = {}
+
+        # Track files by category
+        self._pending_files: Dict[str, WatchFileItem] = {}
+        self._ongoing_files: Dict[str, WatchFileItem] = {}
+        self._done_files: Dict[str, WatchFileItem] = {}
+        self._paused_files: Dict[str, WatchFileItem] = {}
+        self._failed_files: Dict[str, WatchFileItem] = {}
 
     def compose(self) -> ComposeResult:
         yield Label("WATCH", classes="title")
@@ -113,17 +134,107 @@ class WatchPanel(Static):
             with Horizontal(classes="stat-row"):
                 yield Label("Status:", classes="stat-label")
                 yield Label("Watching", id="watch-status", classes="stat-value")
-            with Horizontal(classes="stat-row"):
-                yield Label("Pending:", classes="stat-label")
-                yield Label(self._format_pending_count(), id="watch-pending", classes="stat-value")
+
         yield Label("", classes="spacer")
         with Horizontal(classes="counts-row"):
             yield Label(f"✓ {self._completed}", id="count-completed", classes="count-completed")
             yield Label(f"✗ {self._failed}", id="count-failed", classes="count-failed")
             yield Label(f"⏸ {self._paused}", id="count-paused", classes="count-paused")
-        yield Label("", classes="spacer")
-        yield Label("Recent Files:", classes="section-title")
-        yield ListView(id="watch-files")
+
+        # Category: PENDING
+        yield Label("PENDING", id="pending-header", classes="category-header")
+        yield ListView(id="pending-files", classes="category-list")
+
+        # Category: ONGOING
+        yield Label("ONGOING", id="ongoing-header", classes="category-header category-ongoing")
+        yield ListView(id="ongoing-files", classes="category-list")
+
+        # Category: DONE
+        yield Label("DONE", id="done-header", classes="category-header category-done")
+        yield ListView(id="done-files", classes="category-list")
+
+        # Category: PAUSED
+        yield Label("PAUSED", id="paused-header", classes="category-header category-paused")
+        yield ListView(id="paused-files", classes="category-list")
+
+        # Category: FAILED
+        yield Label("FAILED", id="failed-header", classes="category-header category-failed")
+        yield ListView(id="failed-files", classes="category-list")
+
+    def _get_category(self, status: str) -> Optional[str]:
+        """Get category for a given status."""
+        return self.STATUS_TO_CATEGORY.get(status, self.CATEGORY_PENDING)
+
+    def _get_files_dict(self, category: str) -> Dict[str, WatchFileItem]:
+        """Get the files dict for a category."""
+        if category == self.CATEGORY_PENDING:
+            return self._pending_files
+        elif category == self.CATEGORY_ONGOING:
+            return self._ongoing_files
+        elif category == self.CATEGORY_DONE:
+            return self._done_files
+        elif category == self.CATEGORY_PAUSED:
+            return self._paused_files
+        elif category == self.CATEGORY_FAILED:
+            return self._failed_files
+        return self._pending_files
+
+    def _get_list_id(self, category: str) -> str:
+        """Get ListView ID for a category."""
+        if category == self.CATEGORY_PENDING:
+            return "#pending-files"
+        elif category == self.CATEGORY_ONGOING:
+            return "#ongoing-files"
+        elif category == self.CATEGORY_DONE:
+            return "#done-files"
+        elif category == self.CATEGORY_PAUSED:
+            return "#paused-files"
+        elif category == self.CATEGORY_FAILED:
+            return "#failed-files"
+        return "#pending-files"
+
+    def _find_file_category(self, filename: str) -> Optional[str]:
+        """Find which category a file is currently in."""
+        if filename in self._pending_files:
+            return self.CATEGORY_PENDING
+        elif filename in self._ongoing_files:
+            return self.CATEGORY_ONGOING
+        elif filename in self._done_files:
+            return self.CATEGORY_DONE
+        elif filename in self._paused_files:
+            return self.CATEGORY_PAUSED
+        elif filename in self._failed_files:
+            return self.CATEGORY_FAILED
+        return None
+
+    def _update_category_headers(self) -> None:
+        """Update category headers to show counts."""
+        try:
+            counts = {
+                "pending": len(self._pending_files),
+                "ongoing": len(self._ongoing_files),
+                "done": len(self._done_files),
+                "paused": len(self._paused_files),
+                "failed": len(self._failed_files),
+            }
+
+            headers = {
+                "pending": (self.query_one("#pending-header", Label), "PENDING"),
+                "ongoing": (self.query_one("#ongoing-header", Label), "ONGOING"),
+                "done": (self.query_one("#done-header", Label), "DONE"),
+                "paused": (self.query_one("#paused-header", Label), "PAUSED"),
+                "failed": (self.query_one("#failed-header", Label), "FAILED"),
+            }
+
+            for key, (header, label) in headers.items():
+                count = counts[key]
+                header.update(f"{label} ({count})" if count else label)
+                if count:
+                    header.add_class("has-items")
+                else:
+                    header.remove_class("has-items")
+        except Exception:
+            pass
 
     def set_config(self, directory: str, poll_interval: int, auto_convert: bool) -> None:
         """Set watch configuration."""
@@ -203,21 +314,33 @@ class WatchPanel(Static):
             pass
 
     def add_file(self, filename: str, status: str = "pending") -> None:
-        """Add a file to the watch list."""
-        if filename in self._files:
+        """Add a file to the appropriate category list."""
+        # Check if file already exists in any category
+        current_category = self._find_file_category(filename)
+        if current_category is not None:
             self.update_file(filename, status)
             return
 
+        # Determine target category
+        target_category = self._get_category(status)
+        if target_category is None:
+            target_category = self.CATEGORY_PENDING
+
         try:
-            list_view = self.query_one("#watch-files", ListView)
+            list_id = self._get_list_id(target_category)
+            list_view = self.query_one(list_id, ListView)
+            files_dict = self._get_files_dict(target_category)
+
             item = WatchFileItem(filename, status)
-            self._files[filename] = item
+            files_dict[filename] = item
             list_view.append(item)
 
-            # Keep list manageable - remove oldest if too many
-            if len(self._files) > 10:
-                oldest = list(self._files.keys())[0]
-                self.remove_file(oldest)
+            # Keep each category list manageable
+            if len(files_dict) > 8:
+                oldest = list(files_dict.keys())[0]
+                self._remove_file_from_category(oldest, target_category)
+
+            self._update_category_headers()
         except Exception:
             pass
 
@@ -228,7 +351,7 @@ class WatchPanel(Static):
         error: Optional[str] = None,
         original_filename: Optional[str] = None,
     ) -> None:
-        """Update a file's status, handling renames.
+        """Update a file's status, moving between categories as needed.
 
         Args:
             filename: Current filename (may be renamed)
@@ -236,35 +359,104 @@ class WatchPanel(Static):
             error: Optional error message
             original_filename: If file was renamed, the original filename to update
         """
-        # If this is a rename, update the original entry instead of creating new
-        if original_filename and original_filename in self._files:
-            item = self._files[original_filename]
-            # Update the status and displayed filename
-            item.update_status(status, error)
-            item.update_filename(filename)
-            # Re-key in our dict (remove old, add with new key)
-            self._files.pop(original_filename)
-            self._files[filename] = item
-        elif filename in self._files:
-            self._files[filename].update_status(status, error)
-        else:
+        # Handle renames: find the file by original name
+        lookup_name = original_filename if original_filename else filename
+        current_category = self._find_file_category(lookup_name)
+
+        if current_category is None:
+            # File not found, add it
             self.add_file(filename, status)
+            return
+
+        # Determine target category
+        target_category = self._get_category(status)
+        if target_category is None:
+            # Transitional status (like converted), keep in current category
+            target_category = current_category
+
+        # Get current item
+        files_dict = self._get_files_dict(current_category)
+        item = files_dict.get(lookup_name)
+        if not item:
+            self.add_file(filename, status)
+            return
+
+        if current_category == target_category:
+            # Same category, just update
+            item.update_status(status, error)
+            if original_filename and filename != original_filename:
+                item.update_filename(filename)
+                files_dict.pop(lookup_name)
+                files_dict[filename] = item
+        else:
+            # Move to different category
+            self._move_file_to_category(lookup_name, filename, status, error, current_category, target_category)
+
+        self._update_category_headers()
+
+    def _move_file_to_category(
+        self,
+        old_filename: str,
+        new_filename: str,
+        status: str,
+        error: Optional[str],
+        from_category: str,
+        to_category: str,
+    ) -> None:
+        """Move a file from one category to another."""
+        try:
+            # Remove from old category
+            old_files = self._get_files_dict(from_category)
+            old_item = old_files.pop(old_filename, None)
+            if old_item:
+                old_item.remove()
+
+            # Add to new category
+            new_list_id = self._get_list_id(to_category)
+            new_list = self.query_one(new_list_id, ListView)
+            new_files = self._get_files_dict(to_category)
+
+            new_item = WatchFileItem(new_filename, status, error)
+            new_files[new_filename] = new_item
+            new_list.append(new_item)
+
+            # Keep list manageable
+            if len(new_files) > 8:
+                oldest = list(new_files.keys())[0]
+                self._remove_file_from_category(oldest, to_category)
+        except Exception:
+            pass
+
+    def _remove_file_from_category(self, filename: str, category: str) -> None:
+        """Remove a file from a specific category."""
+        try:
+            files_dict = self._get_files_dict(category)
+            item = files_dict.pop(filename, None)
+            if item:
+                item.remove()
+        except Exception:
+            pass
 
     def remove_file(self, filename: str) -> None:
-        """Remove a file from the list."""
-        if filename in self._files:
-            try:
-                item = self._files.pop(filename)
-                item.remove()
-            except Exception:
-                pass
+        """Remove a file from whichever category it's in."""
+        category = self._find_file_category(filename)
+        if category:
+            self._remove_file_from_category(filename, category)
+            self._update_category_headers()
 
     def clear_files(self) -> None:
-        """Clear all files from the list."""
+        """Clear all files from all category lists."""
         try:
-            list_view = self.query_one("#watch-files", ListView)
-            list_view.clear()
-            self._files.clear()
+            for list_id in ["#pending-files", "#ongoing-files", "#done-files", "#paused-files", "#failed-files"]:
+                list_view = self.query_one(list_id, ListView)
+                list_view.clear()
+
+            self._pending_files.clear()
+            self._ongoing_files.clear()
+            self._done_files.clear()
+            self._paused_files.clear()
+            self._failed_files.clear()
+            self._update_category_headers()
         except Exception:
             pass
 
@@ -273,39 +465,19 @@ class WatchPanel(Static):
         Sync the pending files list with the current directory state.
 
         Adds new pending files and removes files that are no longer pending
-        (unless they have a non-pending status like processing, completed, etc).
+        (unless they have moved to a different category).
         """
         pending_set = set(pending_files)
 
         # Add new pending files
         for filename in pending_files:
-            if filename not in self._files:
+            if self._find_file_category(filename) is None:
                 self.add_file(filename, "pending")
 
-        # Remove files that are no longer pending and were in pending state
-        for filename in list(self._files.keys()):
+        # Remove files from pending that are no longer in the directory
+        # (only if they're still in pending state)
+        for filename in list(self._pending_files.keys()):
             if filename not in pending_set:
-                item = self._files.get(filename)
-                # Only remove if it was pending (not processing/completed/etc)
-                if item and item.file_status == "pending":
-                    self.remove_file(filename)
+                self._remove_file_from_category(filename, self.CATEGORY_PENDING)
 
-        # Update pending count
-        self._pending_count = len(pending_files)
-        self._update_pending_display()
-
-    def _format_pending_count(self) -> str:
-        """Format pending count as 'N files' or '0'."""
-        if self._pending_count == 0:
-            return "0"
-        elif self._pending_count == 1:
-            return "1 file"
-        else:
-            return f"{self._pending_count} files"
-
-    def _update_pending_display(self) -> None:
-        """Update the pending count display."""
-        try:
-            self.query_one("#watch-pending", Label).update(self._format_pending_count())
-        except Exception:
-            pass
+        self._update_category_headers()

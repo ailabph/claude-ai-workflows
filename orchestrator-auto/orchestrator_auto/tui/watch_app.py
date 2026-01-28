@@ -201,8 +201,9 @@ class WatchTUI(App):
     }
 
     #lb-watch-panel {
-        height: auto;
-        max-height: 18;
+        height: 1fr;
+        min-height: 24;
+        max-height: 40;
     }
 
     /* Middle column: Sub-agents + Stats */

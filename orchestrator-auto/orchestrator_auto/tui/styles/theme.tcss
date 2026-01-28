@@ -343,7 +343,7 @@ WatchPanel {
     background: $surface;
     padding: 0 1;
     height: auto;
-    min-height: 12;
+    min-height: 20;
 }
 
 WatchPanel .title {
@@ -381,6 +381,33 @@ WatchPanel .section-title {
     margin-top: 1;
 }
 
+WatchPanel .category-header {
+    color: $text-muted;
+    text-style: bold;
+    margin-top: 1;
+    height: 1;
+}
+
+WatchPanel .category-header.has-items {
+    color: $text;
+}
+
+WatchPanel .category-header.category-ongoing.has-items {
+    color: $primary;
+}
+
+WatchPanel .category-header.category-done.has-items {
+    color: $accent;
+}
+
+WatchPanel .category-header.category-paused.has-items {
+    color: $warning;
+}
+
+WatchPanel .category-header.category-failed.has-items {
+    color: $error;
+}
+
 WatchPanel .counts-row {
     height: 1;
 }
@@ -403,7 +430,13 @@ WatchPanel .count-paused {
 WatchPanel ListView {
     background: transparent;
     height: auto;
-    max-height: 8;
+    max-height: 4;
+}
+
+WatchPanel .category-list {
+    height: auto;
+    max-height: 4;
+    margin-left: 1;
 }
 
 /* Watch file items */
