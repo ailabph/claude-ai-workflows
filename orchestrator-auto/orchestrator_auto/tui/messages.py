@@ -413,16 +413,30 @@ class TodoCompleted(Message):
 
 
 # Sub-agent messages for Layout B
+# Status constants to avoid string drift
+EXPLORE_STATUS_PENDING = "pending"
+EXPLORE_STATUS_RUNNING = "running"
+EXPLORE_STATUS_COMPLETED = "completed"
+EXPLORE_STATUS_FAILED = "failed"
+
+VALIDATE_STATUS_PENDING = "pending"
+VALIDATE_STATUS_RUNNING = "running"
+VALIDATE_STATUS_PASSED = "passed"
+VALIDATE_STATUS_ISSUES = "issues"
+VALIDATE_STATUS_FAILED = "failed"
+
 
 class ExploreStarted(Message):
     """Exploration sub-agent has started."""
 
-    def __init__(self, queries: list[str]) -> None:
+    def __init__(self, milestone: int, query_count: int) -> None:
         """
         Args:
-            queries: List of exploration query strings
+            milestone: Milestone number being explored
+            query_count: Number of exploration queries to run
         """
-        self.queries = queries
+        self.milestone = milestone
+        self.query_count = query_count
         super().__init__()
 
 
@@ -441,7 +455,7 @@ class ExploreQueryUpdate(Message):
         Args:
             index: Query index (0-based)
             query: Query text
-            status: Query status ("pending", "running", "completed", "failed")
+            status: Query status (use EXPLORE_STATUS_* constants)
             tokens_used: Tokens used for this query
             is_partial: Whether result was truncated/timed out
         """
@@ -456,28 +470,32 @@ class ExploreQueryUpdate(Message):
 class ExploreCompleted(Message):
     """Exploration sub-agent has completed."""
 
-    def __init__(self, total_queries: int, successful: int, failed: int) -> None:
+    def __init__(self, milestone: int, query_count: int, success_count: int) -> None:
         """
         Args:
-            total_queries: Total number of queries
-            successful: Number of successful queries
-            failed: Number of failed queries
+            milestone: Milestone number that was explored
+            query_count: Total number of queries run
+            success_count: Number of successful queries
         """
-        self.total_queries = total_queries
-        self.successful = successful
-        self.failed = failed
+        self.milestone = milestone
+        self.query_count = query_count
+        self.success_count = success_count
+        # Computed field for convenience
+        self.failed_count = query_count - success_count
         super().__init__()
 
 
 class ValidateStarted(Message):
     """Validation pipeline has started."""
 
-    def __init__(self, validators: list[str]) -> None:
+    def __init__(self, milestone: int, file_count: int) -> None:
         """
         Args:
-            validators: List of validator names
+            milestone: Milestone number being validated
+            file_count: Number of changed files to validate
         """
-        self.validators = validators
+        self.milestone = milestone
+        self.file_count = file_count
         super().__init__()
 
 
@@ -495,7 +513,7 @@ class ValidatorUpdate(Message):
         """
         Args:
             name: Validator name
-            status: Status ("pending", "running", "passed", "issues", "failed")
+            status: Status (use VALIDATE_STATUS_* constants)
             issue_count: Total issues found
             high_count: High severity issues
             medium_count: Medium severity issues
@@ -513,20 +531,20 @@ class ValidateCompleted(Message):
 
     def __init__(
         self,
-        total_validators: int,
-        passed: int,
-        with_issues: int,
-        failed: int,
+        milestone: int,
+        total_issues: int,
+        high_count: int,
+        passed: bool,
     ) -> None:
         """
         Args:
-            total_validators: Total number of validators
-            passed: Number of validators that passed
-            with_issues: Number of validators that found issues
-            failed: Number of validators that failed/errored
+            milestone: Milestone number that was validated
+            total_issues: Total issues found across all validators
+            high_count: Number of high severity issues
+            passed: Whether validation passed (no blocking issues)
         """
-        self.total_validators = total_validators
+        self.milestone = milestone
+        self.total_issues = total_issues
+        self.high_count = high_count
         self.passed = passed
-        self.with_issues = with_issues
-        self.failed = failed
         super().__init__()

@@ -320,7 +320,13 @@ class WatchTUI(App):
         # Focusable panels depend on layout mode
         if self.verbose:
             if self._use_layout_b:
-                self._focusable_panels = ["#lb-executor-output", "#lb-log-panel"]
+                # Layout B: include milestone list, subagent panel, executor, log
+                self._focusable_panels = [
+                    "#lb-milestone-list",
+                    "#lb-subagent-panel",
+                    "#lb-executor-output",
+                    "#lb-log-panel",
+                ]
             else:
                 self._focusable_panels = ["#planner-output", "#executor-output", "#log-panel"]
         else:
@@ -795,15 +801,18 @@ class WatchTUI(App):
             )
 
         # Sub-agent events (Layout B)
+        # Use helper to avoid drift between EXPLORE_QUERY and EXPLORE_QUERY_DONE
         elif event == WatchEvent.EXPLORE_STARTED:
             self.call_from_thread(
                 self.post_message,
                 messages.ExploreStarted(
-                    queries=data.get("queries", []),
+                    milestone=data.get("milestone", 0),
+                    query_count=data.get("query_count", 0),
                 )
             )
 
-        elif event == WatchEvent.EXPLORE_QUERY:
+        elif event in (WatchEvent.EXPLORE_QUERY, WatchEvent.EXPLORE_QUERY_DONE):
+            # Unified handler for both query events - status comes from payload
             self.call_from_thread(
                 self.post_message,
                 messages.ExploreQueryUpdate(
@@ -815,25 +824,13 @@ class WatchTUI(App):
                 )
             )
 
-        elif event == WatchEvent.EXPLORE_QUERY_DONE:
-            self.call_from_thread(
-                self.post_message,
-                messages.ExploreQueryUpdate(
-                    index=data.get("index", 0),
-                    query=data.get("query", ""),
-                    status=data.get("status", "completed"),
-                    tokens_used=data.get("tokens_used", 0),
-                    is_partial=data.get("is_partial", False),
-                )
-            )
-
         elif event == WatchEvent.EXPLORE_COMPLETED:
             self.call_from_thread(
                 self.post_message,
                 messages.ExploreCompleted(
-                    total_queries=data.get("total_queries", 0),
-                    successful=data.get("successful", 0),
-                    failed=data.get("failed", 0),
+                    milestone=data.get("milestone", 0),
+                    query_count=data.get("query_count", 0),
+                    success_count=data.get("success_count", 0),
                 )
             )
 
@@ -841,7 +838,8 @@ class WatchTUI(App):
             self.call_from_thread(
                 self.post_message,
                 messages.ValidateStarted(
-                    validators=data.get("validators", []),
+                    milestone=data.get("milestone", 0),
+                    file_count=data.get("file_count", 0),
                 )
             )
 
@@ -850,7 +848,7 @@ class WatchTUI(App):
                 self.post_message,
                 messages.ValidatorUpdate(
                     name=data.get("name", ""),
-                    status="running",
+                    status=data.get("status", "running"),
                 )
             )
 
@@ -870,10 +868,10 @@ class WatchTUI(App):
             self.call_from_thread(
                 self.post_message,
                 messages.ValidateCompleted(
-                    total_validators=data.get("total_validators", 0),
-                    passed=data.get("passed", 0),
-                    with_issues=data.get("with_issues", 0),
-                    failed=data.get("failed", 0),
+                    milestone=data.get("milestone", 0),
+                    total_issues=data.get("total_issues", 0),
+                    high_count=data.get("high_count", 0),
+                    passed=data.get("passed", False),
                 )
             )
 
@@ -1522,17 +1520,13 @@ class WatchTUI(App):
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
             subagent_panel.set_explore_status("running")
-            # Initialize queries with pending status
-            queries = [
-                ExplorationQuery(query=q, status="pending")
-                for q in message.queries
-            ]
-            subagent_panel.set_explore_queries(queries)
+            # Clear any previous queries - they'll be added via EXPLORE_QUERY events
+            subagent_panel.clear_explore_queries()
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
-            log_panel.log_info(f"Exploring: {len(message.queries)} queries")
-        except Exception:
-            pass
+            log_panel.log_info(f"Exploring M{message.milestone}: {message.query_count} queries")
+        except Exception as e:
+            self._log_debug(f"on_explore_started error: {e}")
 
     def on_explore_query_update(self, message: messages.ExploreQueryUpdate) -> None:
         """Handle exploration query status update."""
@@ -1541,14 +1535,18 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.update_explore_query(
-                message.index,
-                message.status,
-                message.tokens_used,
-                message.is_partial,
-            )
-        except Exception:
-            pass
+            # Add query if pending (first time seeing it), otherwise update
+            if message.status == "pending":
+                subagent_panel.add_explore_query(message.query, message.status)
+            else:
+                subagent_panel.update_explore_query(
+                    message.index,
+                    message.status,
+                    message.tokens_used,
+                    message.is_partial,
+                )
+        except Exception as e:
+            self._log_debug(f"on_explore_query_update error: {e}")
 
     def on_explore_completed(self, message: messages.ExploreCompleted) -> None:
         """Handle exploration completed."""
@@ -1561,10 +1559,10 @@ class WatchTUI(App):
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_success(
-                f"Exploration complete: {message.successful}/{message.total_queries} queries"
+                f"Exploration complete: {message.success_count}/{message.query_count} queries"
             )
-        except Exception:
-            pass
+        except Exception as e:
+            self._log_debug(f"on_explore_completed error: {e}")
 
     def on_validate_started(self, message: messages.ValidateStarted) -> None:
         """Handle validation started."""
@@ -1574,17 +1572,13 @@ class WatchTUI(App):
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
             subagent_panel.set_validate_status("running")
-            # Initialize validators with pending status
-            validators = [
-                ValidatorStatus(name=v, status="pending")
-                for v in message.validators
-            ]
-            subagent_panel.set_validators(validators)
+            # Clear any previous validators - they'll be added via VALIDATOR_STARTED events
+            subagent_panel.set_validators([])
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
-            log_panel.log_info(f"Validating: {len(message.validators)} validators")
-        except Exception:
-            pass
+            log_panel.log_info(f"Validating M{message.milestone}: {message.file_count} files")
+        except Exception as e:
+            self._log_debug(f"on_validate_started error: {e}")
 
     def on_validator_update(self, message: messages.ValidatorUpdate) -> None:
         """Handle validator status update."""
@@ -1593,6 +1587,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
+            # update_validator handles both adding new and updating existing
             subagent_panel.update_validator(
                 message.name,
                 message.status,
@@ -1600,8 +1595,8 @@ class WatchTUI(App):
                 message.high_count,
                 message.medium_count,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            self._log_debug(f"on_validator_update error: {e}")
 
     def on_validate_completed(self, message: messages.ValidateCompleted) -> None:
         """Handle validation completed."""
@@ -1613,16 +1608,15 @@ class WatchTUI(App):
             subagent_panel.set_validate_status("completed")
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
-            if message.with_issues > 0:
+            if message.total_issues > 0:
+                severity = "high" if message.high_count > 0 else "medium"
                 log_panel.log_warning(
-                    f"Validation: {message.passed} passed, {message.with_issues} with issues"
+                    f"Validation: {message.total_issues} issues ({message.high_count} high)"
                 )
             else:
-                log_panel.log_success(
-                    f"Validation: {message.passed}/{message.total_validators} passed"
-                )
-        except Exception:
-            pass
+                log_panel.log_success("Validation: passed")
+        except Exception as e:
+            self._log_debug(f"on_validate_completed error: {e}")
 
     # Actions
 
@@ -1796,6 +1790,17 @@ class WatchTUI(App):
             log_panel.log_error(message)
         except Exception:
             pass  # Truly silent - can't log if log panel is unavailable
+
+    def _log_debug(self, message: str) -> None:
+        """Helper to log debug messages for diagnosing UI issues."""
+        try:
+            if self._use_layout_b:
+                log_panel = self.query_one("#lb-log-panel", LogPanel)
+            else:
+                log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_debug(message)
+        except Exception:
+            pass  # Silent - debug logging is best-effort
 
     def action_copy_session_id(self) -> None:
         """Copy current or paused session ID to clipboard."""

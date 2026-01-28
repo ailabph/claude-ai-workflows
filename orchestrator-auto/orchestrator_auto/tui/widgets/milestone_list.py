@@ -36,6 +36,9 @@ class MilestoneItem(ListItem):
         super().__init__(**kwargs)
         self.milestone = milestone
         self.add_class(f"milestone-{milestone.status}")
+        # Store references to labels for direct updates (avoids dynamic ID queries)
+        self._marker_label: Optional[Label] = None
+        self._sub_info_label: Optional[Label] = None
 
     def compose(self) -> ComposeResult:
         """Compose with Vertical container for milestone + sub-info."""
@@ -43,20 +46,21 @@ class MilestoneItem(ListItem):
         with Vertical(classes="milestone-container"):
             # Main milestone row
             with Horizontal(classes="milestone-row"):
-                yield Label(marker, classes="milestone-marker")
+                self._marker_label = Label(marker, classes="milestone-marker")
+                yield self._marker_label
                 yield Label(f" M{self.milestone.id}: {self.milestone.title}", classes="milestone-title")
             # Sub-info row (task progress or files changed)
-            yield Label(self._format_sub_info(), classes="milestone-sub-info", id=f"sub-info-{self.milestone.id}")
+            self._sub_info_label = Label(self._format_sub_info(), classes="milestone-sub-info")
+            yield self._sub_info_label
 
     def _format_sub_info(self) -> str:
         """Format the sub-info line (task progress or files changed)."""
         m = self.milestone
+        # Show files changed for completed milestones
         if m.status == "completed" and m.files_changed is not None and m.files_changed > 0:
             return f"  └ {m.files_changed} files"
-        elif m.status == "active" and m.task_count is not None and m.task_count > 0:
-            completed = m.tasks_completed or 0
-            return f"  └ {completed}/{m.task_count} tasks"
-        elif m.task_count is not None and m.task_count > 0:
+        # Show task progress if available (any status)
+        if m.task_count is not None and m.task_count > 0:
             completed = m.tasks_completed or 0
             return f"  └ {completed}/{m.task_count} tasks"
         return ""  # Empty if no info available
@@ -69,11 +73,11 @@ class MilestoneItem(ListItem):
         self.milestone.status = status
         # Add new status class
         self.add_class(f"milestone-{status}")
-        # Update marker
+        # Update marker using stored reference
         marker = self.MARKERS.get(status, "[ ]")
-        if self.is_mounted:
-            self.query_one(".milestone-marker", Label).update(marker)
-            self._refresh_sub_info()
+        if self._marker_label is not None:
+            self._marker_label.update(marker)
+        self._refresh_sub_info()
 
     def update_tasks(self, tasks_completed: int, task_count: int) -> None:
         """Update task progress for this milestone."""
@@ -87,13 +91,9 @@ class MilestoneItem(ListItem):
         self._refresh_sub_info()
 
     def _refresh_sub_info(self) -> None:
-        """Refresh the sub-info display."""
-        if self.is_mounted:
-            try:
-                sub_info = self.query_one(f"#sub-info-{self.milestone.id}", Label)
-                sub_info.update(self._format_sub_info())
-            except Exception:
-                pass
+        """Refresh the sub-info display using stored reference."""
+        if self._sub_info_label is not None:
+            self._sub_info_label.update(self._format_sub_info())
 
 
 class MilestoneList(Static):
