@@ -187,16 +187,22 @@ class WatchTUI(App):
         width: 100%;
     }
 
-    /* Left column: Milestones */
+    /* Left column: Milestones + Watch */
     #lb-left-col {
         width: 1fr;
         min-width: 18;
-        max-width: 25;
+        max-width: 28;
         height: 100%;
     }
 
     #lb-milestone-list {
         height: 1fr;
+        min-height: 8;
+    }
+
+    #lb-watch-panel {
+        height: auto;
+        max-height: 18;
     }
 
     /* Middle column: Sub-agents + Stats */
@@ -416,9 +422,10 @@ class WatchTUI(App):
             yield MilestoneProgressBar(id="progress-bar")
 
             with Horizontal(id="layout-b-content"):
-                # Left column: Milestones
+                # Left column: Milestones + Watch
                 with Vertical(id="lb-left-col"):
                     yield MilestoneList(id="lb-milestone-list")
+                    yield WatchPanel(id="lb-watch-panel")
 
                 # Middle column: Sub-agents + Stats
                 with Vertical(id="lb-middle-col"):
@@ -983,10 +990,13 @@ class WatchTUI(App):
     def _update_watch_counts(self) -> None:
         """Update the watch panel counts."""
         try:
-            if self.verbose and not self._use_layout_b:
+            if self._use_layout_b:
+                watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+                watch_panel.update_counts(self._completed, self._failed, self._paused)
+            elif self.verbose:
                 watch_panel = self.query_one("#watch-panel", WatchPanel)
                 watch_panel.update_counts(self._completed, self._failed, self._paused)
-            elif not self.verbose:
+            else:
                 sidebar = self.query_one("#sidebar", CompactSidebar)
                 sidebar.update_queue_counts(self._completed, self._failed, self._paused)
         except Exception:
@@ -996,7 +1006,10 @@ class WatchTUI(App):
         """Set watch panel to running state and clear paused session."""
         self._paused_session_id = None  # Clear paused session on resume
         try:
-            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            if self._use_layout_b:
+                watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            else:
+                watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.set_running()
         except Exception:
             pass
@@ -1055,6 +1068,13 @@ class WatchTUI(App):
     def on_watch_started(self, message: messages.WatchStarted) -> None:
         """Handle watch started."""
         if self._use_layout_b:
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.set_config(
+                message.directory,
+                message.poll_interval,
+                message.auto_convert,
+            )
+
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_success(f"Watching {message.directory}")
         elif self.verbose:
@@ -1075,6 +1095,10 @@ class WatchTUI(App):
     def on_watch_stopped(self, message: messages.WatchStopped) -> None:
         """Handle watch stopped."""
         if self._use_layout_b:
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.set_stopped()
+            watch_panel.update_counts(message.completed, message.failed, message.paused)
+
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_success(
                 f"Watch stopped: {message.completed} completed, "
@@ -1109,6 +1133,9 @@ class WatchTUI(App):
         self._paused_session_id = message.session_id  # Track for in-TUI response
 
         if self._use_layout_b:
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.set_paused(message.session_id, message.plan_path)
+
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_warning(f"Paused on blocker: {message.plan_path}")
             log_panel.log_info("Press 'r' to respond to blocker")
@@ -1129,6 +1156,15 @@ class WatchTUI(App):
     def on_watch_file_updated(self, message: messages.WatchFileUpdated) -> None:
         """Handle file status update."""
         if self._use_layout_b:
+            # Update watch panel file list
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.update_file(
+                message.filename,
+                message.status,
+                message.error,
+                message.original_filename,
+            )
+
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             if message.status == "processing":
                 log_panel.log_info(f"Found: {message.filename}")
@@ -1191,10 +1227,13 @@ class WatchTUI(App):
 
     def on_watch_pending_updated(self, message: messages.WatchPendingUpdated) -> None:
         """Handle pending files list update."""
-        if self.verbose and not self._use_layout_b:
+        if self._use_layout_b:
+            watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+            watch_panel.sync_pending_files(message.pending_files)
+        elif self.verbose:
             watch_panel = self.query_one("#watch-panel", WatchPanel)
             watch_panel.sync_pending_files(message.pending_files)
-        elif not self.verbose:
+        else:
             # Compact mode: update sidebar file list
             sidebar = self.query_one("#sidebar", CompactSidebar)
             sidebar.clear_files()
@@ -2013,6 +2052,9 @@ class WatchTUI(App):
         """Update UI when polling is paused/resumed."""
         try:
             if self._use_layout_b:
+                watch_panel = self.query_one("#lb-watch-panel", WatchPanel)
+                watch_panel.set_polling_paused(paused)
+
                 log_panel = self.query_one("#lb-log-panel", LogPanel)
                 if paused:
                     log_panel.log_warning("Polling paused - press 'p' to resume")
