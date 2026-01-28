@@ -139,14 +139,12 @@ class WatchTUI(App):
     }
 
     #sidebar {
-        width: 20;
-        min-width: 20;
-        max-width: 20;
+        width: 1fr;
         height: 100%;
     }
 
     #agent-panel {
-        width: 1fr;
+        width: 3fr;
         height: 100%;
     }
 
@@ -156,7 +154,8 @@ class WatchTUI(App):
     }
     """
 
-    CSS = CSS_VERBOSE  # Default to verbose for backwards compatibility
+    # Combined CSS - both verbose and compact rules (non-conflicting IDs)
+    CSS = CSS_VERBOSE + CSS_COMPACT
 
     BINDINGS = GLOBAL_BINDINGS + WATCH_BINDINGS
 
@@ -174,6 +173,8 @@ class WatchTUI(App):
         telegram: Optional[bool] = None,
         mcp_config: Optional[str] = None,
         headless: bool = False,
+        explore: bool = False,
+        validate: bool = False,
         **kwargs,
     ) -> None:
         """
@@ -192,6 +193,8 @@ class WatchTUI(App):
             telegram: Whether to enable Telegram notifications
             mcp_config: Path to MCP configuration file
             headless: Whether to run browsers in headless mode
+            explore: Whether to run exploration sub-agent before milestones
+            validate: Whether to run validation pipeline after milestones
         """
         super().__init__(**kwargs)
         self.verbose = verbose
@@ -206,6 +209,8 @@ class WatchTUI(App):
         self.telegram = telegram
         self.mcp_config = mcp_config
         self.headless = headless
+        self.explore = explore
+        self.validate = validate
 
         # Get project identity for DB operations
         self.project_id, _ = get_project_identity()
@@ -368,8 +373,10 @@ class WatchTUI(App):
 
     def _start_watch(self) -> None:
         """Start the watch controller in a worker thread."""
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.start_timer()
+        if self.verbose:
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.start_timer()
+        # Compact mode: timer is handled via _update_elapsed_time calls
 
         self._worker = self.run_worker(
             self._run_watch,
@@ -425,6 +432,8 @@ class WatchTUI(App):
                 mcp_config_path=self.mcp_config,
                 headless=self.headless,
                 show_activity=False,  # TUI handles display
+                explore_enabled=self.explore,
+                validate_enabled=self.validate,
             )
 
             # Run the watch loop
@@ -840,8 +849,15 @@ class WatchTUI(App):
 
     def on_watch_pending_updated(self, message: messages.WatchPendingUpdated) -> None:
         """Handle pending files list update."""
-        watch_panel = self.query_one("#watch-panel", WatchPanel)
-        watch_panel.sync_pending_files(message.pending_files)
+        if self.verbose:
+            watch_panel = self.query_one("#watch-panel", WatchPanel)
+            watch_panel.sync_pending_files(message.pending_files)
+        else:
+            # Compact mode: update sidebar file list
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.clear_files()
+            for filename in message.pending_files[:6]:  # Limit to 6 files
+                sidebar.add_file(filename, "pending")
 
     def on_watch_session_started(self, message: messages.WatchSessionStarted) -> None:
         """Handle session started - update status panel with session info."""
@@ -1018,35 +1034,60 @@ class WatchTUI(App):
 
     def on_input_requested(self, message: messages.InputRequested) -> None:
         """Handle input request - show input modal."""
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_warning(f"Input requested: {message.prompt_text}")
+        if self.verbose:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_warning(f"Input requested: {message.prompt_text}")
+        else:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log(f"Input requested: {message.prompt_text[:30]}...", "warning")
         self.push_screen(InputModal(message.prompt_text, self._input_provider))
 
     def on_milestone_updated(self, message: messages.MilestoneUpdated) -> None:
         """Handle milestone status update."""
-        milestone_list = self.query_one("#milestone-list", MilestoneList)
-        milestone_list.update_milestone(message.milestone_id, message.status, message.title)
+        if self.verbose:
+            milestone_list = self.query_one("#milestone-list", MilestoneList)
+            milestone_list.update_milestone(message.milestone_id, message.status, message.title)
 
-        log_panel = self.query_one("#log-panel", LogPanel)
-        if message.status == "active":
-            log_panel.log_milestone_start(message.milestone_id, message.title)
-        elif message.status == "completed":
-            log_panel.log_milestone_complete(message.milestone_id)
+            log_panel = self.query_one("#log-panel", LogPanel)
+            if message.status == "active":
+                log_panel.log_milestone_start(message.milestone_id, message.title)
+            elif message.status == "completed":
+                log_panel.log_milestone_complete(message.milestone_id)
+        else:
+            # Compact mode: update sidebar milestone display
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.set_current_milestone(message.milestone_id)
+
+            status_bar = self.query_one("#status-bar", StatusBar)
+            if message.status == "active":
+                status_bar.set_activity(f"M{message.milestone_id}: {message.title[:30]}...")
+            elif message.status == "completed":
+                status_bar.log(f"M{message.milestone_id} completed", "success")
 
     def on_milestones_loaded(self, message: messages.MilestonesLoaded) -> None:
         """Handle milestones loaded from plan."""
-        milestone_list = self.query_one("#milestone-list", MilestoneList)
-        milestone_list.set_milestones(message.milestones)
+        if self.verbose:
+            milestone_list = self.query_one("#milestone-list", MilestoneList)
+            milestone_list.set_milestones(message.milestones)
+        else:
+            sidebar = self.query_one("#sidebar", CompactSidebar)
+            sidebar.update_milestones(message.milestones, 0)
 
     def on_models_set(self, message: messages.ModelsSet) -> None:
         """Handle model configuration."""
-        status_panel = self.query_one("#status-panel", StatusPanel)
-        status_panel.update_models(message.planner_model, message.executor_model)
+        if self.verbose:
+            status_panel = self.query_one("#status-panel", StatusPanel)
+            status_panel.update_models(message.planner_model, message.executor_model)
+        # Compact mode: models not displayed in sidebar (too cramped)
 
     def on_workflow_error(self, message: messages.WorkflowError) -> None:
         """Handle workflow error."""
-        log_panel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_error(f"Error: {message.error}")
+        if self.verbose:
+            log_panel = self.query_one("#log-panel", LogPanel)
+            log_panel.log_error(f"Error: {message.error}")
+        else:
+            status_bar = self.query_one("#status-bar", StatusBar)
+            status_bar.log(f"Error: {message.error[:40]}...", "error")
 
     # Actions
 

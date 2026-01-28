@@ -264,6 +264,8 @@ def _start_watch_tui(
     show_activity: bool,
     mcp_config: Optional[str],
     headless: bool,
+    explore: bool = False,
+    validate: bool = False,
 ) -> None:
     """
     Start watch mode with TUI dashboard.
@@ -285,6 +287,8 @@ def _start_watch_tui(
         show_activity: Whether to show streaming activity (ignored in TUI)
         mcp_config: Path to MCP configuration file
         headless: Whether to run Playwright browser headless
+        explore: Whether to run exploration sub-agent before milestones
+        validate: Whether to run validation pipeline after milestones
     """
     try:
         from .tui import get_watch_app_class, check_textual_available
@@ -317,6 +321,8 @@ def _start_watch_tui(
         telegram=telegram,
         mcp_config=mcp_config,
         headless=headless,
+        explore=explore,
+        validate=validate,
     )
 
     # Run the TUI app (blocking)
@@ -3583,6 +3589,8 @@ def _rename_to_terminal(
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--tui/--no-tui', default=False, help='Launch Textual TUI dashboard')
 @click.option('--verbose', '-v', is_flag=True, default=False, help='TUI: use expanded layout with dual agent panels (default: compact)')
+@click.option('--explore/--no-explore', default=False, help='Run exploration sub-agent before each milestone')
+@click.option('--validate/--no-validate', default=False, help='Run validation pipeline after each milestone')
 def watch(
     plans_dir: str,
     poll_interval: int,
@@ -3598,6 +3606,8 @@ def watch(
     headless: bool,
     tui: bool,
     verbose: bool,
+    explore: bool,
+    validate: bool,
 ):
     """Watch a directory for new plan files and execute them.
 
@@ -3617,6 +3627,7 @@ def watch(
         orchestrator watch ./plans/ --auto-commit
         orchestrator watch ./plans/ --tui
         orchestrator watch ./plans/ --tui --verbose
+        orchestrator watch ./plans/ --explore --validate
     """
     # Handle TUI mode
     if tui:
@@ -3634,6 +3645,8 @@ def watch(
             show_activity=show_activity,
             mcp_config=mcp_config,
             headless=headless,
+            explore=explore,
+            validate=validate,
         )
         return
 
@@ -3672,6 +3685,8 @@ def watch(
         show_activity=show_activity,
         mcp_config_path=mcp_config,
         headless=headless,
+        explore_enabled=explore,
+        validate_enabled=validate,
     )
 
     # Setup signal handlers for graceful shutdown

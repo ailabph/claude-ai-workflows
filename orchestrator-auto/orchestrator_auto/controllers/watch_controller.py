@@ -42,6 +42,18 @@ class WatchEvent(Enum):
     INFO = "info"
     WARNING = "warning"
 
+    # Exploration sub-agent events
+    EXPLORE_STARTED = "explore_started"      # Exploration phase beginning
+    EXPLORE_QUERY = "explore_query"          # Individual query status update
+    EXPLORE_QUERY_DONE = "explore_query_done"  # Individual query completed
+    EXPLORE_COMPLETED = "explore_completed"  # Exploration phase finished
+
+    # Validation sub-agent events
+    VALIDATE_STARTED = "validate_started"    # Validation phase beginning
+    VALIDATOR_STARTED = "validator_started"  # Individual validator running
+    VALIDATOR_DONE = "validator_done"        # Individual validator completed
+    VALIDATE_COMPLETED = "validate_completed"  # Validation phase finished
+
 
 @dataclass
 class WatchResult:
@@ -99,6 +111,8 @@ class WatchController:
         show_activity: bool = True,
         mcp_config_path: Optional[str] = None,
         headless: bool = False,
+        explore_enabled: bool = False,
+        validate_enabled: bool = False,
     ):
         """
         Initialize watch controller.
@@ -121,6 +135,8 @@ class WatchController:
             show_activity: Whether to show activity indicators
             mcp_config_path: Path to MCP configuration
             headless: Whether to run browsers in headless mode
+            explore_enabled: Whether to run exploration sub-agent before milestones
+            validate_enabled: Whether to run validation pipeline after milestones
         """
         self.plans_dir = Path(plans_dir).resolve()
         self.db_path = db_path
@@ -151,6 +167,8 @@ class WatchController:
         self.show_activity = show_activity
         self.mcp_config_path = mcp_config_path
         self.headless = headless
+        self.explore_enabled = explore_enabled
+        self.validate_enabled = validate_enabled
 
         self._should_stop = False
         self._polling_paused = False  # Pause polling without stopping execution
@@ -165,6 +183,14 @@ class WatchController:
 
         # Get project identity for DB queries
         self._project_id, _ = get_project_identity()
+
+        # Sub-agent instances (lazy initialized)
+        self._explore_agent = None
+        self._validation_pipeline = None
+
+        # Milestone tracking for sub-agent triggers
+        self._last_milestone = 0
+        self._current_milestone_names: List[str] = []
 
     def get_state(self) -> WatchState:
         """Get current watch state."""
@@ -387,6 +413,14 @@ class WatchController:
         milestone_count = parse_result.get('milestones', 0)
         milestone_names = parse_result.get('milestone_names', [])
 
+        # Store milestone names for exploration query generation
+        self._current_milestone_names = milestone_names
+        # Reset milestone tracking for new file
+        self._last_milestone = 0
+
+        # Create state change wrapper for milestone boundary detection
+        state_change_callback = self._create_state_change_wrapper(self.on_state_change)
+
         # Create and run orchestrator
         try:
             orch = Orchestrator(
@@ -395,7 +429,7 @@ class WatchController:
                 plan_path=str(executed_path),
                 on_output=self.on_output,
                 on_chunk=self.on_chunk,
-                on_state_change=self.on_state_change,
+                on_state_change=state_change_callback,
                 on_token_usage=self._on_token_usage,
                 input_provider=self.input_provider,
                 show_activity=self.show_activity,
@@ -665,6 +699,200 @@ class WatchController:
         except Exception as e:
             self.on_event(WatchEvent.WARNING, {
                 "message": f"Could not restore paused session: {e}"
+            })
+
+    def _init_explore_agent(self):
+        """Lazy initialize the exploration sub-agent."""
+        if self._explore_agent is None and self.explore_enabled:
+            from ..explore import ExploreSubAgent
+            self._explore_agent = ExploreSubAgent(
+                cwd=self.plans_dir,
+            )
+        return self._explore_agent
+
+    def _init_validation_pipeline(self):
+        """Lazy initialize the validation pipeline."""
+        if self._validation_pipeline is None and self.validate_enabled:
+            from ..validation import ValidationPipeline
+            self._validation_pipeline = ValidationPipeline()
+        return self._validation_pipeline
+
+    def _create_state_change_wrapper(self, original_callback: Optional[Callable]) -> Callable:
+        """
+        Create a wrapper for on_state_change that detects milestone boundaries.
+
+        The wrapper intercepts state changes to:
+        - Detect milestone START (current_milestone increased) → trigger exploration
+        - Detect milestone COMPLETION (previous milestone done) → trigger validation
+        """
+        def wrapper(state) -> None:
+            current = getattr(state, 'current_milestone', 0)
+
+            # Detect milestone COMPLETION (current > last means previous just completed)
+            if current > self._last_milestone and self._last_milestone > 0:
+                # Previous milestone just completed - run validation
+                if self.validate_enabled:
+                    self._run_validation(self._last_milestone)
+
+            # Detect milestone START (current increased from last known)
+            if current > self._last_milestone:
+                # New milestone starting - run exploration
+                if self.explore_enabled:
+                    self._run_exploration(current)
+
+            self._last_milestone = current
+
+            # Forward to original callback
+            if original_callback:
+                original_callback(state)
+
+        return wrapper
+
+    def _get_milestone_text(self, milestone_num: int) -> str:
+        """Get milestone text/title for exploration query generation."""
+        if 0 < milestone_num <= len(self._current_milestone_names):
+            return self._current_milestone_names[milestone_num - 1]
+        return f"Milestone {milestone_num}"
+
+    def _run_exploration(self, milestone_num: int) -> None:
+        """
+        Run exploration sub-agent before milestone execution.
+
+        Emits EXPLORE_* events for UI updates.
+        """
+        agent = self._init_explore_agent()
+        if not agent:
+            return
+
+        try:
+            from ..explore import generate_exploration_queries
+
+            milestone_text = self._get_milestone_text(milestone_num)
+            queries = generate_exploration_queries(milestone_text)
+
+            if not queries:
+                return
+
+            self.on_event(WatchEvent.EXPLORE_STARTED, {
+                "milestone": milestone_num,
+                "query_count": len(queries),
+            })
+
+            # Emit pending status for each query
+            for i, query in enumerate(queries):
+                self.on_event(WatchEvent.EXPLORE_QUERY, {
+                    "index": i,
+                    "query": query,
+                    "status": "pending",
+                })
+
+            # Run exploration (sync wrapper around async)
+            results = []
+            for i, query in enumerate(queries):
+                self.on_event(WatchEvent.EXPLORE_QUERY, {
+                    "index": i,
+                    "query": query,
+                    "status": "running",
+                })
+
+                result = agent.explore(query)
+                results.append(result)
+
+                status = "completed" if result.is_success() else "failed"
+                self.on_event(WatchEvent.EXPLORE_QUERY_DONE, {
+                    "index": i,
+                    "query": query,
+                    "status": status,
+                    "tokens_used": result.tokens_used,
+                    "is_partial": result.is_partial,
+                })
+
+            self.on_event(WatchEvent.EXPLORE_COMPLETED, {
+                "milestone": milestone_num,
+                "query_count": len(queries),
+                "success_count": sum(1 for r in results if r.is_success()),
+            })
+
+        except Exception as e:
+            self.on_event(WatchEvent.WARNING, {
+                "message": f"Exploration failed: {e}"
+            })
+
+    def _run_validation(self, milestone_num: int) -> None:
+        """
+        Run validation pipeline after milestone completion.
+
+        Emits VALIDATE_* events for UI updates.
+        """
+        pipeline = self._init_validation_pipeline()
+        if not pipeline:
+            return
+
+        try:
+            from ..git import get_changed_files, get_full_diff
+            import asyncio
+
+            # Get changed files and diff
+            changed_file_strings = get_changed_files(str(self.plans_dir))
+            changed_files = [Path(f) for f in changed_file_strings]
+            diff = get_full_diff(str(self.plans_dir))
+
+            if not changed_files and not diff:
+                # No changes to validate
+                return
+
+            context = f"Milestone {milestone_num}"
+
+            self.on_event(WatchEvent.VALIDATE_STARTED, {
+                "milestone": milestone_num,
+                "file_count": len(changed_files),
+            })
+
+            # Emit pending status for each validator
+            for validator in pipeline.validators:
+                self.on_event(WatchEvent.VALIDATOR_STARTED, {
+                    "name": validator.name,
+                    "status": "pending",
+                })
+
+            # Run validation (async, so we need to run in event loop)
+            loop = asyncio.new_event_loop()
+            try:
+                report = loop.run_until_complete(
+                    pipeline.run(changed_files, diff, context)
+                )
+            finally:
+                loop.close()
+
+            # Emit results for each validator
+            for result in report.results:
+                status = "passed"
+                if result.error:
+                    status = "failed"
+                elif result.high_count > 0:
+                    status = "issues"
+                elif result.medium_count > 0:
+                    status = "warnings"
+
+                self.on_event(WatchEvent.VALIDATOR_DONE, {
+                    "name": result.validator_name,
+                    "status": status,
+                    "issue_count": len(result.issues),
+                    "high_count": result.high_count,
+                    "medium_count": result.medium_count,
+                    "duration_ms": result.duration_ms,
+                })
+
+            self.on_event(WatchEvent.VALIDATE_COMPLETED, {
+                "milestone": milestone_num,
+                "total_issues": report.total_issues,
+                "high_count": report.high_count,
+                "passed": report.passed,
+            })
+
+        except Exception as e:
+            self.on_event(WatchEvent.WARNING, {
+                "message": f"Validation failed: {e}"
             })
 
     def run(self) -> WatchState:
