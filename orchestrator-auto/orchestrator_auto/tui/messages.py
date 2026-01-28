@@ -424,7 +424,11 @@ VALIDATE_STATUS_RUNNING = "running"
 VALIDATE_STATUS_PASSED = "passed"
 VALIDATE_STATUS_ISSUES = "issues"
 VALIDATE_STATUS_FAILED = "failed"
-VALIDATE_STATUS_COMPLETED = "completed"  # For overall validation phase status
+
+# Phase-level status constants (for overall explore/validate phase, not individual items)
+EXPLORE_PHASE_COMPLETED = "completed"
+VALIDATE_PHASE_RUNNING = "running"
+VALIDATE_PHASE_COMPLETED = "completed"
 
 
 class ExploreStarted(Message):

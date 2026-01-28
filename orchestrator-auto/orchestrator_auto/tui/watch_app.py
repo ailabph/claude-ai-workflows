@@ -18,9 +18,9 @@ from . import messages
 from .messages import (
     EXPLORE_STATUS_PENDING,
     EXPLORE_STATUS_RUNNING,
-    EXPLORE_STATUS_COMPLETED,
-    VALIDATE_STATUS_RUNNING,
-    VALIDATE_STATUS_COMPLETED,
+    EXPLORE_PHASE_COMPLETED,
+    VALIDATE_PHASE_RUNNING,
+    VALIDATE_PHASE_COMPLETED,
 )
 from .adapter import TUIOutputAdapter, TUIInputProvider
 from .bindings import GLOBAL_BINDINGS, WATCH_BINDINGS
@@ -1564,7 +1564,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_explore_status(EXPLORE_STATUS_COMPLETED)
+            subagent_panel.set_explore_status(EXPLORE_PHASE_COMPLETED)
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             log_panel.log_success(
@@ -1580,7 +1580,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_validate_status(VALIDATE_STATUS_RUNNING)
+            subagent_panel.set_validate_status(VALIDATE_PHASE_RUNNING)
             # Clear any previous validators - they'll be added via VALIDATOR_STARTED events
             subagent_panel.set_validators([])
 
@@ -1614,7 +1614,7 @@ class WatchTUI(App):
 
         try:
             subagent_panel = self.query_one("#lb-subagent-panel", SubAgentPanel)
-            subagent_panel.set_validate_status(VALIDATE_STATUS_COMPLETED)
+            subagent_panel.set_validate_status(VALIDATE_PHASE_COMPLETED)
 
             log_panel = self.query_one("#lb-log-panel", LogPanel)
             if message.total_issues > 0:

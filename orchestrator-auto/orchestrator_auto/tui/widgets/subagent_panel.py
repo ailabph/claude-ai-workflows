@@ -176,7 +176,7 @@ class SubAgentPanel(Static, can_focus=True):
         """
         # Upsert: extend list with placeholders if index doesn't exist
         while index >= len(self._explore_queries):
-            self._explore_queries.append(ExplorationQuery(query=f"Query {len(self._explore_queries) + 1}"))
+            self._explore_queries.append(ExplorationQuery(query="(pending)"))
 
         self._explore_queries[index].status = status
         self._explore_queries[index].tokens_used = tokens
