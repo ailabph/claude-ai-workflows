@@ -523,6 +523,13 @@ class WatchController:
         # Determine which model to use for smart commit
         commit_model = get_auto_commit_model(None, self.executor_model)
 
+        # Get files modified during this session (from tool invocations)
+        modified_files = db.get_session_modified_files(session_id, self.db_path)
+        if modified_files:
+            self.on_event(WatchEvent.INFO, {
+                "message": f"Found {len(modified_files)} file(s) modified in session"
+            })
+
         # Status callback that emits events (mirrors CLI on_status)
         def on_status(msg: str) -> None:
             if "Secrets detected" in msg:
@@ -534,12 +541,15 @@ class WatchController:
 
         try:
             # Use full auto_commit signature for parity with CLI
+            # Pass modified_files to only commit files touched during the session
             success, result, fallback_reason = auto_commit(
                 feature_description=feature,
                 milestones=milestones,
+                path=str(self._project_id),
                 use_smart_commit=use_smart,
                 smart_commit_model=commit_model,
                 on_status=on_status,
+                files_to_commit=modified_files if modified_files else None,
             )
 
             if success:
@@ -1063,7 +1073,8 @@ class WatchController:
                     )
                     if success:
                         self.on_event(WatchEvent.FILE_COMPLETED, {
-                            "new_path": Path(new_path).name
+                            "new_path": Path(new_path).name,
+                            "session_id": result.session_id,
                         })
                     else:
                         self.on_event(WatchEvent.WARNING, {
@@ -1080,6 +1091,7 @@ class WatchController:
                         self.on_event(WatchEvent.FILE_FAILED, {
                             "new_path": Path(new_path).name,
                             "error": result.error,
+                            "session_id": result.session_id,
                         })
                     else:
                         self.on_event(WatchEvent.WARNING, {

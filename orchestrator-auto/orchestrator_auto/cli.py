@@ -577,6 +577,8 @@ def _do_smart_auto_commit(
     smart_commit_flag: Optional[bool] = None,
     executor_model: Optional[str] = None,
     auto_commit_model_flag: Optional[str] = None,
+    session_id: Optional[str] = None,
+    db_path: Optional[str] = None,
 ) -> tuple:
     """
     Perform auto-commit with smart commit support and CLI feedback.
@@ -588,6 +590,8 @@ def _do_smart_auto_commit(
         smart_commit_flag: CLI flag for smart commit (None = use config)
         executor_model: Resolved executor model for this session (fallback for commit model)
         auto_commit_model_flag: CLI flag for commit model (--auto-commit-model)
+        session_id: Optional session ID to get modified files from tool invocations
+        db_path: Optional database path
 
     Returns:
         (success, message) tuple
@@ -599,6 +603,13 @@ def _do_smart_auto_commit(
 
     # Determine which model to use for smart commit
     commit_model = get_auto_commit_model(auto_commit_model_flag, executor_model)
+
+    # Get files modified during session (if session_id provided)
+    files_to_commit = None
+    if session_id:
+        files_to_commit = db.get_session_modified_files(session_id, db_path)
+        if files_to_commit:
+            click.echo(f"  Found {len(files_to_commit)} file(s) modified in session")
 
     # Status callback for CLI feedback
     def on_status(msg: str) -> None:
@@ -614,6 +625,7 @@ def _do_smart_auto_commit(
             click.echo(f"  {msg}")
 
     # Call auto_commit with smart commit support
+    # Pass files_to_commit to only commit files touched during the session
     success, msg, fallback_reason = git.auto_commit(
         feature_description=feature_description,
         milestones=milestones,
@@ -621,6 +633,7 @@ def _do_smart_auto_commit(
         use_smart_commit=use_smart,
         smart_commit_model=commit_model,
         on_status=on_status,
+        files_to_commit=files_to_commit,
     )
 
     # Show fallback reason if applicable
@@ -1051,6 +1064,8 @@ def _reconcile_queue_head(
                         smart_commit_flag=smart_commit,
                         executor_model=session.get("executor_model"),
                         auto_commit_model_flag=auto_commit_model,
+                        session_id=session_id,
+                        db_path=db_path,
                     )
                     if success:
                         click.secho("  ✓ Changes committed", fg="green")
@@ -1171,6 +1186,8 @@ def _run_queue(
                     smart_commit_flag=smart_commit,
                     executor_model=resolved_executor,
                     auto_commit_model_flag=auto_commit_model,
+                    session_id=session_id,
+                    db_path=db_path,
                 )
                 if success:
                     click.secho("✓ Changes committed", fg="green")
@@ -1447,6 +1464,8 @@ def start(
                 smart_commit_flag=smart_commit,
                 executor_model=resolved_executor,
                 auto_commit_model_flag=auto_commit_model,
+                session_id=orch.session_id,
+                db_path=db_path,
             )
             if success:
                 click.secho("✓ Changes committed", fg="green")
@@ -3875,6 +3894,8 @@ def _process_watch_file(
                     milestones=milestones,
                     smart_commit_flag=smart_commit,
                     executor_model=resolved_executor,
+                    session_id=orch.session_id,
+                    db_path=db_path,
                 )
                 if success:
                     click.secho(f"✓ {msg}", fg="green")

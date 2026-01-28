@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.7.0] - 2026-01-28
 
+### Added
+
+- **Selective auto-commit** - Auto-commit now only commits files modified during the session instead of staging all changes
+  - `git.py`: New `stage_files()` function for selective staging
+  - `db.py`: New `get_session_modified_files()` extracts file paths from Write/Edit/NotebookEdit tool invocations
+  - `auto_commit()`: New optional `files_to_commit` parameter
+  - Shows "Found N file(s) modified in session" message before committing
+
 ### Changed
 
 - **Sub-agent default model upgraded to Sonnet** - Both `ExploreSubAgent` and `CommitAI` now use `claude-sonnet-4-5-20250929` instead of Haiku for improved quality

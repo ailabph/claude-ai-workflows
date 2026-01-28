@@ -234,6 +234,89 @@ def stage_all(path: Optional[str] = None) -> Tuple[bool, str]:
         return False, str(e)
 
 
+def stage_files(files: List[str], path: Optional[str] = None) -> Tuple[bool, str, List[str]]:
+    """
+    Stage specific files. Returns (success, message, staged_files).
+
+    Only stages files that exist and have changes. Skips files that:
+    - Don't exist (were deleted or never created)
+    - Are outside the repo
+    - Have no changes
+
+    Args:
+        files: List of file paths to stage (relative to repo root)
+        path: Working directory (repo root)
+
+    Returns:
+        (success, message, staged_files) tuple
+        - success: True if at least one file was staged
+        - message: Status message
+        - staged_files: List of files that were actually staged
+    """
+    if not files:
+        return False, "No files to stage", []
+
+    staged = []
+    errors = []
+    repo_root = Path(path) if path else Path.cwd()
+
+    for file_path in files:
+        try:
+            # Normalize path - handle both absolute and relative paths
+            if Path(file_path).is_absolute():
+                abs_path = Path(file_path)
+                # Convert to relative path for git
+                try:
+                    rel_path = abs_path.relative_to(repo_root)
+                except ValueError:
+                    # File outside repo - skip
+                    continue
+            else:
+                rel_path = Path(file_path)
+                abs_path = repo_root / rel_path
+
+            # Check if file exists or is a deleted file (git status will show it)
+            # For deleted files, we still want to stage the deletion
+            cmd = ["git", "status", "--porcelain", "--", str(rel_path)]
+            result = subprocess.run(
+                cmd,
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+
+            # If git status shows the file has changes, stage it
+            if result.stdout.strip():
+                cmd = ["git", "add", "--", str(rel_path)]
+                result = subprocess.run(
+                    cmd,
+                    cwd=path,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    staged.append(str(rel_path))
+                else:
+                    errors.append(f"{rel_path}: {result.stderr.strip()}")
+
+        except subprocess.TimeoutExpired:
+            errors.append(f"{file_path}: timeout")
+        except (subprocess.SubprocessError, OSError) as e:
+            errors.append(f"{file_path}: {e}")
+
+    if staged:
+        msg = f"Staged {len(staged)} file(s)"
+        if errors:
+            msg += f" ({len(errors)} skipped)"
+        return True, msg, staged
+    elif errors:
+        return False, f"Failed to stage files: {'; '.join(errors[:3])}", []
+    else:
+        return False, "No matching files with changes found", []
+
+
 def create_commit(message: str, path: Optional[str] = None) -> Tuple[bool, str]:
     """
     Create a commit with the given message.
@@ -315,6 +398,7 @@ def auto_commit(
     use_smart_commit: bool = True,
     smart_commit_model: Optional[str] = None,
     on_status: Optional[Callable[[str], None]] = None,
+    files_to_commit: Optional[List[str]] = None,
 ) -> Tuple[bool, str, Optional[str]]:
     """
     Perform auto-commit after workflow completion.
@@ -335,6 +419,8 @@ def auto_commit(
         use_smart_commit: Use AI to generate commit message (default: True)
         smart_commit_model: Model to use for AI generation (default: commit_ai.DEFAULT_MODEL)
         on_status: Optional callback for status updates (for CLI feedback)
+        files_to_commit: Optional list of specific files to commit. If provided,
+            only these files will be staged. If None, all changes are staged.
 
     Returns:
         (success, message, fallback_reason) tuple
@@ -361,10 +447,17 @@ def auto_commit(
     if not has_changes(path):
         return False, "No changes to commit", None
 
-    # Stage all changes
-    success, msg = stage_all(path)
-    if not success:
-        return False, f"Failed to stage: {msg}", None
+    # Stage changes - either specific files or all
+    if files_to_commit:
+        status(f"Staging {len(files_to_commit)} modified file(s)...")
+        success, msg, staged_files = stage_files(files_to_commit, path)
+        if not success:
+            return False, f"Failed to stage: {msg}", None
+        status(f"Staged: {', '.join(staged_files[:5])}{'...' if len(staged_files) > 5 else ''}")
+    else:
+        success, msg = stage_all(path)
+        if not success:
+            return False, f"Failed to stage: {msg}", None
 
     # Determine commit message
     commit_msg: Optional[str] = None

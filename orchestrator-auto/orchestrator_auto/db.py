@@ -1346,6 +1346,73 @@ def get_tool_invocations(
         return [dict(row) for row in cursor.fetchall()]
 
 
+def get_session_modified_files(
+    session_id: str,
+    db_path: Optional[str] = None
+) -> List[str]:
+    """
+    Extract file paths from Write/Edit/NotebookEdit tool invocations for a session.
+
+    Parses the input_summary field of tool invocations to extract file paths.
+    Only includes file-modifying tools: Write, Edit, MultiEdit, NotebookEdit.
+
+    Args:
+        session_id: Session ID to query
+        db_path: Custom database path
+
+    Returns:
+        List of unique file paths that were modified during the session
+    """
+    import re
+
+    # Tools that modify files
+    FILE_MODIFYING_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT tool_name, input_summary
+            FROM tool_invocations
+            WHERE session_id = ? AND tool_name IN (?, ?, ?, ?)
+            ORDER BY created_at ASC
+        """, (session_id, "Write", "Edit", "MultiEdit", "NotebookEdit"))
+
+        rows = cursor.fetchall()
+
+    # Extract file paths from input_summary
+    # Common patterns:
+    # - "file_path: /path/to/file.py" (Write, Edit)
+    # - "notebook_path: /path/to/notebook.ipynb" (NotebookEdit)
+    # - "/path/to/file.py: old_string -> new_string" (Edit summary format)
+    files = set()
+
+    for row in rows:
+        tool_name = row[0]
+        input_summary = row[1] or ""
+
+        # Pattern 1: "file_path: /path/to/file" or "notebook_path: /path/to/file"
+        match = re.search(r'(?:file_path|notebook_path):\s*([^\s,]+)', input_summary)
+        if match:
+            files.add(match.group(1))
+            continue
+
+        # Pattern 2: Path at start of summary (Edit format: "/path/file.py: ...")
+        match = re.match(r'^(/[^\s:]+|[A-Za-z]:\\[^\s:]+)', input_summary)
+        if match:
+            files.add(match.group(1))
+            continue
+
+        # Pattern 3: Look for file-like paths in the summary
+        # Match absolute paths or relative paths with extensions
+        for match in re.finditer(r'(/[\w\-./]+\.\w+|[\w\-./]+\.\w+)', input_summary):
+            path = match.group(1)
+            # Filter out obvious non-paths
+            if '/' in path or '\\' in path:
+                files.add(path)
+
+    return list(files)
+
+
 def _truncate_str(s: str, max_len: int) -> str:
     """Truncate a string to max_len, adding ... if truncated."""
     if len(s) <= max_len:
