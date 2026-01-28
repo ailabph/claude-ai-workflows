@@ -5,6 +5,28 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-01-28
+
+### Added
+
+- **Claude Agent SDK 0.1.23** - Upgraded from 0.1.16 to leverage new SDK capabilities
+- **File Rewind on Rejection** - When planner requests changes to a milestone, executor's file modifications are automatically reverted to the pre-execution checkpoint. Disable with `--no-rewind` flag.
+- **MCP Status Monitoring** - New `orchestrator check --mcp-config` displays connection status for all configured MCP servers
+- **Tool Invocation Audit Trail** - Track all tool usage per session/milestone with `orchestrator export --tools`
+- **CLI: `--no-rewind`** - Disable automatic file rewind on milestone rejection
+- **CLI: `--tools` on export** - Include tool invocation audit trail in markdown export
+- **DB: `tool_invocations` table** - Persist tool usage history (name, input/output summary, success status)
+
+### Technical
+
+- **New agent methods** - `set_checkpoint()`, `rewind_to_checkpoint()`, `get_mcp_status()`, `get_tool_invocations()`
+- **Checkpoint tracking** - Uses SDK's `uuid` field on UserMessage and `rewind_files()` method
+- **Async/sync parity** - All new methods available in both sync and async variants
+
+### Documentation
+
+- **README: SDK Features** - Added section on sub-agents and SDK version compatibility
+
 ## [1.1.3] - 2026-01-27
 
 ### Fixed
