@@ -283,6 +283,54 @@ def init_db(db_path: Optional[str] = None) -> None:
             ON tool_invocations(session_id)
         """)
 
+        # Exploration results table (Phase 1A)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS exploration_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                milestone_number INTEGER,
+                query TEXT NOT NULL,
+                findings TEXT,
+                sources_consulted TEXT,
+                tokens_used INTEGER DEFAULT 0,
+                duration_ms INTEGER DEFAULT 0,
+                is_partial INTEGER DEFAULT 0,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_exploration_results_session_id
+            ON exploration_results(session_id)
+        """)
+
+        # Validation results table (Phase 1B)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS validation_results (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                milestone_number INTEGER,
+                validator_name TEXT NOT NULL,
+                issues_json TEXT,
+                high_count INTEGER DEFAULT 0,
+                medium_count INTEGER DEFAULT 0,
+                low_count INTEGER DEFAULT 0,
+                warning_count INTEGER DEFAULT 0,
+                tokens_used INTEGER DEFAULT 0,
+                duration_ms INTEGER DEFAULT 0,
+                error TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_validation_results_session_id
+            ON validation_results(session_id)
+        """)
+
         conn.commit()
 
 
@@ -1303,3 +1351,323 @@ def _truncate_str(s: str, max_len: int) -> str:
     if len(s) <= max_len:
         return s
     return s[:max_len - 3] + "..."
+
+
+# ============================================================================
+# Exploration Results (Phase 1A)
+# ============================================================================
+
+def save_exploration_result(
+    session_id: str,
+    query: str,
+    findings: str,
+    sources_consulted: Optional[List[str]] = None,
+    tokens_used: int = 0,
+    duration_ms: int = 0,
+    is_partial: bool = False,
+    error: Optional[str] = None,
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Save an exploration result to the database.
+
+    Args:
+        session_id: Session ID
+        query: The exploration query
+        findings: Structured findings text
+        sources_consulted: List of files/sources explored
+        tokens_used: Tokens used in exploration
+        duration_ms: Duration in milliseconds
+        is_partial: Whether results are partial (timeout/limit)
+        error: Error message if exploration failed
+        milestone_number: Current milestone number
+        db_path: Custom database path
+
+    Returns:
+        The inserted record ID
+    """
+    import json
+
+    sources_json = json.dumps(sources_consulted) if sources_consulted else None
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO exploration_results (
+                session_id, milestone_number, query, findings,
+                sources_consulted, tokens_used, duration_ms,
+                is_partial, error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id, milestone_number, query, findings,
+            sources_json, tokens_used, duration_ms,
+            1 if is_partial else 0, error
+        ))
+        return cursor.lastrowid
+
+
+def get_exploration_results(
+    session_id: str,
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get exploration results for a session.
+
+    Args:
+        session_id: Session ID
+        milestone_number: Filter by milestone (optional)
+        db_path: Custom database path
+
+    Returns:
+        List of exploration result dicts
+    """
+    import json
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM exploration_results WHERE session_id = ?"
+        params = [session_id]
+
+        if milestone_number is not None:
+            query += " AND milestone_number = ?"
+            params.append(milestone_number)
+
+        query += " ORDER BY created_at ASC"
+
+        cursor.execute(query, params)
+        results = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            # Parse sources JSON
+            if d.get('sources_consulted'):
+                try:
+                    d['sources_consulted'] = json.loads(d['sources_consulted'])
+                except json.JSONDecodeError:
+                    d['sources_consulted'] = []
+            else:
+                d['sources_consulted'] = []
+            # Convert is_partial to bool
+            d['is_partial'] = bool(d.get('is_partial', 0))
+            results.append(d)
+
+        return results
+
+
+# ============================================================================
+# Validation Results (Phase 1B)
+# ============================================================================
+
+def save_validation_result(
+    session_id: str,
+    validator_name: str,
+    issues_json: Optional[str] = None,
+    high_count: int = 0,
+    medium_count: int = 0,
+    low_count: int = 0,
+    warning_count: int = 0,
+    tokens_used: int = 0,
+    duration_ms: int = 0,
+    error: Optional[str] = None,
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Save a validation result to the database.
+
+    Args:
+        session_id: Session ID
+        validator_name: Name of the validator
+        issues_json: JSON string of issues list
+        high_count: Number of HIGH severity issues
+        medium_count: Number of MEDIUM severity issues
+        low_count: Number of LOW severity issues
+        warning_count: Number of WARNING severity issues
+        tokens_used: Tokens used in validation
+        duration_ms: Duration in milliseconds
+        error: Error message if validation failed
+        milestone_number: Current milestone number
+        db_path: Custom database path
+
+    Returns:
+        The inserted record ID
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO validation_results (
+                session_id, milestone_number, validator_name, issues_json,
+                high_count, medium_count, low_count, warning_count,
+                tokens_used, duration_ms, error
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            session_id, milestone_number, validator_name, issues_json,
+            high_count, medium_count, low_count, warning_count,
+            tokens_used, duration_ms, error
+        ))
+        return cursor.lastrowid
+
+
+def save_validation_results_batch(
+    session_id: str,
+    results: List[Dict[str, Any]],
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> int:
+    """
+    Save multiple validation results in a batch.
+
+    Args:
+        session_id: Session ID
+        results: List of ValidationResult dicts (from ValidationResult.to_dict())
+        milestone_number: Current milestone number
+        db_path: Custom database path
+
+    Returns:
+        Number of records inserted
+    """
+    import json
+
+    count = 0
+    for result in results:
+        issues_json = json.dumps(result.get('issues', []))
+        issues = result.get('issues', [])
+
+        # Count by severity
+        high_count = sum(1 for i in issues if i.get('severity') == 'high')
+        medium_count = sum(1 for i in issues if i.get('severity') == 'medium')
+        low_count = sum(1 for i in issues if i.get('severity') == 'low')
+        warning_count = sum(1 for i in issues if i.get('severity') == 'warning')
+
+        save_validation_result(
+            session_id=session_id,
+            validator_name=result.get('validator_name', 'unknown'),
+            issues_json=issues_json,
+            high_count=high_count,
+            medium_count=medium_count,
+            low_count=low_count,
+            warning_count=warning_count,
+            tokens_used=result.get('tokens_used', 0),
+            duration_ms=result.get('duration_ms', 0),
+            error=result.get('error'),
+            milestone_number=milestone_number,
+            db_path=db_path,
+        )
+        count += 1
+
+    return count
+
+
+def get_validation_results(
+    session_id: str,
+    milestone_number: Optional[int] = None,
+    validator_name: Optional[str] = None,
+    db_path: Optional[str] = None
+) -> List[Dict[str, Any]]:
+    """
+    Get validation results for a session.
+
+    Args:
+        session_id: Session ID
+        milestone_number: Filter by milestone (optional)
+        validator_name: Filter by validator name (optional)
+        db_path: Custom database path
+
+    Returns:
+        List of validation result dicts
+    """
+    import json
+
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM validation_results WHERE session_id = ?"
+        params = [session_id]
+
+        if milestone_number is not None:
+            query += " AND milestone_number = ?"
+            params.append(milestone_number)
+
+        if validator_name:
+            query += " AND validator_name = ?"
+            params.append(validator_name)
+
+        query += " ORDER BY created_at ASC"
+
+        cursor.execute(query, params)
+        results = []
+        for row in cursor.fetchall():
+            d = dict(row)
+            # Parse issues JSON
+            if d.get('issues_json'):
+                try:
+                    d['issues'] = json.loads(d['issues_json'])
+                except json.JSONDecodeError:
+                    d['issues'] = []
+            else:
+                d['issues'] = []
+            results.append(d)
+
+        return results
+
+
+def get_validation_summary(
+    session_id: str,
+    milestone_number: Optional[int] = None,
+    db_path: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Get aggregated validation summary for a session or milestone.
+
+    Args:
+        session_id: Session ID
+        milestone_number: Filter by milestone (optional)
+        db_path: Custom database path
+
+    Returns:
+        Dict with aggregated counts and has_high_severity flag
+    """
+    with get_connection(db_path) as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                SUM(high_count) as total_high,
+                SUM(medium_count) as total_medium,
+                SUM(low_count) as total_low,
+                SUM(warning_count) as total_warning,
+                COUNT(*) as validator_count
+            FROM validation_results
+            WHERE session_id = ?
+        """
+        params = [session_id]
+
+        if milestone_number is not None:
+            query += " AND milestone_number = ?"
+            params.append(milestone_number)
+
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+
+        if row:
+            return {
+                "high": row['total_high'] or 0,
+                "medium": row['total_medium'] or 0,
+                "low": row['total_low'] or 0,
+                "warning": row['total_warning'] or 0,
+                "validator_count": row['validator_count'] or 0,
+                "has_high_severity": (row['total_high'] or 0) > 0,
+            }
+
+        return {
+            "high": 0,
+            "medium": 0,
+            "low": 0,
+            "warning": 0,
+            "validator_count": 0,
+            "has_high_severity": False,
+        }

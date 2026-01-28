@@ -1255,6 +1255,10 @@ def cli():
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file (.mcp.json)')
 @click.option('--headless', is_flag=True, default=False, help='Run Playwright MCP browser in headless mode')
 @click.option('--no-rewind', is_flag=True, default=False, help='Disable automatic file rewind when milestone is rejected')
+@click.option('--explore/--no-explore', default=None, help='Enable/disable exploration before milestones (default: from config)')
+@click.option('--explore-query', multiple=True, help='Custom exploration query (can be used multiple times)')
+@click.option('--validate/--no-validate', default=None, help='Enable/disable validation after milestones (default: from config)')
+@click.option('--validators', help='Comma-separated list of validators to run (default: all enabled)')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 @click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
 def start(
@@ -1275,6 +1279,10 @@ def start(
     mcp_config: Optional[str],
     headless: bool,
     no_rewind: bool,
+    explore: Optional[bool],
+    explore_query: tuple,
+    validate: Optional[bool],
+    validators: Optional[str],
     debug: bool,
     tui: bool,
 ):

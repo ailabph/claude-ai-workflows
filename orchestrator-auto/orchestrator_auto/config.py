@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any, Tuple, List
 MODEL_ALIASES = {
     "opus": "claude-opus-4-5-20251101",
     "sonnet": "claude-sonnet-4-5-20250929",
-    "haiku": "claude-haiku-3-5-20241022",
+    "haiku": "claude-3-5-haiku-20241022",
 }
 
 # Default models
@@ -527,6 +527,227 @@ def get_stuck_sessions_config() -> Dict[str, Any]:
             pass
 
     return result
+
+
+# ============================================================================
+# Exploration Configuration (Phase 1A)
+# ============================================================================
+
+# Exploration defaults
+DEFAULT_EXPLORE_ENABLED = False  # Initial default: off
+DEFAULT_EXPLORE_MAX_TURNS = 5
+DEFAULT_EXPLORE_MAX_TOKENS = 25_000
+DEFAULT_EXPLORE_TIMEOUT = 30  # seconds
+
+
+def get_exploration_config() -> Dict[str, Any]:
+    """
+    Get exploration configuration with priority: env vars > config file > defaults.
+
+    Config file shape:
+        executor:
+          auto_explore: false
+          explore_max_turns: 5
+          explore_max_tokens: 25000
+          explore_timeout: 30
+
+    Environment variables:
+        ORCHESTRATOR_EXPLORE_ENABLED (true/false)
+        ORCHESTRATOR_EXPLORE_MAX_TURNS (integer)
+        ORCHESTRATOR_EXPLORE_MAX_TOKENS (integer)
+        ORCHESTRATOR_EXPLORE_TIMEOUT (integer, seconds)
+
+    Returns:
+        Dict with exploration settings
+    """
+    config = load_config()
+    executor_config = config.get("executor", {})
+
+    # Defaults
+    result = {
+        "enabled": DEFAULT_EXPLORE_ENABLED,
+        "max_turns": DEFAULT_EXPLORE_MAX_TURNS,
+        "max_tokens": DEFAULT_EXPLORE_MAX_TOKENS,
+        "timeout": DEFAULT_EXPLORE_TIMEOUT,
+    }
+
+    # Override from config file
+    if "auto_explore" in executor_config:
+        result["enabled"] = bool(executor_config["auto_explore"])
+    if "explore_max_turns" in executor_config:
+        try:
+            result["max_turns"] = int(executor_config["explore_max_turns"])
+        except (ValueError, TypeError):
+            pass
+    if "explore_max_tokens" in executor_config:
+        try:
+            result["max_tokens"] = int(executor_config["explore_max_tokens"])
+        except (ValueError, TypeError):
+            pass
+    if "explore_timeout" in executor_config:
+        try:
+            result["timeout"] = int(executor_config["explore_timeout"])
+        except (ValueError, TypeError):
+            pass
+
+    # Override from environment variables
+    env_enabled = os.environ.get("ORCHESTRATOR_EXPLORE_ENABLED")
+    env_max_turns = os.environ.get("ORCHESTRATOR_EXPLORE_MAX_TURNS")
+    env_max_tokens = os.environ.get("ORCHESTRATOR_EXPLORE_MAX_TOKENS")
+    env_timeout = os.environ.get("ORCHESTRATOR_EXPLORE_TIMEOUT")
+
+    if env_enabled is not None:
+        result["enabled"] = env_enabled.lower() in ("true", "1", "yes")
+    if env_max_turns:
+        try:
+            result["max_turns"] = int(env_max_turns)
+        except ValueError:
+            pass
+    if env_max_tokens:
+        try:
+            result["max_tokens"] = int(env_max_tokens)
+        except ValueError:
+            pass
+    if env_timeout:
+        try:
+            result["timeout"] = int(env_timeout)
+        except ValueError:
+            pass
+
+    return result
+
+
+def get_explore_enabled(cli_flag: Optional[bool] = None) -> bool:
+    """
+    Get exploration enabled setting with priority: CLI > env > config > default.
+
+    Args:
+        cli_flag: CLI flag value (--explore/--no-explore)
+
+    Returns:
+        True if exploration should be performed
+    """
+    if cli_flag is not None:
+        return cli_flag
+    return get_exploration_config()["enabled"]
+
+
+# ============================================================================
+# Validation Configuration (Phase 1B)
+# ============================================================================
+
+# Validation defaults
+DEFAULT_VALIDATION_ENABLED = False  # Initial default: off
+DEFAULT_VALIDATION_MAX_PARALLEL = 3
+DEFAULT_VALIDATION_TOTAL_TIMEOUT = 45  # seconds
+DEFAULT_VALIDATION_AUTO_REJECT_HIGH = True
+
+
+def get_validation_config() -> Dict[str, Any]:
+    """
+    Get validation configuration with priority: env vars > config file > defaults.
+
+    Config file shape:
+        validation:
+          enabled: false
+          auto_reject_on_high: true
+          max_parallel: 3
+          total_timeout: 45
+          validators:
+            security:
+              enabled: true
+              severity_threshold: medium
+            performance:
+              enabled: true
+              severity_threshold: high
+            api:
+              enabled: true
+              severity_threshold: medium
+
+    Environment variables:
+        ORCHESTRATOR_VALIDATE_ENABLED (true/false)
+        ORCHESTRATOR_VALIDATE_AUTO_REJECT (true/false)
+        ORCHESTRATOR_VALIDATE_MAX_PARALLEL (integer)
+        ORCHESTRATOR_VALIDATE_TIMEOUT (integer, seconds)
+
+    Returns:
+        Dict with validation settings
+    """
+    config = load_config()
+    validation_config = config.get("validation", {})
+
+    # Defaults
+    result = {
+        "enabled": DEFAULT_VALIDATION_ENABLED,
+        "auto_reject_on_high": DEFAULT_VALIDATION_AUTO_REJECT_HIGH,
+        "max_parallel": DEFAULT_VALIDATION_MAX_PARALLEL,
+        "total_timeout": DEFAULT_VALIDATION_TOTAL_TIMEOUT,
+        "validators": {
+            "security": {"enabled": True, "severity_threshold": "medium"},
+            "performance": {"enabled": True, "severity_threshold": "high"},
+            "api": {"enabled": True, "severity_threshold": "medium"},
+        },
+    }
+
+    # Override from config file
+    if "enabled" in validation_config:
+        result["enabled"] = bool(validation_config["enabled"])
+    if "auto_reject_on_high" in validation_config:
+        result["auto_reject_on_high"] = bool(validation_config["auto_reject_on_high"])
+    if "max_parallel" in validation_config:
+        try:
+            result["max_parallel"] = int(validation_config["max_parallel"])
+        except (ValueError, TypeError):
+            pass
+    if "total_timeout" in validation_config:
+        try:
+            result["total_timeout"] = int(validation_config["total_timeout"])
+        except (ValueError, TypeError):
+            pass
+    if "validators" in validation_config:
+        # Deep merge validators config
+        for name, validator_cfg in validation_config["validators"].items():
+            if name not in result["validators"]:
+                result["validators"][name] = {}
+            result["validators"][name].update(validator_cfg)
+
+    # Override from environment variables
+    env_enabled = os.environ.get("ORCHESTRATOR_VALIDATE_ENABLED")
+    env_auto_reject = os.environ.get("ORCHESTRATOR_VALIDATE_AUTO_REJECT")
+    env_max_parallel = os.environ.get("ORCHESTRATOR_VALIDATE_MAX_PARALLEL")
+    env_timeout = os.environ.get("ORCHESTRATOR_VALIDATE_TIMEOUT")
+
+    if env_enabled is not None:
+        result["enabled"] = env_enabled.lower() in ("true", "1", "yes")
+    if env_auto_reject is not None:
+        result["auto_reject_on_high"] = env_auto_reject.lower() in ("true", "1", "yes")
+    if env_max_parallel:
+        try:
+            result["max_parallel"] = int(env_max_parallel)
+        except ValueError:
+            pass
+    if env_timeout:
+        try:
+            result["total_timeout"] = int(env_timeout)
+        except ValueError:
+            pass
+
+    return result
+
+
+def get_validation_enabled(cli_flag: Optional[bool] = None) -> bool:
+    """
+    Get validation enabled setting with priority: CLI > env > config > default.
+
+    Args:
+        cli_flag: CLI flag value (--validate/--no-validate)
+
+    Returns:
+        True if validation should be performed
+    """
+    if cli_flag is not None:
+        return cli_flag
+    return get_validation_config()["enabled"]
 
 
 # ============================================================================
