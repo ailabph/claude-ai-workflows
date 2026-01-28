@@ -22,6 +22,7 @@ from .status_bar import StatusBar
 from .header_bar import HeaderBar
 from .progress_bar import MilestoneProgressBar
 from .stats_panel import StatsPanel
+from .subagent_panel import SubAgentPanel, ExplorationQuery, ValidatorStatus
 
 __all__ = [
     "StatusPanel",
@@ -42,4 +43,7 @@ __all__ = [
     "HeaderBar",
     "MilestoneProgressBar",
     "StatsPanel",
+    "SubAgentPanel",
+    "ExplorationQuery",
+    "ValidatorStatus",
 ]
