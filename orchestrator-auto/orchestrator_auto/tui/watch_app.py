@@ -1317,7 +1317,10 @@ class WatchTUI(App):
         """Handle chunk received from agent."""
         try:
             if self._use_layout_b:
-                # Layout B: write to executor output panel only
+                # Layout B: write to both output panels - they filter based on agent
+                planner_output = self.query_one("#lb-planner-output", AgentOutput)
+                planner_output.write_chunk(message.chunk, message.agent)
+
                 executor_output = self.query_one("#lb-executor-output", AgentOutput)
                 executor_output.write_chunk(message.chunk, message.agent)
             elif self.verbose:
