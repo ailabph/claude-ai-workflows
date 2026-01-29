@@ -18,6 +18,7 @@ class CompactMilestoneRow(Static):
     CompactMilestoneRow {
         height: auto;
         min-height: 1;
+        max-height: 10;
         padding: 0;
     }
     """
@@ -75,23 +76,29 @@ class CompactMilestoneRow(Static):
         self._refresh_display()
 
     def _format_row(self) -> str:
-        """Format milestones as icon row: ✓1 ✓2 ▶3 ○4"""
+        """Format milestones as list with titles."""
         if not self._milestones:
             return "[dim]No milestones[/dim]"
 
-        parts = []
+        lines = []
         for m in self._milestones:
             m_id = m.get("id", 0)
+            title = m.get("title", f"Milestone {m_id}")
             status = m.get("status", "pending")
             icon = self.ICONS.get(status, "○")
             style = self.STYLES.get(status, "")
 
-            if style:
-                parts.append(f"[{style}]{icon}{m_id}[/{style}]")
-            else:
-                parts.append(f"{icon}{m_id}")
+            # Truncate title to fit (leave room for icon and number)
+            max_title_len = 35
+            if len(title) > max_title_len:
+                title = title[:max_title_len] + ".."
 
-        return " ".join(parts)
+            if style:
+                lines.append(f"[{style}]{icon} {m_id}. {title}[/{style}]")
+            else:
+                lines.append(f"{icon} {m_id}. {title}")
+
+        return "\n".join(lines)
 
     def _refresh_display(self) -> None:
         """Refresh the display with current milestone state."""

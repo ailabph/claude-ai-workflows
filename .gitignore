@@ -250,3 +250,4 @@ AGENT.md
 AGENTS.md
 .coverage*
 /.plans/
+.blackboxcli/
