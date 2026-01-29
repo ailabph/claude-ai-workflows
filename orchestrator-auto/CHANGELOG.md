@@ -15,6 +15,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `auto_commit()`: New optional `files_to_commit` parameter
   - Shows "Found N file(s) modified in session" message before committing
   - Note: CLI commands (`orchestrator start`) still commit all changes; selective commit is watch-mode only
+- **CLAUDE.md support** - Agents now automatically read and include CLAUDE.md from the project root
+  - Project-specific instructions are prepended to agent system prompts
+  - Applies to: PlannerAgent, ExecutorAgent, ExploreSubAgent
+  - Maximum 50KB limit to prevent prompt bloat
+  - Can be disabled per-agent with `include_claude_md=False`
 
 ### Changed
 

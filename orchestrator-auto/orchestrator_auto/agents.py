@@ -58,6 +58,70 @@ def build_allowed_tools(
     return tools
 
 
+def read_claude_md(project_root: Optional[Path] = None) -> Optional[str]:
+    """
+    Read CLAUDE.md from the project root if it exists.
+
+    Looks for CLAUDE.md (case-insensitive) in the project root directory.
+    This file contains project-specific instructions that should be included
+    in agent system prompts.
+
+    Args:
+        project_root: Project root directory (default: current directory)
+
+    Returns:
+        Contents of CLAUDE.md if found, None otherwise
+    """
+    root = project_root or Path.cwd()
+
+    # Try common variations
+    for filename in ["CLAUDE.md", "claude.md", "Claude.md"]:
+        claude_md_path = root / filename
+        if claude_md_path.exists():
+            try:
+                content = claude_md_path.read_text(encoding="utf-8")
+                # Limit size to prevent prompt bloat (max 50KB)
+                if len(content) > 50000:
+                    content = content[:50000] + "\n\n[CLAUDE.md truncated due to size]"
+                return content
+            except Exception:
+                return None
+
+    return None
+
+
+def build_system_prompt_with_claude_md(
+    base_prompt: str,
+    project_root: Optional[Path] = None,
+) -> str:
+    """
+    Build a system prompt that includes CLAUDE.md content if available.
+
+    The CLAUDE.md content is prepended to the base prompt with a clear header.
+
+    Args:
+        base_prompt: The base system prompt for the agent
+        project_root: Project root directory to look for CLAUDE.md
+
+    Returns:
+        Combined system prompt with CLAUDE.md content (if found)
+    """
+    claude_md_content = read_claude_md(project_root)
+
+    if claude_md_content:
+        return f"""# Project Instructions (from CLAUDE.md)
+
+{claude_md_content}
+
+---
+
+# Agent Instructions
+
+{base_prompt}"""
+    else:
+        return base_prompt
+
+
 class BaseAgent:
     """Base class for orchestrator agents."""
 
@@ -71,6 +135,7 @@ class BaseAgent:
         cwd: Optional[Path] = None,
         mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
+        include_claude_md: bool = True,
     ):
         """
         Initialize the agent.
@@ -84,8 +149,14 @@ class BaseAgent:
             cwd: Working directory for agent (default: current directory)
             mcp_servers: MCP server configuration dict or path to .mcp.json file
             on_token_usage: Optional callback for token usage reporting
+            include_claude_md: Whether to include CLAUDE.md in system prompt (default: True)
         """
-        self.system_prompt = system_prompt
+        # Build system prompt with CLAUDE.md if enabled
+        effective_cwd = cwd or Path.cwd()
+        if include_claude_md:
+            self.system_prompt = build_system_prompt_with_claude_md(system_prompt, effective_cwd)
+        else:
+            self.system_prompt = system_prompt
         self.allowed_tools = allowed_tools or DEFAULT_TOOLS
         self.model = model
         self.session_id = session_id

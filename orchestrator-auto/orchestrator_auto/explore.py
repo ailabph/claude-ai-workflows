@@ -21,6 +21,8 @@ from claude_agent_sdk.types import (
     TextBlock,
 )
 
+from .agents import build_system_prompt_with_claude_md
+
 
 # Read-only tools for exploration
 EXPLORE_TOOLS = ["Glob", "Grep", "Read"]
@@ -193,12 +195,18 @@ class ExploreSubAgent:
         # Build exploration prompt
         prompt = self._build_prompt(query, scope)
 
+        # Build system prompt with CLAUDE.md if available
+        system_prompt = build_system_prompt_with_claude_md(
+            EXPLORATION_SYSTEM_PROMPT,
+            project_root=self.cwd
+        )
+
         # Create isolated client for this exploration
         # Note: bypassPermissions is required because read-only tools (Glob, Grep, Read)
         # would otherwise prompt for user confirmation on each use. The tools list
         # is explicitly restricted to read-only operations.
         options = ClaudeAgentOptions(
-            system_prompt=EXPLORATION_SYSTEM_PROMPT,
+            system_prompt=system_prompt,
             tools=EXPLORE_TOOLS,
             model=self.model,
             cwd=self.cwd,
