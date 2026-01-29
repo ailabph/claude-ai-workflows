@@ -706,13 +706,13 @@ class TestAutoCommitSmartCommitIntegration:
             [],
             temp_git_repo,
             use_smart_commit=True,
-            smart_commit_model="claude-haiku-3-5-20241022",
+            smart_commit_model="claude-3-5-haiku-20241022",
         )
 
         assert success is True
         assert fallback_reason is None
         assert "model" in received_kwargs
-        assert received_kwargs["model"] == "claude-haiku-3-5-20241022"
+        assert received_kwargs["model"] == "claude-3-5-haiku-20241022"
 
     def test_auto_commit_no_model_kwarg_when_none(self, temp_git_repo, monkeypatch):
         """Test that model kwarg is not passed when smart_commit_model is None."""

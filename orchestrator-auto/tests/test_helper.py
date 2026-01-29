@@ -220,7 +220,7 @@ class TestHelperCommand:
 
         # Verify default model is haiku (resolved to full ID)
         call_kwargs = mock_create_agent.call_args[1]
-        assert call_kwargs['model'] == 'claude-haiku-3-5-20241022'
+        assert call_kwargs['model'] == 'claude-3-5-haiku-20241022'
 
     @patch('orchestrator_auto.resources.load_docs')
     @patch('orchestrator_auto.agents.create_chat_agent')
