@@ -5,6 +5,17 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-01-30
+
+### Fixed
+
+- **SDK Breaking Change: `max_tokens` parameter removed** - `ClaudeAgentOptions` in SDK 0.1.23+ no longer accepts `max_tokens`. ExploreSubAgent now uses `max_turns` instead.
+- **Duplicate tool IDs API error** - Upgraded to SDK 0.1.25 which fixes `"tool_use ids must be unique"` error in conversation history management.
+
+### Changed
+
+- **SDK dependency upgraded** - `claude-agent-sdk>=0.1.25` (from >=0.1.23)
+
 ## [1.7.0] - 2026-01-28
 
 ### Added

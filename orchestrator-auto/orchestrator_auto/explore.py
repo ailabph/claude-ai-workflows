@@ -211,7 +211,8 @@ class ExploreSubAgent:
             model=self.model,
             cwd=self.cwd,
             permission_mode="bypassPermissions",
-            max_tokens=self.max_tokens,
+            # Note: max_tokens removed - SDK 0.1.23+ uses max_turns instead
+            max_turns=self.max_turns,
         )
 
         # Use mutable accumulator to preserve partial results on timeout
