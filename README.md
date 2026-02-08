@@ -81,12 +81,12 @@ M4: Next/prev link generation + edge cases
 
 | Task | Workflow | Description |
 |------|----------|-------------|
-| Any language/framework | [Core Orchestrator](CLAUDE_orchestrator.md) | General-purpose milestone framework |
-| Django REST APIs | [Django Engineer](CLAUDE_django_engineer_workflow.md) | Models, serializers, views, pytest, migrations |
-| Figma-to-code | [Figma Visual QA](CLAUDE_orchestrator_figma_visual_qa.md) | Pixel-level comparison between Figma and browser |
-| UI iteration | [Frontend Refactor](CLAUDE_frontend_refactor_v2.md) | Screenshot-driven feedback loop |
-| Batch visual testing | [Visual QA](CLAUDE_visual_qa_workflow.md) | Autonomous screenshot validation with self-correction |
-| Solana/Web3 | [Solana Orchestrator](CLAUDE_orch_solana.md) | Security checklist + contract validation |
+| Any language/framework | [Core Orchestrator](workflows/CLAUDE_orchestrator.md) | General-purpose milestone framework |
+| Django REST APIs | [Django Engineer](workflows/CLAUDE_django_engineer_workflow.md) | Models, serializers, views, pytest, migrations |
+| Figma-to-code | [Figma Visual QA](workflows/CLAUDE_orchestrator_figma_visual_qa.md) | Pixel-level comparison between Figma and browser |
+| UI iteration | [Frontend Refactor](workflows/CLAUDE_frontend_refactor_v2.md) | Screenshot-driven feedback loop |
+| Batch visual testing | [Visual QA](workflows/CLAUDE_visual_qa_workflow.md) | Autonomous screenshot validation with self-correction |
+| Solana/Web3 | [Solana Orchestrator](workflows/CLAUDE_orch_solana.md) | Security checklist + contract validation |
 
 **Not sure?** Start with **Core Orchestrator** — it works for everything.
 

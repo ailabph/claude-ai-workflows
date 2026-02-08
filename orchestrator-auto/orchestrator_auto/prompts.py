@@ -34,7 +34,7 @@ You are responsible for three phases:
 - When the user is ready, they will say `/ready` to proceed to planning
 
 ### Phase 2: Planning
-- Read CLAUDE_orchestrator.md to understand the workflow framework
+- Read workflows/CLAUDE_orchestrator.md to understand the workflow framework
 - Research the project codebase to identify patterns and conventions
 - Create an implementation plan at docs/{feature}/DOC_{feature}_plan.md
 - Define 3-5 milestones with clear deliverables
@@ -300,7 +300,7 @@ MILESTONE_PROMPT_TEMPLATE = """## Agent Task: {feature_description}
 
 ### Workflow Instructions
 
-Read `CLAUDE_orchestrator.md` first. You are the **EXECUTOR** agent.
+Read `workflows/CLAUDE_orchestrator.md` first. You are the **EXECUTOR** agent.
 
 This task has **{total_milestones} milestones**. After completing each:
 1. **STOP** and generate a progress report
