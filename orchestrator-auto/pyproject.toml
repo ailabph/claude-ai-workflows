@@ -10,9 +10,9 @@ license = "MIT"
 requires-python = ">=3.10"
 
 [project.urls]
-Homepage = "https://github.com/dannyalmaden/claude-ai-workflows"
-Repository = "https://github.com/dannyalmaden/claude-ai-workflows"
-Issues = "https://github.com/dannyalmaden/claude-ai-workflows/issues"
+Homepage = "https://github.com/ailabph/claude-ai-workflows"
+Repository = "https://github.com/ailabph/claude-ai-workflows"
+Issues = "https://github.com/ailabph/claude-ai-workflows/issues"
 dependencies = [
     "claude-agent-sdk>=0.1.25",
     "click>=8.0",
