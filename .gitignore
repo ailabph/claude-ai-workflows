@@ -241,6 +241,7 @@ $RECYCLE.BIN/
 
 # End of https://www.toptal.com/developers/gitignore/api/intellij+all,intellij+iml,visualstudiocode,windows,macos,linux
 
+# AI tool configs (local only)
 .claude*
 .roo*
 .kilo*
@@ -248,6 +249,25 @@ $RECYCLE.BIN/
 CLAUDE.md
 AGENT.md
 AGENTS.md
+BLACKBOX.md
+CLAUDE_orchestrator_auto_agent.md
+
+# Coverage & test artifacts
 .coverage*
+
+# Local orchestrator working dirs
 /.plans/
+
+# Tool-specific
 .blackboxcli/
+
+# Secrets & credentials (defense-in-depth)
+.env
+.env.*
+*.pem
+*.key
+*.p12
+credentials*.json
+*.sqlite
+*.sqlite3
+*.db

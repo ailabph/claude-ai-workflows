@@ -118,7 +118,7 @@ telegram:
   # DM-only recommended: configure your own bot + your personal chat/user IDs
   bot_token: "123456:ABC-DEF..."      # From @BotFather
   chat_id: "YOUR_CHAT_ID"                # Your DM chat ID
-  allowed_user_id: "YOUR_CHAT_ID"         # Optional but recommended (Telegram user id)
+  allowed_user_id: "YOUR_USER_ID"         # Optional but recommended (Telegram user id)
 
   notifications:
     workflow_start: true
@@ -155,7 +155,7 @@ orchestrator telegram listen
 ```bash
 export ORCHESTRATOR_TELEGRAM_BOT_TOKEN="123456:ABC-DEF..."
 export ORCHESTRATOR_TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
-export ORCHESTRATOR_TELEGRAM_ALLOWED_USER_ID="YOUR_CHAT_ID"  # optional, recommended
+export ORCHESTRATOR_TELEGRAM_ALLOWED_USER_ID="YOUR_USER_ID"  # optional, recommended
 ```
 
 Priority: CLI flag > env vars > config file

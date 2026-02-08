@@ -44,7 +44,7 @@ telegram:
   enabled: true
   bot_token: "123456:ABC..."      # BotFather token (one per repo)
   chat_id: "YOUR_CHAT_ID"            # Your DM chat id
-  allowed_user_id: "YOUR_CHAT_ID"    # Optional but recommended
+  allowed_user_id: "YOUR_USER_ID"    # Optional but recommended
 
   stuck_sessions:
     enabled: true

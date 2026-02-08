@@ -178,7 +178,7 @@ python CLAUDE_fetch_figma_screenshot.py \
 
 ```bash
 # Clone repo
-git clone https://github.com/your-org/claude-ai-workflows.git
+git clone https://github.com/dannyalmaden/claude-ai-workflows.git
 cd claude-ai-workflows/orchestrator-auto
 
 # Setup environment
