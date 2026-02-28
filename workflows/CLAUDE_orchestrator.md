@@ -94,19 +94,26 @@ This framework is designed for a **two-agent architecture** to optimize context 
 
 ### Architecture
 
-```
-┌─────────────────────────────────────┐     ┌─────────────────────────────────────┐
-│  PLANNER/REVIEWER                   │     │  EXECUTOR                           │
-│  (Opus - expensive, strategic)      │     │  (Sonnet/Haiku - cost-effective)    │
-├─────────────────────────────────────┤     ├─────────────────────────────────────┤
-│  • Reviews framework docs           │     │  • Receives orchestrator prompt     │
-│  • Researches project codebase      │     │  • Executes ONE milestone only      │
-│  • Creates implementation plan      │     │  • Generates progress report        │
-│  • Writes orchestrator prompt       │────▶│  • STOPS and waits for approval     │
-│  • Validates milestone reports      │◀────│                                     │
-│  • Approves/rejects milestones      │     │  (fresh context each milestone)     │
-│  • Stays grounded (minimal context) │     │                                     │
-└─────────────────────────────────────┘     └─────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph Planner ["PLANNER/REVIEWER (Opus · strategic)"]
+        P1["Reviews framework docs"]
+        P2["Researches project codebase"]
+        P3["Creates implementation plan"]
+        P4["Writes orchestrator prompt"]
+        P5["Validates milestone reports"]
+        P6["Approves/rejects milestones"]
+        P7["Stays grounded · minimal context"]
+    end
+    subgraph Executor ["EXECUTOR (Sonnet/Haiku · cost-effective)"]
+        E1["Receives orchestrator prompt"]
+        E2["Executes ONE milestone only"]
+        E3["Generates progress report"]
+        E4["STOPS and waits for approval"]
+        E5["Fresh context each milestone"]
+    end
+    Planner -- "prompt" --> Executor
+    Executor -- "report" --> Planner
 ```
 
 ### Benefits
@@ -635,29 +642,23 @@ Milestone [N] approved. Continue with Milestone [N+1]:
 
 ## Typical Session Flow
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           TWO-SESSION WORKFLOW                               │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  SESSION 1: REVIEWER                    SESSION 2: EXECUTOR                  │
-│  ─────────────────────                  ────────────────────                 │
-│                                                                              │
-│  1. "Create plan for X"                                                      │
-│     ↓                                                                        │
-│  2. Creates DOC_X_plan.md                                                    │
-│     ↓                                                                        │
-│  3. Outputs executor prompt ──────────► 4. Receives prompt                   │
-│                                            ↓                                 │
-│                                         5. Executes M1                       │
-│                                            ↓                                 │
-│  6. Reviews progress report ◄─────────── 6. Reports + STOPS                  │
-│     ↓                                                                        │
-│  7. "Approved, generate M2 prompt" ───► 8. Continues with M2                 │
-│     ↓                                      ↓                                 │
-│  [Repeat until all milestones done]                                          │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+```mermaid
+sequenceDiagram
+    box Two-Session Workflow
+    participant R as Session 1: Reviewer
+    participant E as Session 2: Executor
+    end
+
+    R->>R: 1. "Create plan for X"
+    R->>R: 2. Creates DOC_X_plan.md
+    R->>E: 3. Outputs executor prompt
+    E->>E: 4. Receives prompt
+    E->>E: 5. Executes M1
+    E-->>R: 6. Reports + STOPS
+    R->>R: 6. Reviews progress report
+    R->>E: 7. "Approved, generate M2 prompt"
+    E->>E: 8. Continues with M2
+    Note over R,E: Repeat until all milestones done
 ```
 
 ### Human's Role
@@ -826,30 +827,15 @@ Then report the commit hash in the next progress report.
 
 ### Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    orchestrator-auto                          │
-│  ┌────────────────┐         ┌─────────────────┐             │
-│  │  Planner Agent │ ◄─────► │ Executor Agent  │             │
-│  │  (Opus 4.5)    │         │ (Sonnet 4.5)    │             │
-│  └────────────────┘         └─────────────────┘             │
-│         ▲                            ▲                        │
-│         │                            │                        │
-│  ┌──────┴────────────────────────────┴─────┐                │
-│  │       Orchestrator Engine                │                │
-│  │  • State machine                         │                │
-│  │  • Message routing                       │                │
-│  │  • Blocker handling                      │                │
-│  └──────────────────┬───────────────────────┘                │
-│                     │                                         │
-│              ┌──────▼──────┐                                 │
-│              │  SQLite DB   │                                 │
-│              │  (sessions,  │                                 │
-│              │   messages,  │                                 │
-│              │  milestones, │                                 │
-│              │   blockers)  │                                 │
-│              └──────────────┘                                 │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph orchestrator-auto
+        Planner["Planner Agent<br/>(Opus 4.5)"] <--> Executor["Executor Agent<br/>(Sonnet 4.5)"]
+        Engine["Orchestrator Engine<br/>State machine · Message routing · Blocker handling"]
+        Engine --> Planner
+        Engine --> Executor
+        Engine --> DB["SQLite DB<br/>(sessions, messages,<br/>milestones, blockers)"]
+    end
 ```
 
 ### Workflow Phases

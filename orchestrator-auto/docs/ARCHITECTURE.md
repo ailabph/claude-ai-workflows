@@ -40,60 +40,23 @@ If you want to understand how orchestrator-auto works at the code level, start h
 
 Every session follows this path through the code:
 
-```
-1. CLI ENTRY (cli.py)
-   User runs: orchestrator start -f "Feature"
-        ↓
-   cli.py calls: Orchestrator.__init__(feature_description)
-   Orchestrator calls: db.create_session()
-   Status: DISCOVERY / ACTIVE
-
-2. DISCOVERY PHASE (engine.py:_run_discovery)
-   Planner asks clarifying questions
-   User responds
-   Planner says "/ready" or similar
-   Transition: discovery → planning
-   Status: PLANNING / ACTIVE
-
-3. PLANNING PHASE (engine.py:_run_planning)
-   Planner creates milestone plan
-   Planner sends: [PLAN_READY] with plan content
-   parser.py detects: parse_planner_response() → PLANNER_PLAN_READY
-   Plan saved to file, stored in db
-   User approves plan
-   Transition: planning → execution
-   Status: EXECUTION / ACTIVE
-
-4. EXECUTION PHASE (engine.py:_run_execution)
-   For each milestone (M1, M2, ...):
-
-   a) Executor implements milestone M_n
-      executor.py:query() → runs agent with MILESTONE_PROMPT
-      Executor sends: [PROGRESS_REPORT] with code/tests
-      parser.py detects: parse_executor_response() → EXECUTOR_REPORT
-      db.create_message() stores response
-
-   b) Display report to user
-      user_input = prompt_with_paste_support()
-
-   c) User approves / requests changes
-      - Approve: state.transition(MILESTONE_APPROVED)
-      - Changes: executor re-runs with CHANGES_REQUESTED_TEMPLATE
-      - Block: state.transition(HUMAN_INPUT_NEEDED) → paused
-
-   d) Repeat for next milestone
-
-   All milestones done?
-   Transition: execution → completed
-   Status: COMPLETED / COMPLETED (or FAILED)
-
-5. COMPLETION (cli.py, engine.py)
-   Optional: auto-commit changes
-   Optional: Telegram notification
-   session marked complete
-   Exit
-
-If paused (blocker): cli.py:resume → inject_pending_response → continue from paused phase
+```mermaid
+flowchart TD
+    CLI["1. CLI ENTRY (cli.py)<br/>orchestrator start -f 'Feature'"]
+    CLI --> Init["Orchestrator.__init__() + db.create_session()<br/>Status: DISCOVERY / ACTIVE"]
+    Init --> Disc["2. DISCOVERY (engine.py:_run_discovery)<br/>Planner asks clarifying questions"]
+    Disc --> Ready["User/Planner says /ready<br/>Transition: discovery → planning"]
+    Ready --> Plan["3. PLANNING (engine.py:_run_planning)<br/>Planner creates milestone plan<br/>Sends [PLAN_READY]"]
+    Plan --> Approve["User approves plan<br/>Transition: planning → execution"]
+    Approve --> Exec["4. EXECUTION (engine.py:_run_execution)<br/>Executor implements milestone M_n"]
+    Exec --> Report["Executor sends [PROGRESS_REPORT]<br/>Display report to user"]
+    Report --> Decision{"User decision?"}
+    Decision -- "Approve" --> NextM{"All milestones done?"}
+    Decision -- "Changes" --> Exec
+    Decision -- "Block" --> Paused["PAUSED<br/>cli.py:resume → inject_pending_response"]
+    Paused --> Exec
+    NextM -- "No" --> Exec
+    NextM -- "Yes" --> Complete["5. COMPLETION<br/>Auto-commit (optional) · Telegram (optional)<br/>Session marked complete"]
 ```
 
 ---
@@ -102,16 +65,17 @@ If paused (blocker): cli.py:resume → inject_pending_response → continue from
 
 The `state.py:StateMachine` controls all phase transitions. Valid transitions:
 
-```
-discovery  →[user /ready]→  planning
-planning   →[user approve]→ execution
-execution  →[all done]→     completed
-execution  →[milestone ok]→ execution (stays, milestone counter increments)
+```mermaid
+stateDiagram-v2
+    discovery --> planning : user /ready
+    planning --> execution : user approve
+    execution --> completed : all done
+    execution --> execution : milestone ok (counter increments)
 
-ANY phase  →[blocker]→      paused (saves previous_phase)
-paused     →[response]→     previous_phase (resumes)
-
-ANY phase  →[error]→        completed (status=failed)
+    state "ANY phase" as any
+    any --> paused : blocker (saves previous_phase)
+    paused --> any : response (resumes previous_phase)
+    any --> completed : error (status=failed)
 ```
 
 **Key insight:** Executor STOPS after each milestone. Planner reviews the report. User approves/rejects. This is enforced by `engine.py:_route_to_planner()` which requires explicit approval before proceeding.
@@ -120,71 +84,40 @@ ANY phase  →[error]→        completed (status=failed)
 
 ## High-Level Data Flow
 
-```
-User Input (CLI)
-    ↓
-cli.py:start() → Orchestrator.__init__()
-    ↓
-Orchestrator.run() → Main loop
-    ├─ _run_discovery()    [planner ↔ user until /ready]
-    ├─ _run_planning()     [planner creates plan]
-    ├─ _run_execution()    [for each milestone:
-    │                        executor implements
-    │                        planner reviews
-    │                        user approves/rejects]
-    └─ _cleanup()          [close agents, persist state]
-    ↓
-state.py:StateMachine → db.update_session()
-    ↓
-SQLite Database (~/.claude_orchestrator/db.sqlite)
-    ├─ sessions (workflow metadata)
-    ├─ messages (all agent/user messages)
-    ├─ blockers (questions waiting for answers)
-    ├─ milestones (plan structure)
-    └─ queue_items (for batch execution)
+```mermaid
+graph TD
+    Input["User Input (CLI)"] --> Start["cli.py:start() → Orchestrator.__init__()"]
+    Start --> Loop["Orchestrator.run() → Main loop"]
+    Loop --> Discovery["_run_discovery()<br/>planner ↔ user until /ready"]
+    Loop --> Planning["_run_planning()<br/>planner creates plan"]
+    Loop --> Execution["_run_execution()<br/>executor implements → planner reviews → user approves"]
+    Loop --> Cleanup["_cleanup()<br/>close agents, persist state"]
+    Cleanup --> State["state.py:StateMachine → db.update_session()"]
+    State --> DB["SQLite Database<br/>~/.claude_orchestrator/db.sqlite"]
+    DB --> Sessions["sessions · messages · blockers · milestones · queue_items"]
 ```
 
 ---
 
 ## Module Interaction Diagram
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        cli.py                               │
-│              (Click CLI commands, parsing)                  │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-┌────────────────▼────────────────────────────────────────────┐
-│                   engine.py:Orchestrator                    │
-│         (Main state machine, message routing)               │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  state.py:StateMachine                               │  │
-│  │  (Manages valid transitions, persists to db)         │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  agents.py:PlannerAgent / ExecutorAgent              │  │
-│  │  (Wraps Claude Agent SDK for Opus/Sonnet)           │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  parser.py                                           │  │
-│  │  (Detects tags: [PLAN_READY], [PROGRESS_REPORT])   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────┬────────────────────────────────────────────┘
-                 │
-         ┌───────┼────────┬──────────┬──────────┐
-         │       │        │          │          │
-    ┌────▼─┐ ┌──▼──┐ ┌───▼──┐ ┌───▼───┐ ┌───▼──┐
-    │ db  │ │git  │ │config│ │auth   │ │telegram
-    │ .py │ │.py  │ │.py   │ │.py    │ │.py
-    └─────┘ └─────┘ └──────┘ └───────┘ └──────┘
-         │
-    ┌────▼──────────────────────────┐
-    │  SQLite Database               │
-    │  ~/.claude_orchestrator/db.sqlite
-    └───────────────────────────────┘
+```mermaid
+graph TD
+    CLI["cli.py<br/>(Click CLI commands, parsing)"]
+    CLI --> Engine
+
+    subgraph Engine ["engine.py:Orchestrator<br/>(Main state machine, message routing)"]
+        State["state.py:StateMachine<br/>Manages valid transitions, persists to db"]
+        Agents["agents.py:PlannerAgent / ExecutorAgent<br/>Wraps Claude Agent SDK for Opus/Sonnet"]
+        Parser["parser.py<br/>Detects tags: PLAN_READY, PROGRESS_REPORT"]
+    end
+
+    Engine --> db["db.py"]
+    Engine --> git["git.py"]
+    Engine --> config["config.py"]
+    Engine --> auth["auth.py"]
+    Engine --> telegram["telegram.py"]
+    db --> DB["SQLite Database<br/>~/.claude_orchestrator/db.sqlite"]
 ```
 
 ---

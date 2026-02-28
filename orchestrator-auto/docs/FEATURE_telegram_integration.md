@@ -33,31 +33,15 @@ Enable Telegram bot integration for orchestrator-auto to:
 
 ### Recommended: One Bot Per Project
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        DROPLET 1                             │
-│  ┌─────────────────┐     ┌─────────────────────────────┐   │
-│  │ orchestrator    │────►│ TelegramNotifier            │   │
-│  │ engine.py       │     │                             │   │
-│  │                 │◄────│ • Sends notifications       │   │
-│  │ • on_blocker()  │     │ • Polls for replies         │   │
-│  │ • on_milestone()│     │ • Routes answers to engine  │   │
-│  │ • on_complete() │     │                             │   │
-│  └─────────────────┘     └──────────┬──────────────────┘   │
-│                                     │                       │
-└─────────────────────────────────────┼───────────────────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │   Telegram API        │
-                          │   @ProjectA_Bot       │
-                          └───────────┬───────────┘
-                                      │
-                                      ▼
-                          ┌───────────────────────┐
-                          │   Your Phone          │
-                          │   Telegram App        │
-                          └───────────────────────┘
+```mermaid
+graph TD
+    subgraph Droplet ["DROPLET 1"]
+        Engine["orchestrator engine.py<br/>on_blocker() · on_milestone() · on_complete()"]
+        Notifier["TelegramNotifier<br/>Sends notifications · Polls for replies · Routes answers"]
+        Engine <--> Notifier
+    end
+    Notifier --> API["Telegram API<br/>@ProjectA_Bot"]
+    API --> Phone["Your Phone<br/>Telegram App"]
 ```
 
 ### Why One Bot Per Project?

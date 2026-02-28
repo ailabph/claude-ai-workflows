@@ -20,45 +20,30 @@ A **specialized two-agent workflow** for implementing UI components/pages from F
 
 ## Core Workflow
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│  ORCHESTRATOR (Planner/Reviewer)                                   │
-├────────────────────────────────────────────────────────────────────┤
-│  Phase 1: Research & Planning                                      │
-│  • Fetches Figma design specs via MCP (layout, colors, spacing)   │
-│  • Views Figma screenshots for reference                           │
-│  • Extracts node IDs for components                                │
-│  • Creates implementation plan with visual checkpoints             │
-│  • Provides Figma URLs + node IDs for Executor                     │
-│                                                                     │
-│  Phase 2: Visual QA (After each milestone)                         │
-│  • Receives browser screenshot paths from Executor                 │
-│  • Fetches fresh Figma screenshots via MCP                         │
-│  • Reads Executor's browser screenshots from disk                  │
-│  • Compares Figma vs Browser side-by-side                          │
-│  • Provides specific visual feedback (colors, spacing, alignment)  │
-│  • Approves/rejects with actionable feedback                       │
-└────────────────────────────────────────────────────────────────────┘
-                    ↓ milestone prompt + Figma specs           ↑ screenshots + report
-┌────────────────────────────────────────────────────────────────────┐
-│  EXECUTOR (Implementation Agent)                                   │
-├────────────────────────────────────────────────────────────────────┤
-│  Phase 1: Setup                                                    │
-│  • Receives implementation plan + Figma URLs/node IDs              │
-│  • Uses Python script to fetch Figma screenshots                   │
-│  • Saves to screenshots/figma/ directory                           │
-│  • Reviews design specs and screenshots                            │
-│                                                                     │
-│  Phase 2: Implementation                                           │
-│  • Implements milestone (components, styling, logic)               │
-│  • Starts dev server on UNUSED PORT                                │
-│  • Opens browser to localhost:PORT                                 │
-│  • Takes screenshots at specified breakpoints/states               │
-│  • Saves to screenshots/browser/milestone-N-*.png                  │
-│  • STOPS dev server (kill process, release port)                   │
-│  • Generates progress report with screenshot paths                 │
-│  • WAITS for Orchestrator approval                                 │
-└────────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Orchestrator ["ORCHESTRATOR (Planner/Reviewer)"]
+        O_P1["Phase 1: Research & Planning"]
+        O_P1_1["Fetch Figma specs via MCP"]
+        O_P1_2["View screenshots, extract node IDs"]
+        O_P1_3["Create plan with visual checkpoints"]
+        O_P2["Phase 2: Visual QA"]
+        O_P2_1["Compare Figma vs Browser screenshots"]
+        O_P2_2["Approve/reject with feedback"]
+    end
+
+    subgraph Executor ["EXECUTOR (Implementation Agent)"]
+        E_P1["Phase 1: Setup"]
+        E_P1_1["Receive plan + Figma URLs/node IDs"]
+        E_P1_2["Fetch Figma screenshots via Python script"]
+        E_P2["Phase 2: Implementation"]
+        E_P2_1["Implement milestone"]
+        E_P2_2["Start dev server, take browser screenshots"]
+        E_P2_3["Generate progress report + WAIT"]
+    end
+
+    Orchestrator -- "milestone prompt + Figma specs" --> Executor
+    Executor -- "screenshots + report" --> Orchestrator
 ```
 
 ---

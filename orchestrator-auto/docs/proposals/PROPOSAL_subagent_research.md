@@ -47,35 +47,23 @@ Executor needs to implement OAuth2 integration
 
 Introduce **Research Agents** with complete context isolation:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  MAIN AGENT (Executor/Planner)                                  │
-│  Context: Clean, focused on current milestone                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  "I need to understand OAuth2 implementation patterns"         │
-│                         │                                       │
-│                         ▼                                       │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │  RESEARCH AGENT (Isolated Context)                          ││
-│  │                                                             ││
-│  │  1. Fetch OAuth2 documentation                              ││
-│  │  2. Read existing auth implementation                       ││
-│  │  3. Compare library options                                 ││
-│  │  4. Analyze security considerations                         ││
-│  │                                                             ││
-│  │  Context: 50,000 tokens of research                         ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                         │                                       │
-│                         ▼                                       │
-│  Research Summary (500 tokens):                                 │
-│  - Use authlib library (most maintained)                        │
-│  - Follow existing pattern in auth/oauth.py                     │
-│  - Key methods: create_client(), get_token()                    │
-│  - Security: validate redirect_uri, use PKCE                    │
-│                                                                 │
-│  Main agent continues with clean context + summary              │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    subgraph Main ["MAIN AGENT (Executor/Planner)<br/>Context: Clean, focused on current milestone"]
+        Question["'I need to understand OAuth2 implementation patterns'"]
+        Question --> Research
+
+        subgraph Research ["RESEARCH AGENT (Isolated Context)"]
+            R1["1. Fetch OAuth2 documentation"]
+            R2["2. Read existing auth implementation"]
+            R3["3. Compare library options"]
+            R4["4. Analyze security considerations"]
+            RC["Context: 50,000 tokens of research"]
+        end
+
+        Research --> Summary["Research Summary (500 tokens)<br/>- Use authlib library<br/>- Follow pattern in auth/oauth.py<br/>- Key methods: create_client(), get_token()<br/>- Security: validate redirect_uri, use PKCE"]
+        Summary --> Continue["Main agent continues with clean context + summary"]
+    end
 ```
 
 ### Architecture

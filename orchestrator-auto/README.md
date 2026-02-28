@@ -66,62 +66,37 @@ orchestrator resume <session-id>     # Continue where you left off
 
 ### Architecture
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    orchestrator-auto                          │
-│  ┌────────────────┐         ┌─────────────────┐             │
-│  │  Planner Agent │ ◄─────► │ Executor Agent  │             │
-│  │  (Opus 4.5)    │         │ (Sonnet 4.5)    │             │
-│  └────────────────┘         └─────────────────┘             │
-│         ▲                            ▲                        │
-│         │                            │                        │
-│  ┌──────┴────────────────────────────┴─────┐                │
-│  │       Orchestrator Engine                │                │
-│  │  • State machine                         │                │
-│  │  • Message routing                       │                │
-│  │  • Blocker handling                      │                │
-│  └──────────────────┬───────────────────────┘                │
-│                     │                                         │
-│              ┌──────▼──────┐                                 │
-│              │  SQLite DB   │                                 │
-│              └──────────────┘                                 │
-└──────────────────────────────────────────────────────────────┘
+```mermaid
+graph TD
+    subgraph orchestrator-auto
+        Planner["Planner Agent<br/>(Opus 4.5)"] <--> Executor["Executor Agent<br/>(Sonnet 4.5)"]
+        Engine["Orchestrator Engine<br/>State machine · Message routing · Blocker handling"]
+        Engine --> Planner
+        Engine --> Executor
+        Engine --> DB["SQLite DB"]
+    end
 ```
 
 ### Workflow Execution Flow
 
-```
-1. DISCOVERY
-   You describe what to build
-        ↓
-   Planner asks clarifying questions (if needed)
-        ↓
-   Requirements finalized
-
-2. PLANNING
-   Planner reads framework docs
-        ↓
-   Creates 3-5 milestones
-        ↓
-   You approve, request changes, or provide more info
-
-3. EXECUTION (repeat for each milestone)
-   Executor implements milestone N
-        ↓
-   Runs tests, generates progress report
-        ↓
-   You review the work
-        ↓
-   ✅ Approve? → Proceed to next milestone
-   ❌ Changes needed? → Executor fixes and regenerates
-   🛑 Abort? → Stop workflow entirely
-
-4. COMPLETION
-   All milestones approved
-        ↓
-   Optional: auto-commit changes to git
-        ↓
-   Session marked complete
+```mermaid
+flowchart TD
+    D1["1. DISCOVERY<br/>You describe what to build"] --> D2["Planner asks clarifying questions"]
+    D2 --> D3["Requirements finalized"]
+    D3 --> P1["2. PLANNING<br/>Planner reads framework docs"]
+    P1 --> P2["Creates 3-5 milestones"]
+    P2 --> P3["You approve, request changes, or provide more info"]
+    P3 --> E1["3. EXECUTION<br/>Executor implements milestone N"]
+    E1 --> E2["Runs tests, generates progress report"]
+    E2 --> E3["You review the work"]
+    E3 --> Approve{"Decision?"}
+    Approve -- "Approve" --> Next["Proceed to next milestone"]
+    Approve -- "Changes needed" --> E1
+    Approve -- "Abort" --> Stop["Stop workflow entirely"]
+    Next --> Done{"All milestones done?"}
+    Done -- "No" --> E1
+    Done -- "Yes" --> C1["4. COMPLETION<br/>Auto-commit changes (optional)"]
+    C1 --> C2["Session marked complete"]
 ```
 
 **Key insight:** Executor STOPS after each milestone and waits for your approval. This prevents wasted compute on wrong directions.

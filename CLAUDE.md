@@ -91,15 +91,22 @@ python workflows/CLAUDE_fetch_figma_screenshot.py --url "https://figma.com/..." 
 
 ## Architecture Overview
 
-```
-┌─────────────────────────────────────┐     ┌─────────────────────────────────────┐
-│  PLANNER/REVIEWER (Opus)            │     │  EXECUTOR (Sonnet/Haiku)            │
-├─────────────────────────────────────┤     ├─────────────────────────────────────┤
-│  • Reviews framework docs           │     │  • Receives orchestrator prompt     │
-│  • Creates implementation plan      │────▶│  • Executes ONE milestone only      │
-│  • Validates milestone reports      │◀────│  • Generates progress report        │
-│  • Approves/rejects milestones      │     │  • STOPS and waits for approval     │
-└─────────────────────────────────────┘     └─────────────────────────────────────┘
+```mermaid
+graph LR
+    subgraph Planner/Reviewer ["PLANNER/REVIEWER (Opus)"]
+        P1["Reviews framework docs"]
+        P2["Creates implementation plan"]
+        P3["Validates milestone reports"]
+        P4["Approves/rejects milestones"]
+    end
+    subgraph Executor ["EXECUTOR (Sonnet/Haiku)"]
+        E1["Receives orchestrator prompt"]
+        E2["Executes ONE milestone only"]
+        E3["Generates progress report"]
+        E4["STOPS and waits for approval"]
+    end
+    Planner/Reviewer -- "prompt" --> Executor
+    Executor -- "report" --> Planner/Reviewer
 ```
 
 ### Agent Communication Flow

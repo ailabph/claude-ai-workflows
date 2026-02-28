@@ -10,19 +10,22 @@ Milestone-based orchestration for AI agents with human oversight. Describe what 
 
 You describe a feature. A **Planner** (Claude Opus) breaks it into milestones. An **Executor** (Claude Sonnet/Haiku) implements them one at a time. You review and approve between each milestone. Repeat until done.
 
-```
- You                    Planner (Opus)              Executor (Sonnet/Haiku)
-  │                          │                              │
-  │  "Add user auth"         │                              │
-  ├─────────────────────────►│                              │
-  │                          │  Plan: 4 milestones          │
-  │  ✅ Approve plan         │──────────────────────────────►│
-  │◄─────────────────────────┤                              │  M1: Schema + models
-  │                          │         Progress report      │
-  │  ✅ Approve M1           │◄─────────────────────────────┤
-  ├─────────────────────────►│──────────────────────────────►│
-  │                          │                              │  M2: Registration + tests
-  │         ...              │         ...                  │  ...
+```mermaid
+sequenceDiagram
+    participant You
+    participant Planner as Planner (Opus)
+    participant Executor as Executor (Sonnet/Haiku)
+
+    You->>Planner: "Add user auth"
+    Planner-->>You: Plan: 4 milestones
+    You->>Planner: Approve plan
+    Planner->>Executor: Execute M1
+    Executor-->>Planner: Progress report (M1: Schema + models)
+    Planner-->>You: Review M1
+    You->>Planner: Approve M1
+    Planner->>Executor: Execute M2
+    Executor-->>Planner: Progress report (M2: Registration + tests)
+    Note over You,Executor: ...continues for each milestone...
 ```
 
 ## Features
@@ -110,16 +113,16 @@ See [orchestrator-auto/README.md](orchestrator-auto/README.md) for full CLI docu
 
 ## Architecture
 
-```
-CLI (click)
- └── Engine (state machine + orchestration loop)
-      ├── PlannerAgent (Opus) ──── creates milestones, reviews reports
-      ├── ExecutorAgent (Sonnet) ── implements one milestone at a time
-      │    ├── ExploreSubAgent ──── codebase research
-      │    └── BashSubAgent ─────── command execution
-      ├── SQLite DB ─────────────── session persistence
-      ├── TUI (Textual) ────────── live dashboard + watch mode
-      └── Telegram ──────────────── notifications + blocker replies
+```mermaid
+graph TD
+    CLI[CLI · click] --> Engine[Engine · state machine + orchestration loop]
+    Engine --> Planner[PlannerAgent · Opus<br/>creates milestones, reviews reports]
+    Engine --> Executor[ExecutorAgent · Sonnet<br/>implements one milestone at a time]
+    Executor --> Explore[ExploreSubAgent<br/>codebase research]
+    Executor --> Bash[BashSubAgent<br/>command execution]
+    Engine --> DB[SQLite DB<br/>session persistence]
+    Engine --> TUI[TUI · Textual<br/>live dashboard + watch mode]
+    Engine --> Telegram[Telegram<br/>notifications + blocker replies]
 ```
 
 Key modules in [`orchestrator-auto/`](orchestrator-auto/):

@@ -10,27 +10,32 @@ Add `orchestrator watch ./plans/` command that monitors a directory for new `.md
 
 ## File State Machine
 
-```
-pending.md
-  │
-  ├─[invalid format]─► _orchestrator-skip__pending.md (quarantine original)
-  │                         +
-  │                    pending_converted.md (new valid plan)
-  │                         │
-  │                         ▼
-  ├─[valid format]────► (processing)
-  │                         │
-  │                    ┌────┴────┬────────────┐
-  │                    ▼         ▼            ▼
-  │               *_done.md  *_failed.md  *_paused.md
-  │                                            │
-  │                                   [external resume]
-  │                                            │
-  │                                    ┌───────┴───────┐
-  │                                    ▼               ▼
-  │                               *_done.md      *_failed.md
-  │
-  └─[already terminal]─► SKIP (never reprocessed)
+```mermaid
+stateDiagram-v2
+    pending : pending.md
+
+    state check <<choice>>
+    pending --> check
+    check --> quarantine : invalid format
+    check --> processing : valid format
+    check --> SKIP : already terminal
+
+    quarantine : _orchestrator-skip__pending.md
+    quarantine --> converted : pending_converted.md
+    converted --> processing
+
+    state result <<fork>>
+    processing --> result
+    result --> done : *_done.md
+    result --> failed : *_failed.md
+    result --> paused : *_paused.md
+
+    state resume_result <<fork>>
+    paused --> resume_result : external resume
+    resume_result --> done
+    resume_result --> failed
+
+    SKIP : SKIP (never reprocessed)
 ```
 
 **Note:** `*_paused.md` is an intermediate state. After external resume completes,

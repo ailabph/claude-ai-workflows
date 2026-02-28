@@ -49,27 +49,19 @@ Issues that slip through:
 
 Add **pluggable validation sub-agents** that run automatically after milestone execution:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  EXECUTOR completes milestone                                    │
-├─────────────────────────────────────────────────────────────────┤
-│  Validation Pipeline (parallel)                                 │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐               │
-│  │  Security   │ │ Performance │ │    API      │               │
-│  │  Validator  │ │  Validator  │ │  Validator  │               │
-│  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘               │
-│         │               │               │                       │
-│         ▼               ▼               ▼                       │
-│  ┌─────────────────────────────────────────────────────────────┐│
-│  │                 Validation Report                           ││
-│  │  Security: 1 HIGH, 2 MEDIUM                                 ││
-│  │  Performance: 0 issues                                      ││
-│  │  API: 1 WARNING                                             ││
-│  └─────────────────────────────────────────────────────────────┘│
-│                                                                 │
-│  If HIGH issues: Auto-trigger CHANGES_REQUESTED                 │
-│  If MEDIUM/LOW: Include in progress report for human review     │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Complete["EXECUTOR completes milestone"]
+    Complete --> Pipeline["Validation Pipeline (parallel)"]
+    Pipeline --> Security["Security<br/>Validator"]
+    Pipeline --> Performance["Performance<br/>Validator"]
+    Pipeline --> API["API<br/>Validator"]
+    Security --> Report["Validation Report"]
+    Performance --> Report
+    API --> Report
+    Report --> High{"HIGH issues?"}
+    High -- "Yes" --> Changes["Auto-trigger CHANGES_REQUESTED"]
+    High -- "No (MEDIUM/LOW)" --> Include["Include in progress report for human review"]
 ```
 
 ### Validator Types

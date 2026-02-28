@@ -46,27 +46,16 @@ The tests and documentation are independent of the implementation and could run 
 
 Implement **task decomposition and parallel execution**:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│  EXECUTOR receives milestone                                     │
-├─────────────────────────────────────────────────────────────────┤
-│  1. Analyze milestone for parallelizable tasks                  │
-│                                                                 │
-│  2. Identify dependencies                                       │
-│     [Implementation] ──┬──► [Tests]        (can parallel)       │
-│                        └──► [Docs]         (can parallel)       │
-│                                                                 │
-│  3. Execute with parallelization                                │
-│     ┌─────────────┐                                             │
-│     │ Main Agent  │ ── Implementation ──┐                       │
-│     └─────────────┘                     │                       │
-│                                         ▼                       │
-│     ┌─────────────┐              ┌─────────────┐                │
-│     │ Sub-Agent 1 │ ── Tests     │ Sub-Agent 2 │ ── Docs        │
-│     └─────────────┘              └─────────────┘                │
-│                                                                 │
-│  4. Aggregate results into unified progress report              │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TD
+    Receive["EXECUTOR receives milestone"]
+    Receive --> Analyze["1. Analyze milestone for parallelizable tasks"]
+    Analyze --> Deps["2. Identify dependencies"]
+    Deps --> Impl["Implementation (Main Agent)"]
+    Impl --> Tests["Tests (Sub-Agent 1)"]
+    Impl --> Docs["Docs (Sub-Agent 2)"]
+    Tests --> Aggregate["4. Aggregate results into unified progress report"]
+    Docs --> Aggregate
 ```
 
 ### Architecture
