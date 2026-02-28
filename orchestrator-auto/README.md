@@ -153,8 +153,8 @@ orchestrator resume <session-id>     # Continue where you left off
 | `config.py` | Configuration | `load_config()`, `get_model_id()`, `load_mcp_config_raw()` |
 | `telegram.py` | Notifications | `TelegramNotifier`, `send_blocker_notification()` |
 | `git.py` | Auto-commit | `auto_commit()`, `get_staged_diff()` |
-| `commit_ai.py` | AI commit messages | `generate_commit_message()` |
-| `secrets.py` | Secrets detection | `scan_for_secrets()` |
+| `commit_ai.py` | AI commit messages | `generate_smart_commit_message()` |
+| `secrets.py` | Secrets detection | `contains_secrets()` |
 | `prompts.py` | System prompts | `PLANNER_SYSTEM_PROMPT`, `EXECUTOR_SYSTEM_PROMPT`, `MILESTONE_PROMPT` |
 | `auth.py` | Auth detection | `detect_auth()`, `format_auth_display()` |
 | `exceptions.py` | Custom exceptions | `OrchestratorError`, `AgentError`, `SessionStateError` |
@@ -170,6 +170,10 @@ orchestrator resume <session-id>     # Continue where you left off
 | `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, widgets, screens |
 | `explore.py` | Exploration sub-agent | `ExploreSubAgent`, `explore_async()`, `compact_findings()` |
 | `validation/` | Validation sub-agents | `SecurityValidator`, `PerformanceValidator`, `APIValidator`, `ValidationPipeline` |
+| `chat.py` | Direct chat interface | `ChatSession` |
+| `playwright_test.py` | Playwright MCP verification | `run_playwright_test()`, `run_playwright_test_both()` |
+| `io/` | Input/output abstraction | `ChunkEvent`, `StateChangeEvent`, `InputProvider`, `CLIInputProvider` |
+| `resources/` | Bundled documentation | CLI_REFERENCE.md, CONFIGURATION.md, TROUBLESHOOTING.md |
 
 ### Database Tables
 
@@ -182,6 +186,8 @@ orchestrator resume <session-id>     # Continue where you left off
 | `queue_items` | Batch execution queue state |
 | `telegram_state` | Telegram polling cursor for reply routing |
 | `exploration_results` | Pre-milestone codebase exploration findings |
+| `session_errors` | Error tracking and debugging with stack traces |
+| `tool_invocations` | Tool usage audit trails (SDK 0.1.22+) |
 | `validation_results` | Post-milestone validation issues with severity counts |
 
 ---
@@ -547,6 +553,8 @@ orchestrator test-playwright executor --test-url URL -m haiku -v  # Cheaper mode
 | Use TUI for todo mode | `orchestrator todo tasks.md --tui` |
 | Test Telegram config | `orchestrator telegram test` |
 | Listen for Telegram replies | `orchestrator telegram listen` |
+| Ping Telegram bot | `orchestrator telegram ping` |
+| Disable file rewind on rejection | `orchestrator start -f "Feature" --no-rewind` |
 | Verify setup | `orchestrator check` |
 
 ---
@@ -620,7 +628,7 @@ Communication protocol between agents and orchestrator.
 
 | Tag | Meaning |
 |-----|---------|
-| `[PLAN_READY]` | Plan created, ready for approval |
+| `[PLAN_READY]` | Plan created, ready for approval (wraps `[PLAN_CONTENT]...[/PLAN_CONTENT]`) |
 | `[MILESTONE_APPROVED]` | Proceed to next milestone |
 | `[CHANGES_REQUESTED]` | Revisions needed on current milestone |
 | `[HUMAN_INPUT_NEEDED]` | Blocker - need human decision |
@@ -629,7 +637,7 @@ Communication protocol between agents and orchestrator.
 
 | Tag | Meaning |
 |-----|---------|
-| `[PROGRESS_REPORT]` | Milestone complete, reporting results |
+| `[PROGRESS_REPORT]...[/PROGRESS_REPORT]` | Milestone complete, reporting results (paired tag) |
 | `[CLARIFICATION_NEEDED]` | Need info to proceed |
 | `[BLOCKED]` | External dependency or error |
 
@@ -722,19 +730,41 @@ orchestrator-auto/
 │   ├── parser.py            # Response parsing
 │   ├── agents.py            # Agent wrappers
 │   ├── config.py            # Model config
+│   ├── db.py                # Database ops
+│   ├── auth.py              # Auth detection
+│   ├── chat.py              # Direct chat interface
 │   ├── git.py               # Auto-commit
-│   ├── secrets.py           # Secrets detection
 │   ├── commit_ai.py         # AI commit messages
+│   ├── secrets.py           # Secrets detection
 │   ├── telegram.py          # Telegram notifications
 │   ├── recovery.py          # Context recovery
 │   ├── prompts.py           # System prompts
-│   ├── db.py                # Database ops
-│   ├── logging_config.py    # Per-session logging
 │   ├── exceptions.py        # Custom exceptions
+│   ├── logging_config.py    # Per-session logging
+│   ├── output.py            # Activity display
+│   ├── input_handler.py     # Multi-line paste support
+│   ├── explore.py           # Exploration sub-agent
+│   ├── convert.py           # Plan format conversion
+│   ├── todo.py              # Batch task execution
+│   ├── todo_parser.py       # Checkbox file parsing
+│   ├── playwright_test.py   # Playwright MCP verification
+│   ├── controllers/
+│   │   ├── queue_controller.py  # Queue mode orchestration
+│   │   └── watch_controller.py  # Watch mode orchestration
+│   ├── validation/          # Post-milestone validators
+│   │   ├── security.py      # SQL injection, XSS, secrets
+│   │   ├── performance.py   # N+1 queries, sync-in-async
+│   │   ├── api.py           # Missing validation, hardcoded URLs
+│   │   └── pipeline.py      # Parallel validation runner
+│   ├── io/                  # Input/output abstraction
+│   │   ├── events.py        # ChunkEvent, StateChangeEvent
+│   │   └── input_provider.py # InputProvider, CLIInputProvider
+│   ├── resources/           # Bundled docs for helper command
 │   └── tui/                 # Text User Interface
 │       ├── app.py           # OrchestratorTUI
 │       ├── queue_app.py     # QueueTUI
 │       ├── watch_app.py     # WatchTUI
+│       ├── todo_app.py      # TodoTUI
 │       ├── adapter.py       # Thread-safe adapters
 │       ├── messages.py      # Custom messages
 │       ├── bindings.py      # Keybindings
@@ -759,7 +789,7 @@ pytest tests/ --cov=orchestrator_auto
 
 | Package | Required Version | Purpose |
 |---------|------------------|---------|
-| `claude-agent-sdk` | ≥0.1.16 | Claude Code Python SDK |
+| `claude-agent-sdk` | ≥0.1.25 | Claude Code Python SDK |
 | `click` | ≥8.0 | CLI framework |
 | `prompt_toolkit` | ≥3.0 | Multi-line input handling |
 | `pyyaml` | ≥6.0 | Configuration files |
@@ -829,19 +859,18 @@ my_subagent = AgentDefinition(
 
 | SDK Version | Status | Key Features |
 |-------------|--------|--------------|
-| 0.1.16 | Current minimum | Rate limit detection |
-| 0.1.17 | Recommended | `uuid` field, `rewind_files()` for file rollback |
+| 0.1.25 | Current minimum | All features below included |
+| 0.1.23 | - | `get_mcp_status()` for MCP health checks |
 | 0.1.22 | - | `tool_use_result` for audit trails |
-| 0.1.23 | Latest | `get_mcp_status()` for MCP health checks |
-
-See [SDK Upgrade Proposal](docs/proposals/PROPOSAL_sdk_upgrade_0.1.23.md) for planned improvements.
+| 0.1.17 | - | `uuid` field, `rewind_files()` for file rollback |
+| 0.1.16 | - | Rate limit detection |
 
 ---
 
 ## Related
 
 - [CLAUDE_orchestrator.md](../CLAUDE_orchestrator.md) - Framework docs
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.23)
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.25+)
 - [Subagents in the SDK](https://platform.claude.com/docs/en/agent-sdk/subagents) - Official sub-agent documentation
 
 ## Future Planned Features
