@@ -6,7 +6,7 @@ dependencies:
   - python=3.11
   - pip
   - pip:
-    - claude-agent-sdk>=0.1.23
+    - claude-agent-sdk>=0.1.46,<0.2.0
     - click>=8.0
     - pytest>=7.0
     - pytest-asyncio>=0.21

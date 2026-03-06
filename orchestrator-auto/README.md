@@ -530,6 +530,10 @@ orchestrator test-playwright executor --test-url URL -m haiku -v  # Cheaper mode
 | Listen for Telegram replies | `orchestrator telegram listen` |
 | Ping Telegram bot | `orchestrator telegram ping` |
 | Disable file rewind on rejection | `orchestrator start -f "Feature" --no-rewind` |
+| Set planner reasoning effort | `orchestrator start -f "Feature" --planner-effort high` |
+| Set executor reasoning effort | `orchestrator start -f "Feature" --executor-effort medium` |
+| Enable extended thinking | `orchestrator start -f "Feature" --thinking adaptive` |
+| Set thinking budget | `orchestrator start -f "Feature" --thinking 10000` |
 | Verify setup | `orchestrator check` |
 
 ---
@@ -764,7 +768,7 @@ pytest tests/ --cov=orchestrator_auto
 
 | Package | Required Version | Purpose |
 |---------|------------------|---------|
-| `claude-agent-sdk` | ≥0.1.25 | Claude Code Python SDK |
+| `claude-agent-sdk` | ≥0.1.46 | Claude Code Python SDK |
 | `click` | ≥8.0 | CLI framework |
 | `prompt_toolkit` | ≥3.0 | Multi-line input handling |
 | `pyyaml` | ≥6.0 | Configuration files |
@@ -834,7 +838,9 @@ my_subagent = AgentDefinition(
 
 | SDK Version | Status | Key Features |
 |-------------|--------|--------------|
-| 0.1.25 | Current minimum | All features below included |
+| 0.1.46 | Current minimum | All features below included |
+| 0.1.46 | - | `effort` field, `ThinkingConfig` types, `ResultMessage.stop_reason` |
+| 0.1.40 | - | Forward-compatible message parsing |
 | 0.1.23 | - | `get_mcp_status()` for MCP health checks |
 | 0.1.22 | - | `tool_use_result` for audit trails |
 | 0.1.17 | - | `uuid` field, `rewind_files()` for file rollback |
@@ -845,7 +851,7 @@ my_subagent = AgentDefinition(
 ## Related
 
 - [CLAUDE_orchestrator.md](../CLAUDE_orchestrator.md) - Framework docs
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.25+)
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.46+)
 - [Subagents in the SDK](https://platform.claude.com/docs/en/agent-sdk/subagents) - Official sub-agent documentation
 
 ## Future Planned Features

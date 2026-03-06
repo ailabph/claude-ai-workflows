@@ -8,17 +8,17 @@ version = "1.7.1"
 description = "Automated two-agent orchestrator workflow using Claude Agent SDK"
 license = "MIT"
 requires-python = ">=3.10"
+dependencies = [
+    "claude-agent-sdk>=0.1.46,<0.2.0",
+    "click>=8.0",
+    "prompt_toolkit>=3.0",
+    "pyyaml>=6.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/ailabph/claude-ai-workflows"
 Repository = "https://github.com/ailabph/claude-ai-workflows"
 Issues = "https://github.com/ailabph/claude-ai-workflows/issues"
-dependencies = [
-    "claude-agent-sdk>=0.1.25",
-    "click>=8.0",
-    "prompt_toolkit>=3.0",
-    "pyyaml>=6.0",
-]
 
 [project.optional-dependencies]
 dev = [

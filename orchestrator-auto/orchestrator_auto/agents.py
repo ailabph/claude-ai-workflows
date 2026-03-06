@@ -6,6 +6,8 @@ with appropriate system prompts and tool permissions.
 """
 
 import asyncio
+import logging
+import time
 from typing import Optional, Dict, Any, List, Callable, Union
 from pathlib import Path
 from claude_agent_sdk import ClaudeSDKClient
@@ -15,9 +17,14 @@ from claude_agent_sdk.types import (
     ResultMessage,
     TextBlock,
     UserMessage,
+    ThinkingConfigAdaptive,
+    ThinkingConfigEnabled,
+    ThinkingConfigDisabled,
 )
 
 from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT, DEFAULT_CHAT_PROMPT
+
+logger = logging.getLogger(__name__)
 
 
 # Tool permissions for both agents (list of tool names)
@@ -136,6 +143,9 @@ class BaseAgent:
         mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
         include_claude_md: bool = True,
+        effort: Optional[str] = None,
+        thinking: Optional[Union[str, int]] = None,
+        on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """
         Initialize the agent.
@@ -150,6 +160,9 @@ class BaseAgent:
             mcp_servers: MCP server configuration dict or path to .mcp.json file
             on_token_usage: Optional callback for token usage reporting
             include_claude_md: Whether to include CLAUDE.md in system prompt (default: True)
+            effort: Effort level ("low", "medium", "high", "max")
+            thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
+            on_notification: Optional callback for SDK notification events
         """
         # Build system prompt with CLAUDE.md if enabled
         effective_cwd = cwd or Path.cwd()
@@ -164,6 +177,8 @@ class BaseAgent:
         self.cwd = cwd or Path.cwd()
         self.mcp_servers = mcp_servers
         self.on_token_usage = on_token_usage
+        self.effort = effort
+        self.thinking = thinking
         self._options: Optional[ClaudeAgentOptions] = None
 
         # Client for conversation continuity
@@ -179,6 +194,16 @@ class BaseAgent:
 
         # Tool invocation tracking (SDK 0.1.22+)
         self._tool_invocations: List[Dict[str, Any]] = []
+
+        # Stop reason tracking (SDK 0.1.46+)
+        self._last_stop_reason: Optional[str] = None
+
+        # Tool failure tracking (SDK 0.1.26+)
+        self._tool_failures: List[Dict[str, Any]] = []
+
+        # Notification tracking (SDK 0.1.29+)
+        self._notifications: List[Dict[str, Any]] = []
+        self.on_notification = on_notification
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """
@@ -208,8 +233,75 @@ class BaseAgent:
             if self.mcp_servers:
                 options_kwargs["mcp_servers"] = self.mcp_servers
 
+            # Add effort if configured (SDK 0.1.46+)
+            if self.effort:
+                options_kwargs["effort"] = self.effort
+
+            # Add thinking config if configured (SDK 0.1.46+)
+            if self.thinking is not None:
+                options_kwargs["thinking"] = self._resolve_thinking_config()
+
+            # Set up hooks (SDK 0.1.26+)
+            hooks = self._build_hooks()
+            if hooks:
+                options_kwargs["hooks"] = hooks
+
             self._options = ClaudeAgentOptions(**options_kwargs)
         return self._options
+
+    def _resolve_thinking_config(self):
+        """Resolve thinking parameter to SDK ThinkingConfig object."""
+        if isinstance(self.thinking, int):
+            return ThinkingConfigEnabled(budget_tokens=self.thinking)
+        if isinstance(self.thinking, str):
+            if self.thinking == "adaptive":
+                return ThinkingConfigAdaptive()
+            elif self.thinking == "disabled":
+                return ThinkingConfigDisabled()
+            else:
+                try:
+                    return ThinkingConfigEnabled(budget_tokens=int(self.thinking))
+                except ValueError:
+                    raise ValueError(f"Invalid thinking config: {self.thinking}")
+        return None
+
+    def _build_hooks(self) -> Optional[Dict[str, Any]]:
+        """Build hooks configuration for ClaudeAgentOptions."""
+        hooks: Dict[str, Any] = {}
+
+        hooks["PostToolUseFailure"] = [
+            {"matcher": "*", "callback": self._on_tool_failure}
+        ]
+
+        hooks["Notification"] = [
+            {"matcher": "*", "callback": self._on_notification}
+        ]
+
+        return hooks
+
+    def _on_tool_failure(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """Handle PostToolUseFailure hook events."""
+        tool_name = input_data.get("tool_name", "unknown")
+        error = input_data.get("error", "")
+        self._tool_failures.append({
+            "tool_name": tool_name,
+            "error": error,
+            "timestamp": time.time(),
+        })
+        logger.warning("Tool failure: %s — %s", tool_name, error)
+        return {}
+
+    def _on_notification(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+        """Handle Notification hook events."""
+        notification = {
+            "message": input_data.get("message", ""),
+            "type": input_data.get("type", "info"),
+            "timestamp": time.time(),
+        }
+        self._notifications.append(notification)
+        if self.on_notification:
+            self.on_notification(notification)
+        return {}
 
     async def _get_client(self) -> ClaudeSDKClient:
         """Get or create the SDK client with conversation continuity."""
@@ -256,6 +348,11 @@ class BaseAgent:
                         if on_chunk:
                             on_chunk(block.text)
             elif isinstance(message, ResultMessage):
+                # Capture stop reason (SDK 0.1.46+)
+                if hasattr(message, 'stop_reason'):
+                    self._last_stop_reason = message.stop_reason
+                    if message.stop_reason == "max_tokens":
+                        logger.warning("Agent response truncated (stop_reason=max_tokens)")
                 # Response complete - extract token usage
                 if self.on_token_usage and message.usage:
                     usage_data = {
@@ -428,6 +525,53 @@ class BaseAgent:
         """Clear the tool invocation history."""
         self._tool_invocations.clear()
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Stop Reason Tracking (SDK 0.1.46+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_last_stop_reason(self) -> Optional[str]:
+        """
+        Get the stop reason from the most recent agent response.
+
+        Returns:
+            Stop reason string (e.g. "end_turn", "max_tokens"), or None
+        """
+        return self._last_stop_reason
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Tool Failure Tracking (SDK 0.1.26+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_tool_failures(self) -> List[Dict[str, Any]]:
+        """
+        Get all tool failures captured during this agent's session.
+
+        Returns:
+            List of tool failure dicts with tool_name, error, timestamp
+        """
+        return self._tool_failures.copy()
+
+    def clear_tool_failures(self) -> None:
+        """Clear the tool failure history."""
+        self._tool_failures.clear()
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Notification Tracking (SDK 0.1.29+)
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def get_notifications(self) -> List[Dict[str, Any]]:
+        """
+        Get all notifications captured during this agent's session.
+
+        Returns:
+            List of notification dicts with message, type, timestamp
+        """
+        return self._notifications.copy()
+
+    def clear_notifications(self) -> None:
+        """Clear the notification history."""
+        self._notifications.clear()
+
 
 class PlannerAgent(BaseAgent):
     """
@@ -555,6 +699,8 @@ def create_planner_agent(
     mcp_servers: Optional[Union[McpServersConfig, str]] = None,
     allowed_tools: Optional[List[str]] = None,
     on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
+    effort: Optional[str] = None,
+    thinking: Optional[Union[str, int]] = None,
 ) -> PlannerAgent:
     """
     Factory function to create a Planner agent.
@@ -567,6 +713,8 @@ def create_planner_agent(
         mcp_servers: MCP server configuration dict or path to .mcp.json file
         allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
         on_token_usage: Optional callback for token usage reporting
+        effort: Effort level ("low", "medium", "high", "max")
+        thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
 
     Returns:
         PlannerAgent instance
@@ -584,6 +732,10 @@ def create_planner_agent(
         kwargs["allowed_tools"] = allowed_tools
     if on_token_usage:
         kwargs["on_token_usage"] = on_token_usage
+    if effort:
+        kwargs["effort"] = effort
+    if thinking is not None:
+        kwargs["thinking"] = thinking
 
     return PlannerAgent(**kwargs)
 
@@ -596,6 +748,8 @@ def create_executor_agent(
     mcp_servers: Optional[Union[McpServersConfig, str]] = None,
     allowed_tools: Optional[List[str]] = None,
     on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
+    effort: Optional[str] = None,
+    thinking: Optional[Union[str, int]] = None,
 ) -> ExecutorAgent:
     """
     Factory function to create an Executor agent.
@@ -608,6 +762,8 @@ def create_executor_agent(
         mcp_servers: MCP server configuration dict or path to .mcp.json file
         allowed_tools: List of allowed tools (default: DEFAULT_TOOLS)
         on_token_usage: Optional callback for token usage reporting
+        effort: Effort level ("low", "medium", "high", "max")
+        thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
 
     Returns:
         ExecutorAgent instance
@@ -625,6 +781,10 @@ def create_executor_agent(
         kwargs["allowed_tools"] = allowed_tools
     if on_token_usage:
         kwargs["on_token_usage"] = on_token_usage
+    if effort:
+        kwargs["effort"] = effort
+    if thinking is not None:
+        kwargs["thinking"] = thinking
 
     return ExecutorAgent(**kwargs)
 

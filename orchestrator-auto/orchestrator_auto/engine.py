@@ -81,6 +81,9 @@ class Orchestrator:
         headless: bool = False,
         enable_rewind: bool = True,
         exploration_context_provider: Optional[Callable[[int], Optional[str]]] = None,
+        planner_effort: Optional[str] = None,
+        executor_effort: Optional[str] = None,
+        thinking: Optional[str] = None,
     ):
         """
         Initialize orchestrator.
@@ -106,6 +109,9 @@ class Orchestrator:
             exploration_context_provider: Optional callback that returns exploration context
                 for a milestone number. If provided, context is injected into the milestone
                 prompt before sending to the Executor.
+            planner_effort: Effort level for planner ("low", "medium", "high", "max")
+            executor_effort: Effort level for executor ("low", "medium", "high", "max")
+            thinking: Thinking config ("adaptive", "disabled", or integer string for budget_tokens)
         """
         self.db_path = db_path
         self.on_output = on_output or print
@@ -120,6 +126,11 @@ class Orchestrator:
         # Model configuration
         self.planner_model = planner_model
         self.executor_model = executor_model
+
+        # Effort and thinking configuration (SDK 0.1.46+)
+        self.planner_effort = planner_effort
+        self.executor_effort = executor_effort
+        self.thinking = thinking
 
         # Telegram notifications
         self.telegram_notifier = telegram_notifier
@@ -383,6 +394,12 @@ class Orchestrator:
             if self.on_token_usage:
                 kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("planner", usage_dict)
 
+            # Add effort and thinking (SDK 0.1.46+)
+            if self.planner_effort:
+                kwargs["effort"] = self.planner_effort
+            if self.thinking is not None:
+                kwargs["thinking"] = self.thinking
+
             self.planner = create_planner_agent(**kwargs)
             # Register recovery hook
             register_recovery_hook(
@@ -412,6 +429,12 @@ class Orchestrator:
             # Add token usage callback
             if self.on_token_usage:
                 kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("executor", usage_dict)
+
+            # Add effort and thinking (SDK 0.1.46+)
+            if self.executor_effort:
+                kwargs["effort"] = self.executor_effort
+            if self.thinking is not None:
+                kwargs["thinking"] = self.thinking
 
             self.executor = create_executor_agent(**kwargs)
             # Register recovery hook

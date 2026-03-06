@@ -143,6 +143,9 @@ orchestrator start -f "Feature description" [options]
 | `--mcp-config` | Path to MCP configuration file (`.mcp.json`) |
 | `--headless` | Run Playwright MCP browser in headless mode |
 | `--no-rename` | Do not rename plan file to `*_done.md` on completion |
+| `--planner-effort` | Reasoning effort for planner: `low`, `medium`, `high`, `max` |
+| `--executor-effort` | Reasoning effort for executor: `low`, `medium`, `high`, `max` |
+| `--thinking` | Thinking config: `adaptive`, `disabled`, or integer budget_tokens |
 | `--no-activity` | Disable activity indicator |
 | `--debug` | Enable debug mode (full stack trace on error) |
 | `--tui` | Run in TUI (Text User Interface) mode |

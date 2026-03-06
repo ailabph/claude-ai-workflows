@@ -29,6 +29,9 @@ from .config import (
     get_stuck_sessions_config,
     get_project_identity,
     get_smart_commit_enabled,
+    get_planner_effort,
+    get_executor_effort,
+    get_thinking,
 )
 
 
@@ -1275,6 +1278,9 @@ def cli():
 @click.option('--explore-query', multiple=True, help='Custom exploration query (can be used multiple times)')
 @click.option('--validate/--no-validate', default=None, help='Enable/disable validation after milestones (default: from config)')
 @click.option('--validators', help='Comma-separated list of validators to run (default: all enabled)')
+@click.option('--planner-effort', help='Effort level for planner agent (low, medium, high, max)')
+@click.option('--executor-effort', help='Effort level for executor agent (low, medium, high, max)')
+@click.option('--thinking', help='Thinking config: adaptive, disabled, or integer budget_tokens')
 @click.option('--debug', is_flag=True, help='Enable debug mode: print full stack trace on error')
 @click.option('--tui', is_flag=True, help='Run in TUI (Text User Interface) mode')
 def start(
@@ -1299,6 +1305,9 @@ def start(
     explore_query: tuple,
     validate: Optional[bool],
     validators: Optional[str],
+    planner_effort: Optional[str],
+    executor_effort: Optional[str],
+    thinking: Optional[str],
     debug: bool,
     tui: bool,
 ):
@@ -1382,6 +1391,11 @@ def start(
     resolved_planner = get_planner_model(planner_model)
     resolved_executor = get_executor_model(executor_model)
 
+    # Resolve effort and thinking (CLI > config > None)
+    resolved_planner_effort = get_planner_effort(planner_effort)
+    resolved_executor_effort = get_executor_effort(executor_effort)
+    resolved_thinking = get_thinking(thinking)
+
     # Warn about flags that are accepted but not yet wired into execution flow
     if explore is not None or explore_query:
         click.secho(
@@ -1430,6 +1444,9 @@ def start(
             mcp_config_path=mcp_config,
             headless=headless,
             enable_rewind=not no_rewind,
+            planner_effort=resolved_planner_effort,
+            executor_effort=resolved_executor_effort,
+            thinking=resolved_thinking,
         )
         _current_orchestrator = orch
 

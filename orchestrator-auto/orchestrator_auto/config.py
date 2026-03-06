@@ -322,6 +322,57 @@ def get_executor_model(cli_model: Optional[str] = None) -> str:
     return DEFAULT_EXECUTOR_MODEL
 
 
+def get_planner_effort(cli_effort: Optional[str] = None) -> Optional[str]:
+    """
+    Get planner effort with priority: CLI > config > default (None).
+
+    Args:
+        cli_effort: Effort specified via CLI flag (optional)
+
+    Returns:
+        Effort level string or None
+    """
+    if cli_effort:
+        return cli_effort
+
+    config = load_config()
+    return config.get("effort", {}).get("planner")
+
+
+def get_executor_effort(cli_effort: Optional[str] = None) -> Optional[str]:
+    """
+    Get executor effort with priority: CLI > config > default (None).
+
+    Args:
+        cli_effort: Effort specified via CLI flag (optional)
+
+    Returns:
+        Effort level string or None
+    """
+    if cli_effort:
+        return cli_effort
+
+    config = load_config()
+    return config.get("effort", {}).get("executor")
+
+
+def get_thinking(cli_thinking: Optional[str] = None) -> Optional[str]:
+    """
+    Get thinking config with priority: CLI > config > default (None).
+
+    Args:
+        cli_thinking: Thinking specified via CLI flag (optional)
+
+    Returns:
+        Thinking config string or None
+    """
+    if cli_thinking:
+        return cli_thinking
+
+    config = load_config()
+    return config.get("thinking")
+
+
 def list_available_models() -> Dict[str, str]:
     """
     Get list of available model aliases.
