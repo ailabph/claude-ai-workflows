@@ -1014,7 +1014,7 @@ class TestOrchestratorExplorationContext:
 
         # Create plan file
         plan_file = tmp_path / "plan.md"
-        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+        plan_file.write_text("# Plan\n## Milestone 1: Setup\n- Task 1")
 
         # Create provider that returns context
         exploration_context = "## Exploration Context\n\nFound patterns in auth.py"
@@ -1067,7 +1067,7 @@ class TestOrchestratorExplorationContext:
         mock_create_planner.return_value = mock_planner
 
         plan_file = tmp_path / "plan.md"
-        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+        plan_file.write_text("# Plan\n## Milestone 1: Setup\n- Task 1")
 
         # Provider returns None (no exploration results)
         provider = Mock(return_value=None)
@@ -1113,7 +1113,7 @@ class TestOrchestratorExplorationContext:
         mock_create_planner.return_value = mock_planner
 
         plan_file = tmp_path / "plan.md"
-        plan_file.write_text("# Plan\n## Milestone 1\n- Task 1")
+        plan_file.write_text("# Plan\n## Milestone 1: Setup\n- Task 1")
 
         # Provider raises exception
         provider = Mock(side_effect=Exception("Provider failed"))

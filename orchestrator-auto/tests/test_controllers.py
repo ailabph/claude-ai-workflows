@@ -527,7 +527,7 @@ class TestWatchControllerExplorationContext:
         # Context should exist and be limited (10 * 1000 = 10000 > 4000 limit)
         assert context is not None, "Expected context with 10 results"
         assert len(context) <= controller.EXPLORATION_CONTEXT_MAX_CHARS + 500  # Allow for formatting
-        assert "[omitted due to size limit]" in context  # Should have truncation message
+        assert "omitted due to size limit" in context  # Should have truncation message
 
     def test_format_exploration_context_structure(self, tmp_path):
         """Formatted context has expected structure."""

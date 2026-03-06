@@ -270,7 +270,7 @@ def get_model_display_name(model: str) -> str:
                 return "opus-4.5"
             elif "sonnet-4-5" in model:
                 return "sonnet-4.5"
-            elif "haiku-3-5" in model:
+            elif "3-5-haiku" in model:
                 return "haiku-3.5"
             return alias
 
