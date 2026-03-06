@@ -20,6 +20,7 @@ from claude_agent_sdk.types import (
     ThinkingConfigAdaptive,
     ThinkingConfigEnabled,
     ThinkingConfigDisabled,
+    HookMatcher,
 )
 
 from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT, DEFAULT_CHAT_PROMPT
@@ -252,15 +253,15 @@ class BaseAgent:
     def _resolve_thinking_config(self):
         """Resolve thinking parameter to SDK ThinkingConfig object."""
         if isinstance(self.thinking, int):
-            return ThinkingConfigEnabled(budget_tokens=self.thinking)
+            return ThinkingConfigEnabled(type="enabled", budget_tokens=self.thinking)
         if isinstance(self.thinking, str):
             if self.thinking == "adaptive":
-                return ThinkingConfigAdaptive()
+                return ThinkingConfigAdaptive(type="adaptive")
             elif self.thinking == "disabled":
-                return ThinkingConfigDisabled()
+                return ThinkingConfigDisabled(type="disabled")
             else:
                 try:
-                    return ThinkingConfigEnabled(budget_tokens=int(self.thinking))
+                    return ThinkingConfigEnabled(type="enabled", budget_tokens=int(self.thinking))
                 except ValueError:
                     raise ValueError(f"Invalid thinking config: {self.thinking}")
         return None
@@ -270,19 +271,27 @@ class BaseAgent:
         hooks: Dict[str, Any] = {}
 
         hooks["PostToolUseFailure"] = [
-            {"matcher": "*", "callback": self._on_tool_failure}
+            HookMatcher(matcher="*", hooks=[self._on_tool_failure])
         ]
 
         hooks["Notification"] = [
-            {"matcher": "*", "callback": self._on_notification}
+            HookMatcher(matcher="*", hooks=[self._on_notification])
         ]
+
+        # Merge user-provided hooks if any
+        if self.hooks:
+            for event, matchers in self.hooks.items():
+                if event in hooks:
+                    hooks[event].extend(matchers)
+                else:
+                    hooks[event] = matchers
 
         return hooks
 
-    def _on_tool_failure(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    async def _on_tool_failure(self, input_data, tool_use_id, context):
         """Handle PostToolUseFailure hook events."""
-        tool_name = input_data.get("tool_name", "unknown")
-        error = input_data.get("error", "")
+        tool_name = getattr(input_data, "tool_name", "unknown") if not isinstance(input_data, dict) else input_data.get("tool_name", "unknown")
+        error = getattr(input_data, "error", "") if not isinstance(input_data, dict) else input_data.get("error", "")
         self._tool_failures.append({
             "tool_name": tool_name,
             "error": error,
@@ -291,11 +300,13 @@ class BaseAgent:
         logger.warning("Tool failure: %s — %s", tool_name, error)
         return {}
 
-    def _on_notification(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
+    async def _on_notification(self, input_data, tool_use_id, context):
         """Handle Notification hook events."""
+        message = getattr(input_data, "message", "") if not isinstance(input_data, dict) else input_data.get("message", "")
+        ntype = getattr(input_data, "type", "info") if not isinstance(input_data, dict) else input_data.get("type", "info")
         notification = {
-            "message": input_data.get("message", ""),
-            "type": input_data.get("type", "info"),
+            "message": message,
+            "type": ntype,
             "timestamp": time.time(),
         }
         self._notifications.append(notification)

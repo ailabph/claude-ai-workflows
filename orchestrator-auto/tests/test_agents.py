@@ -671,24 +671,27 @@ class TestThinkingParameter:
         assert agent.thinking is None
 
     def test_resolve_thinking_adaptive(self):
-        """'adaptive' should resolve to ThinkingConfigAdaptive (empty dict)."""
+        """'adaptive' should resolve to ThinkingConfigAdaptive with type key."""
         agent = BaseAgent(system_prompt="Test", thinking="adaptive")
         result = agent._resolve_thinking_config()
         assert isinstance(result, dict)
+        assert result["type"] == "adaptive"
         assert "budget_tokens" not in result
 
     def test_resolve_thinking_disabled(self):
-        """'disabled' should resolve to ThinkingConfigDisabled (empty dict)."""
+        """'disabled' should resolve to ThinkingConfigDisabled with type key."""
         agent = BaseAgent(system_prompt="Test", thinking="disabled")
         result = agent._resolve_thinking_config()
         assert isinstance(result, dict)
+        assert result["type"] == "disabled"
         assert "budget_tokens" not in result
 
     def test_resolve_thinking_int(self):
-        """Integer should resolve to ThinkingConfigEnabled with budget_tokens."""
+        """Integer should resolve to ThinkingConfigEnabled with type and budget_tokens."""
         agent = BaseAgent(system_prompt="Test", thinking=10000)
         result = agent._resolve_thinking_config()
         assert isinstance(result, dict)
+        assert result["type"] == "enabled"
         assert result["budget_tokens"] == 10000
 
     def test_resolve_thinking_string_int(self):
@@ -696,6 +699,7 @@ class TestThinkingParameter:
         agent = BaseAgent(system_prompt="Test", thinking="5000")
         result = agent._resolve_thinking_config()
         assert isinstance(result, dict)
+        assert result["type"] == "enabled"
         assert result["budget_tokens"] == 5000
 
     def test_resolve_thinking_invalid_string(self):
@@ -793,10 +797,12 @@ class TestPostToolUseFailureHook:
         """_on_tool_failure should append failure to _tool_failures."""
         agent = BaseAgent(system_prompt="Test")
 
-        agent._on_tool_failure({
-            "tool_name": "Bash",
-            "error": "Command failed with exit code 1",
-        })
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_tool_failure({
+                "tool_name": "Bash",
+                "error": "Command failed with exit code 1",
+            }, None, None)
+        )
 
         assert len(agent._tool_failures) == 1
         assert agent._tool_failures[0]["tool_name"] == "Bash"
@@ -807,7 +813,9 @@ class TestPostToolUseFailureHook:
         """_on_tool_failure should handle missing fields gracefully."""
         agent = BaseAgent(system_prompt="Test")
 
-        agent._on_tool_failure({})
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_tool_failure({}, None, None)
+        )
 
         assert len(agent._tool_failures) == 1
         assert agent._tool_failures[0]["tool_name"] == "unknown"
@@ -833,14 +841,17 @@ class TestPostToolUseFailureHook:
         assert agent._tool_failures == []
 
     def test_hooks_include_post_tool_use_failure(self):
-        """_build_hooks should include PostToolUseFailure hook."""
+        """_build_hooks should include PostToolUseFailure hook with HookMatcher."""
+        from claude_agent_sdk.types import HookMatcher
         agent = BaseAgent(system_prompt="Test")
         hooks = agent._build_hooks()
 
         assert "PostToolUseFailure" in hooks
         assert len(hooks["PostToolUseFailure"]) == 1
-        assert hooks["PostToolUseFailure"][0]["matcher"] == "*"
-        assert hooks["PostToolUseFailure"][0]["callback"] == agent._on_tool_failure
+        matcher = hooks["PostToolUseFailure"][0]
+        assert isinstance(matcher, HookMatcher)
+        assert matcher.matcher == "*"
+        assert agent._on_tool_failure in matcher.hooks
 
 
 # ============================================================================
@@ -860,10 +871,12 @@ class TestNotificationHook:
         """_on_notification should append to _notifications."""
         agent = BaseAgent(system_prompt="Test")
 
-        agent._on_notification({
-            "message": "Rate limit approaching",
-            "type": "warning",
-        })
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_notification({
+                "message": "Rate limit approaching",
+                "type": "warning",
+            }, None, None)
+        )
 
         assert len(agent._notifications) == 1
         assert agent._notifications[0]["message"] == "Rate limit approaching"
@@ -874,7 +887,9 @@ class TestNotificationHook:
         """_on_notification should handle missing fields gracefully."""
         agent = BaseAgent(system_prompt="Test")
 
-        agent._on_notification({})
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_notification({}, None, None)
+        )
 
         assert len(agent._notifications) == 1
         assert agent._notifications[0]["message"] == ""
@@ -885,10 +900,12 @@ class TestNotificationHook:
         callback = Mock()
         agent = BaseAgent(system_prompt="Test", on_notification=callback)
 
-        agent._on_notification({
-            "message": "SDK notification",
-            "type": "info",
-        })
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_notification({
+                "message": "SDK notification",
+                "type": "info",
+            }, None, None)
+        )
 
         callback.assert_called_once()
         call_arg = callback.call_args[0][0]
@@ -899,7 +916,9 @@ class TestNotificationHook:
         agent = BaseAgent(system_prompt="Test")
 
         # Should not raise
-        agent._on_notification({"message": "test"})
+        asyncio.get_event_loop().run_until_complete(
+            agent._on_notification({"message": "test"}, None, None)
+        )
 
         assert len(agent._notifications) == 1
 
@@ -923,14 +942,17 @@ class TestNotificationHook:
         assert agent._notifications == []
 
     def test_hooks_include_notification(self):
-        """_build_hooks should include Notification hook."""
+        """_build_hooks should include Notification hook with HookMatcher."""
+        from claude_agent_sdk.types import HookMatcher
         agent = BaseAgent(system_prompt="Test")
         hooks = agent._build_hooks()
 
         assert "Notification" in hooks
         assert len(hooks["Notification"]) == 1
-        assert hooks["Notification"][0]["matcher"] == "*"
-        assert hooks["Notification"][0]["callback"] == agent._on_notification
+        matcher = hooks["Notification"][0]
+        assert isinstance(matcher, HookMatcher)
+        assert matcher.matcher == "*"
+        assert agent._on_notification in matcher.hooks
 
 
 # ============================================================================
