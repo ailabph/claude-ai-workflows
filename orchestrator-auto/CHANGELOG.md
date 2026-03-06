@@ -5,6 +5,35 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-06
+
+### Added
+
+- **Effort parameter** - Per-agent reasoning effort control (`low`, `medium`, `high`, `max`) via `--planner-effort` and `--executor-effort` CLI flags. Configurable in `config.yaml` under `effort:` section.
+- **ThinkingConfig** - Extended thinking configuration via `--thinking` CLI flag. Supports `adaptive` (Claude decides), `disabled`, or integer budget_tokens. Replaces deprecated `max_thinking_tokens` SDK field.
+- **Stop reason tracking** - Captures `ResultMessage.stop_reason` (SDK 0.1.46+) to detect response truncation. Logs warning on `max_tokens` truncation.
+- **PostToolUseFailure hook** - Tracks tool failures with tool name, error, and timestamp. New `get_tool_failures()` / `clear_tool_failures()` methods on agents.
+- **Notification hook** - Captures SDK notifications (rate limits, warnings) with optional `on_notification` callback for TUI/Telegram bridging. New `get_notifications()` / `clear_notifications()` methods.
+- **Config: `effort`** - `planner_effort` and `executor_effort` keys in config.yaml with CLI > config > default priority
+- **Config: `thinking`** - `thinking` key in config.yaml
+
+### Changed
+
+- **SDK dependency upgraded** - `claude-agent-sdk>=0.1.46,<0.2.0` (from >=0.1.25). Gains forward-compatible message parsing (v0.1.40), MCP stdin fix (v0.1.46), and all new v0.1.46 features.
+- **CLI: effort validation** - `--planner-effort` and `--executor-effort` use `click.Choice` for input validation
+
+### Fixed
+
+- **Haiku display name** - `get_model_display_name()` now correctly matches `claude-3-5-haiku-*` model IDs (was checking wrong substring `"haiku-3-5"` instead of `"3-5-haiku"`)
+- **Exploration context truncation test** - Fixed assertion substring to match actual truncation message
+- **Exploration context engine tests** - Fixed plan file fixtures to use valid milestone format (`## Milestone 1: Name`)
+
+### Documentation
+
+- **Proposal** - `PROPOSAL_sdk_upgrade_0.1.47.md` — full changelog, impact analysis, and implementation plan for SDK 0.1.25→0.1.47 upgrade
+- **README** - Updated SDK version references, added new CLI flags to quick reference table and SDK compatibility table
+- **CLI Reference** - Documented `--planner-effort`, `--executor-effort`, `--thinking` flags
+
 ## [1.7.1] - 2026-01-30
 
 ### Fixed
