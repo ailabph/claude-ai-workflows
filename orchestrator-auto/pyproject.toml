@@ -9,6 +9,7 @@ description = "Automated two-agent orchestrator workflow using Claude Agent SDK"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
+    "anthropic>=0.40.0",
     "claude-agent-sdk>=0.1.46,<0.2.0",
     "click>=8.0",
     "prompt_toolkit>=3.0",
@@ -40,4 +41,7 @@ include = ["orchestrator_auto*"]
 exclude = ["tests*", "fixtures*", "test_plans*"]
 
 [tool.setuptools.package-data]
-orchestrator_auto = ["resources/*.md"]
+orchestrator_auto = [
+    "resources/*.md",
+    "tui/styles/*.tcss",
+]
