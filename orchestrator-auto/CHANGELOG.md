@@ -5,6 +5,47 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-08
+
+### Added
+
+- **`orchestrator chat-mode` command** - New dedicated freeform chat interface for direct conversation with the Planner agent. Separate from `orchestrator chat` (which uses a generic assistant prompt).
+  - `--tui` — Launch a full Textual TUI chat window with live streaming bubbles and Markdown rendering
+  - `--verbose` — Side panel showing SDK notifications and PostToolUse events in real time (F2 to toggle)
+  - `--model` — Model alias (default: `opus`); resolved via `get_planner_model()`
+  - `--system-prompt` — Override the default `PLANNER_CHAT_PROMPT` with a custom file
+  - `--no-tools` — Disable file/bash tools for pure text chat
+  - Non-TUI path reuses `ChatSession` with `PLANNER_CHAT_PROMPT` (inherits `/clear`, `/model`, paste support)
+- **`PLANNER_CHAT_PROMPT`** - New freeform system prompt in `prompts.py` for chat-mode; no workflow phases or response tags
+- **`create_planner_chat_agent()`** - New factory in `agents.py` accepting `system_prompt`, `on_notification`, `on_tool_event`
+- **`chat_backend.py`** - Callback-driven agent wrapper for the TUI path; `send()` accepts per-request `on_chunk` and `on_response_complete` to prevent stale-callback races
+- **TUI widgets** - `ChatMessageView` (scrollable bubbles, Markdown), `ChatInputBar` (TextArea + Send, Ctrl+Enter), `VerbosePanel` (notifications + tool events)
+- **`tui/chat_app.py`** - `ChatTUIApp` with HelpModal (F1), ConfirmModal on quit, `/clear` command, worker tracking, stale bubble-ID guards on all completion/notification handlers
+- **`tui/chat_adapter.py`** - Thread-safe bridge using `call_from_thread` pattern; all messages carry `bubble_id` for stale-event detection
+- **41 new tests** across `test_chat_app.py`, `test_chat_backend.py`, `test_cli_chat_mode.py`
+
+### Changed
+
+- **`BaseAgent`** - `allowed_tools` assignment changed from `allowed_tools or DEFAULT_TOOLS` to `allowed_tools if allowed_tools is not None else DEFAULT_TOOLS`; empty list now correctly disables tools
+- **`BaseAgent._build_hooks()`** - `PostToolUse` success hook only registered when `on_tool_event` is set (was registered globally on all agents)
+- **`chat_backend.send()`** - Token usage captured via request-local dict (monkey-patches `agent.on_token_usage` per call); eliminates shared `_usage` race between overlapping requests
+- **TUI clear/quit while streaming** - `action_clear_chat()` shows a warning toast and blocks when a worker is active; `action_quit()` shows a distinct "tools may be active" confirmation
+
+### Fixed
+
+- `--no-tools` flag now correctly disables tools (was silently overridden by `BaseAgent.__init__` truthy guard)
+- Worker error recovery: `ChatSendFailed` message re-enables input and finalizes bubble on `send()` exception
+- `/clear` now calls `backend.reset()` to wipe conversation context (was visual-only)
+- Quit confirmed path calls `backend.reset()` for proper agent lifecycle cleanup
+- Stale `ChatResponseComplete`, `ChatNotification`, `ChatToolEvent` events ignored when `bubble_id` does not match `_current_bubble_id`
+- `test_chat_app.py`: added `pytest.importorskip("textual")` guard
+- `test_cli_chat_mode.py`: `importorskip` narrowed — ImportError exit-code test runs without textual installed
+
+### Documentation
+
+- **`docs/CLI_REFERENCE.md`** - Added `chat-mode` command with all flags, keyboard shortcuts table, in-chat commands, and examples
+- **`AGENTS.md`** - Updated module maps with `chat_backend.py`, `tui/chat_app.py`, `tui/chat_adapter.py`, and new TUI widgets
+
 ## [1.8.0] - 2026-03-06
 
 ### Added

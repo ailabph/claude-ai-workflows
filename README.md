@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://www.python.org/downloads/)
-[![Version](https://img.shields.io/badge/version-1.7.1-orange.svg)](orchestrator-auto/)
+[![Version](https://img.shields.io/badge/version-1.9.0-orange.svg)](orchestrator-auto/)
 
 Milestone-based orchestration for AI agents with human oversight. Describe what you want built, review a plan, approve each milestone.
 
@@ -40,6 +40,7 @@ sequenceDiagram
 | **Auto-commit** | Automatically commits on workflow completion with AI-generated messages |
 | **Queue mode** | Chain multiple workflows to run sequentially |
 | **Sub-agents** | Specialized Explore and Bash sub-agents for deep codebase research |
+| **Planner chat** | Dedicated TUI chat window for freeform conversation with the Planner agent |
 
 ## Quick Start
 
