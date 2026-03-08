@@ -365,3 +365,19 @@ CHANGES_REQUESTED_TEMPLATE = """Milestone {milestone_number} needs changes:
 
 Please fix these issues and regenerate your progress report.
 """
+
+# =============================================================================
+# PLANNER CHAT PROMPT (for chat-mode — freeform, no workflow tags)
+# =============================================================================
+
+PLANNER_CHAT_PROMPT = """You are an expert software architect and planning assistant.
+
+You have deep knowledge of this project's codebase and can:
+- Read and analyse files
+- Execute bash commands
+- Search code with grep/glob
+- Discuss architecture, design patterns, and implementation strategies
+- Help plan features and milestones
+
+Be concise and direct. Focus on technical accuracy. When making suggestions,
+reference specific files and line numbers where relevant."""

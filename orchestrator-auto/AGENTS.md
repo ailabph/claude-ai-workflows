@@ -58,7 +58,7 @@ If a response ends mid-sentence or with a colon, `parser.py:is_response_truncate
 ### Entry Points
 | File | Role |
 |------|------|
-| `cli.py` | Click CLI — all commands (`start`, `resume`, `respond`, `watch`, `queue`, `chat`, `convert`, `check`, `telegram`) |
+| `cli.py` | Click CLI — all commands (`start`, `resume`, `respond`, `watch`, `queue`, `chat`, `chat-mode`, `convert`, `check`, `telegram`) |
 | `engine.py:Orchestrator` | Core loop — runs discovery/planning/execution phases, routes messages, handles blockers |
 | `agents.py:BaseAgent` | SDK wrapper — persistent async event loop, conversation continuity, hooks, checkpoint/rewind |
 | `state.py:StateMachine` | Phase transitions — validates moves, persists to DB |
@@ -75,11 +75,17 @@ If a response ends mid-sentence or with a colon, `parser.py:is_response_truncate
 | `controllers/queue_controller.py` | Queue mode — sequential plan execution, fail-forward, crash recovery |
 | `controllers/watch_controller.py` | Watch mode — directory polling, file state machine (`_done`, `_failed`, `_paused`) |
 | `validation/` | Input validation pipeline (security, API, performance checks) |
+| `chat_backend.py` | Callback-driven agent wrapper for chat-mode TUI path |
 | `tui/app.py` | Main TUI (Textual) — connects to engine via `tui/adapter.py` |
+| `tui/chat_app.py` | Chat-mode TUI app (ChatTUIApp, HelpModal, ConfirmModal) |
+| `tui/chat_adapter.py` | Thread-safe bridge from ChatBackend callbacks → TUI messages |
 | `tui/watch_app.py` | Watch mode TUI |
 | `tui/queue_app.py` | Queue mode TUI |
 | `tui/adapter.py` | Bridges engine callbacks → TUI messages |
 | `tui/widgets/` | All reusable Textual widgets (stats, milestones, agent output, git panel, etc.) |
+| `tui/widgets/chat_message_view.py` | Scrollable chat history with user/assistant bubbles (Markdown rendering) |
+| `tui/widgets/chat_input_bar.py` | Text input + Send button for chat-mode |
+| `tui/widgets/verbose_panel.py` | Tool calls + notification log for chat-mode (--verbose) |
 | `telegram.py` | Send notifications + listen for blocker replies |
 | `git.py` | Auto-commit after completion |
 | `commit_ai.py` | AI-generated commit messages (Conventional Commits via Haiku) |

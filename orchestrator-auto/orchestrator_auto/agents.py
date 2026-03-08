@@ -206,6 +206,9 @@ class BaseAgent:
         self._notifications: List[Dict[str, Any]] = []
         self.on_notification = on_notification
 
+        # Tool event callback (PostToolUse success hook, SDK 0.1.29+)
+        self.on_tool_event: Optional[Callable[[str, Dict[str, Any], Any], None]] = None
+
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """
         Get or create a persistent event loop for this agent.
@@ -278,6 +281,10 @@ class BaseAgent:
             HookMatcher(matcher="*", hooks=[self._on_notification])
         ]
 
+        hooks["PostToolUse"] = [
+            HookMatcher(matcher="*", hooks=[self._on_tool_use])
+        ]
+
         # Merge user-provided hooks if any
         if self.hooks:
             for event, matchers in self.hooks.items():
@@ -298,6 +305,15 @@ class BaseAgent:
             "timestamp": time.time(),
         })
         logger.warning("Tool failure: %s — %s", tool_name, error)
+        return {}
+
+    async def _on_tool_use(self, input_data, tool_use_id, context):
+        """Handle PostToolUse success hook events."""
+        tool_name = getattr(input_data, "tool_name", "unknown") if not isinstance(input_data, dict) else input_data.get("tool_name", "unknown")
+        tool_input = getattr(input_data, "tool_input", {}) if not isinstance(input_data, dict) else input_data.get("tool_input", {})
+        tool_response = getattr(input_data, "tool_response", None) if not isinstance(input_data, dict) else input_data.get("tool_response", None)
+        if self.on_tool_event:
+            self.on_tool_event(tool_name, tool_input, tool_response)
         return {}
 
     async def _on_notification(self, input_data, tool_use_id, context):
@@ -798,6 +814,59 @@ def create_executor_agent(
         kwargs["thinking"] = thinking
 
     return ExecutorAgent(**kwargs)
+
+
+def create_planner_chat_agent(
+    model: Optional[str] = None,
+    system_prompt: Optional[str] = None,
+    session_id: str = "planner-chat",
+    allowed_tools: Optional[List[str]] = None,
+    on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
+    on_tool_event: Optional[Callable[[str, Dict[str, Any], Any], None]] = None,
+    cwd: Optional[Path] = None,
+) -> BaseAgent:
+    """
+    Create a freeform chat agent using the planner-chat prompt.
+
+    Uses Opus by default (via get_planner_model). Unlike create_planner_agent(),
+    this uses PLANNER_CHAT_PROMPT which has no workflow phases or response tags.
+
+    Args:
+        model: Model alias or full ID (default: opus via get_planner_model)
+        system_prompt: Custom system prompt (default: PLANNER_CHAT_PROMPT)
+        session_id: Session ID for the agent
+        allowed_tools: Tool list. None = DEFAULT_TOOLS, [] = no tools
+        on_token_usage: Optional callback for token usage reporting
+        on_notification: Optional callback for SDK notification events
+        on_tool_event: Optional callback for PostToolUse success events (tool_name, tool_input, tool_response)
+        cwd: Working directory
+
+    Returns:
+        BaseAgent instance configured for freeform chat
+    """
+    from .prompts import PLANNER_CHAT_PROMPT
+    from .config import get_planner_model
+
+    resolved_model = get_planner_model(model)
+    prompt = system_prompt or PLANNER_CHAT_PROMPT
+
+    # BaseAgent.__init__ uses `allowed_tools or DEFAULT_TOOLS` which would
+    # replace [] (falsy) with DEFAULT_TOOLS. Pass explicitly to preserve
+    # the empty-list case (--no-tools).
+    tools = allowed_tools if allowed_tools is not None else DEFAULT_TOOLS
+
+    agent = BaseAgent(
+        system_prompt=prompt,
+        allowed_tools=tools,
+        model=resolved_model,
+        session_id=session_id,
+        on_token_usage=on_token_usage,
+        on_notification=on_notification,
+        cwd=cwd,
+    )
+    agent.on_tool_event = on_tool_event
+    return agent
 
 
 def create_chat_agent(

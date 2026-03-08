@@ -2724,6 +2724,52 @@ def chat(model: str, system_prompt: Optional[str], no_tools: bool, show_activity
     session.start()
 
 
+@cli.command("chat-mode")
+@click.option('--tui', is_flag=True, default=False, help='Launch TUI chat window')
+@click.option('--verbose', is_flag=True, default=False, help='Show notifications (TUI only)')
+@click.option('--model', '-m', default='opus', show_default=True,
+              help='Model alias: opus, sonnet, haiku')
+@click.option('--system-prompt', '-s', type=click.Path(exists=True),
+              help='Path to custom system prompt file (overrides default planner-chat prompt)')
+@click.option('--no-tools', is_flag=True, default=False,
+              help='Disable file/bash tools (pure text chat)')
+def chat_mode(tui: bool, verbose: bool, model: str, system_prompt: Optional[str],
+              no_tools: bool) -> None:
+    """Direct freeform chat with the Planner agent."""
+    display_auth_info()
+
+    system_content = Path(system_prompt).read_text() if system_prompt else None
+
+    if tui:
+        try:
+            from .tui.chat_app import ChatTUIApp
+        except ImportError:
+            click.secho(
+                "TUI chat requires the tui module (not yet implemented). "
+                "Use without --tui for CLI chat.",
+                fg="red",
+            )
+            return
+        app = ChatTUIApp(
+            model=model,
+            verbose=verbose,
+            system_prompt=system_content,
+            tools_enabled=not no_tools,
+        )
+        app.run()
+    else:
+        from .prompts import PLANNER_CHAT_PROMPT
+        from .chat import ChatSession
+
+        prompt = system_content or PLANNER_CHAT_PROMPT
+        session = ChatSession(
+            model=model,
+            system_prompt=prompt,
+            tools_enabled=not no_tools,
+        )
+        session.start()
+
+
 @cli.command()
 @click.option('--verbose', '-v', is_flag=True, help='Show detailed output')
 @click.option('--mcp-config', type=click.Path(exists=True), help='Path to MCP configuration file to verify server connections')

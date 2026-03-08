@@ -486,6 +486,64 @@ orchestrator watch ./plans/ --telegram
 
 ---
 
+### `chat-mode` - Freeform chat with Planner agent (TUI)
+
+```bash
+orchestrator chat-mode [options]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--tui` | Launch TUI chat window (full Textual interface) |
+| `--verbose` | Show tool calls and notifications in sidebar (TUI only) |
+| `-m, --model` | Model: opus, sonnet, haiku (default: opus) |
+| `-s, --system-prompt` | Path to custom system prompt file |
+| `--no-tools` | Disable file/bash tools (pure text chat) |
+
+Launch a dedicated chat interface for direct conversation with the Planner agent. Without `--tui`, falls back to the existing CLI chat session (same as `orchestrator chat`).
+
+**TUI Keyboard Shortcuts:**
+
+| Key | Action |
+|-----|--------|
+| `Ctrl+Enter` | Send message |
+| `Enter` | Add newline in input |
+| `Ctrl+C` / `Q` | Quit (with confirmation) |
+| `Ctrl+L` | Clear chat |
+| `F1` | Toggle help overlay |
+| `F2` | Toggle verbose panel |
+| `Tab` | Cycle focus: input / verbose panel |
+| `PgUp` / `PgDn` | Scroll chat history |
+| `Ctrl+Home` | Scroll to top of chat |
+| `Ctrl+End` | Scroll to bottom of chat |
+
+**In-Chat Commands (TUI):**
+- `/clear` - Clear chat without API call
+
+**Examples:**
+
+```bash
+# TUI chat with Opus (default)
+orchestrator chat-mode --tui
+
+# TUI with verbose sidebar
+orchestrator chat-mode --tui --verbose
+
+# TUI with Sonnet model
+orchestrator chat-mode --tui -m sonnet
+
+# Non-TUI (falls back to CLI chat session)
+orchestrator chat-mode
+
+# Custom system prompt
+orchestrator chat-mode --tui -s prompt.txt
+
+# Pure text chat (no file/bash tools)
+orchestrator chat-mode --tui --no-tools
+```
+
+---
+
 ### `chat` - Direct chat with Claude
 
 ```bash

@@ -559,3 +559,42 @@ class ValidateCompleted(Message):
         self.high_count = high_count
         self.passed = passed
         super().__init__()
+
+
+# Chat-mode TUI messages
+
+class ChatChunkReceived(Message):
+    """A streaming chunk was received from the chat agent."""
+
+    def __init__(self, chunk: str, bubble_id: str) -> None:
+        self.chunk = chunk
+        self.bubble_id = bubble_id
+        super().__init__()
+
+
+class ChatResponseComplete(Message):
+    """Chat agent response is complete."""
+
+    def __init__(self, bubble_id: str, full_text: str, usage: dict) -> None:
+        self.bubble_id = bubble_id
+        self.full_text = full_text
+        self.usage = usage
+        super().__init__()
+
+
+class ChatNotification(Message):
+    """A notification from the chat agent."""
+
+    def __init__(self, notification: dict) -> None:
+        self.notification = notification
+        super().__init__()
+
+
+class ChatToolEvent(Message):
+    """A tool use event from the chat agent (PostToolUse success hook)."""
+
+    def __init__(self, tool_name: str, tool_input: dict, tool_response: object = None) -> None:
+        self.tool_name = tool_name
+        self.tool_input = tool_input
+        self.tool_response = tool_response
+        super().__init__()
