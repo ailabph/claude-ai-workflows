@@ -112,7 +112,7 @@ async def test_handle_user_message_locks_input():
     """Test that _handle_user_message disables the input bar."""
     app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
 
-    def mock_send(content, on_chunk=None):
+    def mock_send(content, on_chunk=None, on_response_complete=None):
         return "response"
 
     async with app.run_test() as pilot:
@@ -189,6 +189,7 @@ async def test_subtitle_updates_with_token_count():
 
         # First response
         bubble_id1 = view.begin_assistant_message()
+        app._current_bubble_id = bubble_id1
         usage1 = {"input_tokens": 100, "output_tokens": 50, "cost_usd": 0.005}
         app.post_message(
             ChatResponseComplete(bubble_id=bubble_id1, full_text="hi", usage=usage1)
@@ -200,6 +201,7 @@ async def test_subtitle_updates_with_token_count():
 
         # Second response accumulates
         bubble_id2 = view.begin_assistant_message()
+        app._current_bubble_id = bubble_id2
         usage2 = {"input_tokens": 200, "output_tokens": 100, "cost_usd": 0.010}
         app.post_message(
             ChatResponseComplete(bubble_id=bubble_id2, full_text="bye", usage=usage2)
@@ -579,6 +581,48 @@ async def test_worker_failure_reenables_input():
         # Bubble should be finalized (no streaming cursor)
         bubble = view._bubbles[bubble_id]
         assert not bubble._streaming
+
+
+@pytest.mark.asyncio
+async def test_clear_while_streaming_does_not_corrupt_new_bubble():
+    """
+    Regression: if user clears during a stream and immediately sends again,
+    the old completion must not finalize the new bubble.
+    """
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        # Simulate first send in progress
+        view = app.query_one("#chat-view", ChatMessageView)
+        view.append_user_message("msg1")
+        bubble1_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble1_id
+        app.query_one("#input-bar", ChatInputBar).disabled = True
+        await pilot.pause()
+
+        # User clears while streaming
+        app.action_clear_chat()
+        await pilot.pause()
+
+        # User sends second message
+        view.append_user_message("msg2")
+        bubble2_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble2_id
+        await pilot.pause()
+
+        # Simulate old worker completing — post a ChatResponseComplete for bubble1
+        app.post_message(ChatResponseComplete(
+            bubble_id=bubble1_id,
+            full_text="old response",
+            usage={"input_tokens": 10, "output_tokens": 20},
+        ))
+        await pilot.pause()
+
+        # bubble2 should NOT be finalized — stale completion must be ignored
+        assert app._current_bubble_id == bubble2_id, \
+            "Stale completion for bubble1 must not clear _current_bubble_id for bubble2"
 
 
 @pytest.mark.asyncio

@@ -11,6 +11,7 @@ from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Header, Footer, Button, Label, Static
+from textual.worker import Worker
 
 from .widgets.chat_message_view import ChatMessageView
 from .widgets.chat_input_bar import ChatInputBar
@@ -219,6 +220,7 @@ class ChatTUIApp(App):
         self._total_output_tokens: int = 0
         self._total_cost: float = 0.0
         self._backend = None
+        self._active_worker: Optional[Worker] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -280,23 +282,25 @@ class ChatTUIApp(App):
 
         adapter = ChatAdapter(self, bubble_id)
 
-        # Update backend callbacks for this message
-        self._backend.on_chunk = adapter.on_chunk
-        self._backend.on_response_complete = adapter.on_response_complete
+        # Wire notification/tool_event via instance attrs (used by agent factory lambdas)
         self._backend.on_notification = adapter.on_notification
         self._backend.on_tool_event = adapter.on_tool_event
 
-        def _run_send(bid: str, msg: str) -> None:
+        def _run_send(bid: str, msg: str, adp: ChatAdapter) -> None:
             try:
-                self._backend.send(msg)
+                self._backend.send(
+                    msg,
+                    on_chunk=adp.on_chunk,
+                    on_response_complete=adp.on_response_complete,
+                )
             except Exception as exc:
                 self.call_from_thread(
                     self.post_message,
                     ChatSendFailed(bubble_id=bid, error=str(exc)),
                 )
 
-        self.run_worker(
-            lambda: _run_send(bubble_id, content),
+        self._active_worker = self.run_worker(
+            lambda: _run_send(bubble_id, content, adapter),
             thread=True,
             name="chat-send",
         )
@@ -307,11 +311,23 @@ class ChatTUIApp(App):
         view.append_chunk(event.bubble_id, event.chunk)
         view.scroll_end(animate=False)
 
+    def _cancel_active_worker(self) -> None:
+        """Cancel the in-flight worker if any."""
+        if self._active_worker is not None:
+            try:
+                self._active_worker.cancel()
+            except Exception:
+                pass
+            self._active_worker = None
+
     def on_chat_response_complete(self, event: ChatResponseComplete) -> None:
         """Finalize bubble, update stats, re-enable input."""
+        if event.bubble_id != self._current_bubble_id:
+            return  # Stale completion from a cleared/cancelled request
         view = self.query_one("#chat-view", ChatMessageView)
         view.finalize_assistant_message(event.bubble_id)
         self._current_bubble_id = None
+        self._active_worker = None
 
         # Update token stats
         usage = event.usage or {}
@@ -330,9 +346,12 @@ class ChatTUIApp(App):
 
     def on_chat_send_failed(self, event: ChatSendFailed) -> None:
         """Handle backend send() failure: finalize bubble, show error, re-enable input."""
+        if event.bubble_id != self._current_bubble_id:
+            return  # Stale failure from a cleared/cancelled request
         view = self.query_one("#chat-view", ChatMessageView)
         view.finalize_assistant_message(event.bubble_id)
         self._current_bubble_id = None
+        self._active_worker = None
         # Show error as a user-visible message
         view.append_user_message(f"[Error] {event.error}")
         # Re-enable input
@@ -372,6 +391,7 @@ class ChatTUIApp(App):
         """Quit with confirmation."""
         def _on_quit_confirmed(confirmed: bool) -> None:
             if confirmed:
+                self._cancel_active_worker()
                 try:
                     self._backend.reset()
                 except Exception:
@@ -394,6 +414,7 @@ class ChatTUIApp(App):
 
     def action_clear_chat(self) -> None:
         """Clear all chat messages and reset backend conversation context."""
+        self._cancel_active_worker()
         view = self.query_one("#chat-view", ChatMessageView)
         view.clear_messages()
         self._current_bubble_id = None

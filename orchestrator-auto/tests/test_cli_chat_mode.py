@@ -2,9 +2,8 @@
 CLI integration tests for the chat-mode command.
 """
 
+import sys
 import pytest
-
-pytest.importorskip("textual")
 
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
@@ -87,3 +86,11 @@ class TestChatModeCommand:
 
         call_kwargs = mock_session_cls.call_args
         assert call_kwargs.kwargs.get("model") == "haiku"
+
+    def test_chat_mode_tui_import_error_exits_nonzero(self):
+        """Verify --tui exits non-zero when textual is not available."""
+        runner = CliRunner()
+        with patch("orchestrator_auto.cli.display_auth_info"):
+            with patch.dict(sys.modules, {"orchestrator_auto.tui.chat_app": None}):
+                result = runner.invoke(cli, ["chat-mode", "--tui"])
+        assert result.exit_code != 0, "chat-mode --tui must exit non-zero when TUI is unavailable"

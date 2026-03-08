@@ -70,7 +70,12 @@ class ChatBackend:
         """Capture token usage from the agent."""
         self._usage = usage
 
-    def send(self, content: str) -> str:
+    def send(
+        self,
+        content: str,
+        on_chunk: Optional[Callable[[str], None]] = None,
+        on_response_complete: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+    ) -> str:
         """
         Send a message and return the full response.
 
@@ -79,6 +84,8 @@ class ChatBackend:
 
         Args:
             content: User message text
+            on_chunk: Per-request chunk callback (overrides instance attribute)
+            on_response_complete: Per-request completion callback (overrides instance attribute)
 
         Returns:
             Full response text
@@ -86,10 +93,13 @@ class ChatBackend:
         agent = self._get_agent()
         self._usage = {}
 
-        response = agent.send_message(content, on_chunk=self.on_chunk)
+        chunk_cb = on_chunk or self.on_chunk
+        complete_cb = on_response_complete or self.on_response_complete
 
-        if self.on_response_complete:
-            self.on_response_complete(response, self._usage)
+        response = agent.send_message(content, on_chunk=chunk_cb)
+
+        if complete_cb:
+            complete_cb(response, self._usage)
 
         return response
 
