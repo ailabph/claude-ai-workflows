@@ -24,7 +24,7 @@ build/
 # Environment
 .env
 
-AGENT*
+AGENT.md
 .opencode*
 .claude*
 .cursor*
