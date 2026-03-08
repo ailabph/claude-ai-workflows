@@ -856,5 +856,5 @@ my_subagent = AgentDefinition(
 
 ## Future Planned Features
 
-- [ ] `orchestrator help "your question"` powered by haiku, referencing the README file
+- [x] `orchestrator helper "your question"` powered by haiku, referencing the README file
 - [x] `orchestrator start --tui` and `orchestrator start --plan path/to/complex_plan.md --tui`
