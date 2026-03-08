@@ -61,12 +61,13 @@ orchestrator_auto = [
 
 ### Verification
 
-After building, confirm the file is present in the sdist:
+Build both sdist and wheel, then check both artifacts (wheel is what pip actually installs):
 ```bash
 cd orchestrator-auto/
-python -m build --sdist
-tar -tzf dist/orchestrator_auto-*.tar.gz | grep theme.tcss
-# Expected: orchestrator_auto-1.9.0/orchestrator_auto/tui/styles/theme.tcss
+python -m build                                                          # builds sdist + wheel
+tar -tzf dist/orchestrator_auto-*.tar.gz | grep theme.tcss              # sdist check
+unzip -l dist/orchestrator_auto-*.whl | grep theme.tcss                 # wheel check
+# Expected in both: orchestrator_auto/tui/styles/theme.tcss
 ```
 
 ---
@@ -201,6 +202,9 @@ orchestrator_auto = [
 
 - [ ] Add `anthropic>=0.40.0` to `dependencies` in `pyproject.toml`
 - [ ] Add `tui/styles/*.tcss` to `[tool.setuptools.package-data]` in `pyproject.toml`
-- [ ] Build sdist and verify `theme.tcss` is present in the archive
-- [ ] Run `pip install -e .` in a fresh venv and confirm `orchestrator check` does not raise `ModuleNotFoundError`
-- [ ] Re-run `brew update-python-resources` (or `poet`) to refresh formula resource blocks
+- [ ] Build sdist and wheel (`python -m build`)
+- [ ] Confirm `theme.tcss` is present in both built artifacts (sdist tar + wheel zip)
+- [ ] Install the built wheel into a **fresh venv** (`pip install dist/orchestrator_auto-*.whl`) — not editable install, which reads from source and hides packaging mistakes
+- [ ] In that venv, run `python -c "import anthropic"` — must succeed
+- [ ] In that venv, run `ANTHROPIC_API_KEY=dummy orchestrator check` — confirm it does **not** fail with `ModuleNotFoundError: anthropic` (may still fail on invalid auth — that is expected)
+- [ ] Re-run `brew update-python-resources` (or `poet`) to refresh formula resource blocks with `anthropic` included
