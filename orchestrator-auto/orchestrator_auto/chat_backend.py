@@ -48,7 +48,6 @@ class ChatBackend:
         self.on_tool_event = on_tool_event
 
         self._agent: Optional[BaseAgent] = None
-        self._usage: Dict[str, Any] = {}
 
     def _get_agent(self) -> BaseAgent:
         """Get or create the agent (lazy initialization)."""
@@ -60,15 +59,11 @@ class ChatBackend:
                 model=self.model,
                 system_prompt=self.system_prompt,
                 allowed_tools=allowed_tools,
-                on_token_usage=self._on_token_usage,
+                on_token_usage=lambda u: None,
                 on_notification=lambda n: self.on_notification(n) if self.on_notification else None,
                 on_tool_event=lambda name, inp, resp: self.on_tool_event(name, inp, resp) if self.on_tool_event else None,
             )
         return self._agent
-
-    def _on_token_usage(self, usage: Dict[str, Any]) -> None:
-        """Capture token usage from the agent."""
-        self._usage = usage
 
     def send(
         self,
@@ -91,15 +86,22 @@ class ChatBackend:
             Full response text
         """
         agent = self._get_agent()
-        self._usage = {}
+
+        # Request-local usage dict — avoids races with self._usage
+        request_usage: Dict[str, Any] = {}
+        old_cb = agent.on_token_usage
+        agent.on_token_usage = lambda u: request_usage.update(u)
 
         chunk_cb = on_chunk or self.on_chunk
         complete_cb = on_response_complete or self.on_response_complete
 
-        response = agent.send_message(content, on_chunk=chunk_cb)
+        try:
+            response = agent.send_message(content, on_chunk=chunk_cb)
+        finally:
+            agent.on_token_usage = old_cb
 
         if complete_cb:
-            complete_cb(response, self._usage)
+            complete_cb(response, request_usage)
 
         return response
 

@@ -41,7 +41,7 @@ class ChatAdapter:
         """Forward a notification to the TUI main thread."""
         self.app.call_from_thread(
             self.app.post_message,
-            messages.ChatNotification(notification=notification),
+            messages.ChatNotification(notification=notification, bubble_id=self.bubble_id),
         )
 
     def on_tool_event(self, tool_name: str, tool_input: Dict[str, Any], tool_response: Any) -> None:
@@ -52,5 +52,6 @@ class ChatAdapter:
                 tool_name=tool_name,
                 tool_input=tool_input,
                 tool_response=tool_response,
+                bubble_id=self.bubble_id,
             ),
         )

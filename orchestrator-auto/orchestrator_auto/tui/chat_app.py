@@ -364,6 +364,8 @@ class ChatTUIApp(App):
 
     def on_chat_notification(self, event: ChatNotification) -> None:
         """Forward notification to verbose panel if present."""
+        if event.bubble_id != self._current_bubble_id:
+            return  # Stale notification from a cleared/cancelled request
         try:
             panel = self.query_one("#verbose-panel", VerbosePanel)
             panel.add_notification(
@@ -375,6 +377,8 @@ class ChatTUIApp(App):
 
     def on_chat_tool_event(self, event: ChatToolEvent) -> None:
         """Forward tool event to verbose panel if present."""
+        if event.bubble_id != self._current_bubble_id:
+            return  # Stale tool event from a cleared/cancelled request
         try:
             panel = self.query_one("#verbose-panel", VerbosePanel)
             result_str = str(event.tool_response)[:80] if event.tool_response else None
@@ -389,9 +393,24 @@ class ChatTUIApp(App):
 
     def action_quit(self) -> None:
         """Quit with confirmation."""
+        if self._active_worker is not None:
+            def _on_force_quit_confirmed(confirmed: bool) -> None:
+                if confirmed:
+                    self._cancel_active_worker()
+                    try:
+                        self._backend.reset()
+                    except Exception:
+                        pass
+                    self.exit()
+
+            self.push_screen(
+                ConfirmModal("Request still running (tools may be active). Quit anyway?"),
+                _on_force_quit_confirmed,
+            )
+            return
+
         def _on_quit_confirmed(confirmed: bool) -> None:
             if confirmed:
-                self._cancel_active_worker()
                 try:
                     self._backend.reset()
                 except Exception:
@@ -414,7 +433,13 @@ class ChatTUIApp(App):
 
     def action_clear_chat(self) -> None:
         """Clear all chat messages and reset backend conversation context."""
-        self._cancel_active_worker()
+        if self._active_worker is not None:
+            self.notify(
+                "Request in progress — please wait for it to finish.",
+                severity="warning",
+                timeout=3,
+            )
+            return
         view = self.query_one("#chat-view", ChatMessageView)
         view.clear_messages()
         self._current_bubble_id = None

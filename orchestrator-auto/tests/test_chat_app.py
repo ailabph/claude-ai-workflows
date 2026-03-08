@@ -232,10 +232,11 @@ async def test_response_complete_with_empty_usage():
 
 @pytest.mark.asyncio
 async def test_notification_handler_is_noop():
-    """Test that on_chat_notification doesn't crash (no-op for M3)."""
+    """Test that on_chat_notification doesn't crash (no-op when no verbose panel)."""
     app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
     async with app.run_test() as pilot:
-        app.post_message(ChatNotification(notification={"message": "test"}))
+        app._current_bubble_id = "bubble-test"
+        app.post_message(ChatNotification(notification={"message": "test"}, bubble_id="bubble-test"))
         await pilot.pause()
         # Should not raise
 
@@ -286,8 +287,9 @@ async def test_notification_appears_in_verbose_panel():
     """Test that posting ChatNotification populates the verbose panel."""
     app = ChatTUIApp(model="opus", verbose=True, system_prompt=None, tools_enabled=True)
     async with app.run_test() as pilot:
+        app._current_bubble_id = "bubble-test"
         app.post_message(
-            ChatNotification(notification={"message": "Reading file...", "type": "info"})
+            ChatNotification(notification={"message": "Reading file...", "type": "info"}, bubble_id="bubble-test")
         )
         await pilot.pause()
 
@@ -302,11 +304,13 @@ async def test_tool_event_appears_in_verbose_panel():
     """Test that posting ChatToolEvent populates the verbose panel."""
     app = ChatTUIApp(model="opus", verbose=True, system_prompt=None, tools_enabled=True)
     async with app.run_test() as pilot:
+        app._current_bubble_id = "bubble-test"
         app.post_message(
             ChatToolEvent(
                 tool_name="Glob",
                 tool_input={"pattern": "**/*.py"},
                 tool_response="12 results",
+                bubble_id="bubble-test",
             )
         )
         await pilot.pause()
@@ -348,15 +352,20 @@ async def test_clear_chat_also_clears_verbose_panel():
     """Test that action_clear_chat clears the verbose panel entries."""
     app = ChatTUIApp(model="opus", verbose=True, system_prompt=None, tools_enabled=True)
     async with app.run_test() as pilot:
-        # Add a notification
+        # Add a notification (must set current bubble_id so it's not filtered)
+        app._current_bubble_id = "bubble-test"
         app.post_message(
-            ChatNotification(notification={"message": "test", "type": "info"})
+            ChatNotification(notification={"message": "test", "type": "info"}, bubble_id="bubble-test")
         )
         await pilot.pause()
 
         panel = app.query_one("#verbose-panel", VerbosePanel)
         entries = [c for c in panel.children if "verbose-header" not in c.classes]
         assert len(entries) == 1
+
+        # Simulate request completing so clear is not blocked
+        app._current_bubble_id = None
+        app._active_worker = None
 
         # Clear chat
         app.action_clear_chat()
@@ -539,6 +548,102 @@ async def test_clear_resets_backend_context():
 
 
 @pytest.mark.asyncio
+async def test_stale_notification_ignored_after_clear():
+    """Stale ChatNotification with old bubble_id must not appear in verbose panel after clear+resend."""
+    app = ChatTUIApp(model="opus", verbose=True, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        view = app.query_one("#chat-view", ChatMessageView)
+
+        # Set up bubble1 as current
+        bubble1_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble1_id
+        app._active_worker = None  # Simulate worker finished
+        await pilot.pause()
+
+        # Clear chat
+        app.action_clear_chat()
+        await pilot.pause()
+
+        # User sends msg2 — new bubble
+        bubble2_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble2_id
+        await pilot.pause()
+
+        # Stale notification from old worker (bubble1's adapter)
+        app.post_message(ChatNotification(notification={"message": "stale", "type": "info"}, bubble_id=bubble1_id))
+        await pilot.pause()
+
+        # Verbose panel should have no entries from stale notification
+        panel = app.query_one("#verbose-panel", VerbosePanel)
+        entries = [c for c in panel.children if "verbose-header" not in c.classes]
+        assert len(entries) == 0, "Stale notification should be dropped"
+
+
+@pytest.mark.asyncio
+async def test_stale_tool_event_ignored_after_clear():
+    """Stale ChatToolEvent with old bubble_id must not appear in verbose panel."""
+    app = ChatTUIApp(model="opus", verbose=True, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        view = app.query_one("#chat-view", ChatMessageView)
+
+        bubble1_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble1_id
+        app._active_worker = None
+        await pilot.pause()
+
+        app.action_clear_chat()
+        await pilot.pause()
+
+        bubble2_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble2_id
+        await pilot.pause()
+
+        # Stale tool event from old worker
+        app.post_message(ChatToolEvent(
+            tool_name="Read",
+            tool_input={"file_path": "/old.py"},
+            tool_response="old content",
+            bubble_id=bubble1_id,
+        ))
+        await pilot.pause()
+
+        panel = app.query_one("#verbose-panel", VerbosePanel)
+        entries = [c for c in panel.children if "verbose-header" not in c.classes]
+        assert len(entries) == 0, "Stale tool event should be dropped"
+
+
+@pytest.mark.asyncio
+async def test_clear_blocked_during_active_request():
+    """Clear should be blocked with a notification when a worker is active."""
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        view = app.query_one("#chat-view", ChatMessageView)
+        view.append_user_message("hello")
+        await pilot.pause()
+
+        # Simulate active worker
+        app._active_worker = MagicMock()
+
+        # Try to clear — should be blocked
+        app.action_clear_chat()
+        await pilot.pause()
+
+        # Messages should NOT have been cleared
+        assert len(list(view.children)) >= 1
+        # Backend reset should NOT have been called
+        mock_backend.reset.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_clear_reenables_input_bar():
     """Test that action_clear_chat re-enables the input bar (handles clearing mid-stream)."""
     app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
@@ -584,25 +689,25 @@ async def test_worker_failure_reenables_input():
 
 
 @pytest.mark.asyncio
-async def test_clear_while_streaming_does_not_corrupt_new_bubble():
+async def test_clear_while_idle_does_not_corrupt_new_bubble():
     """
-    Regression: if user clears during a stream and immediately sends again,
-    the old completion must not finalize the new bubble.
+    Regression: if user clears after a request completes and sends again,
+    a stale completion from the old request must not finalize the new bubble.
     """
     app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
     async with app.run_test() as pilot:
         mock_backend = MagicMock()
         app._backend = mock_backend
 
-        # Simulate first send in progress
+        # Simulate first send completed (worker done, but bubble still tracked)
         view = app.query_one("#chat-view", ChatMessageView)
         view.append_user_message("msg1")
         bubble1_id = view.begin_assistant_message()
         app._current_bubble_id = bubble1_id
-        app.query_one("#input-bar", ChatInputBar).disabled = True
+        app._active_worker = None  # Worker finished
         await pilot.pause()
 
-        # User clears while streaming
+        # User clears
         app.action_clear_chat()
         await pilot.pause()
 
@@ -612,7 +717,7 @@ async def test_clear_while_streaming_does_not_corrupt_new_bubble():
         app._current_bubble_id = bubble2_id
         await pilot.pause()
 
-        # Simulate old worker completing — post a ChatResponseComplete for bubble1
+        # Simulate stale completion arriving for bubble1
         app.post_message(ChatResponseComplete(
             bubble_id=bubble1_id,
             full_text="old response",

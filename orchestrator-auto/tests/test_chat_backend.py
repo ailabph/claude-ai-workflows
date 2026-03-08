@@ -71,10 +71,11 @@ class TestChatBackendSend:
 
         backend = ChatBackend(model="opus", on_response_complete=on_response_complete)
 
-        # Simulate the agent calling on_token_usage during send
+        # Simulate the agent calling on_token_usage during send.
+        # send() monkey-patches agent.on_token_usage with a request-local lambda,
+        # so we call it through the agent's attribute at send time.
         def fake_send(content, on_chunk=None):
-            # The backend registered _on_token_usage as on_token_usage callback
-            backend._on_token_usage({"input_tokens": 100, "output_tokens": 50})
+            mock_agent.on_token_usage({"input_tokens": 100, "output_tokens": 50})
             return "Response with usage"
 
         mock_agent.send_message.side_effect = fake_send

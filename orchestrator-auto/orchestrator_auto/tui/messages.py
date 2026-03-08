@@ -585,18 +585,20 @@ class ChatResponseComplete(Message):
 class ChatNotification(Message):
     """A notification from the chat agent."""
 
-    def __init__(self, notification: dict) -> None:
+    def __init__(self, notification: dict, bubble_id: str = "") -> None:
         self.notification = notification
+        self.bubble_id = bubble_id
         super().__init__()
 
 
 class ChatToolEvent(Message):
     """A tool use event from the chat agent (PostToolUse success hook)."""
 
-    def __init__(self, tool_name: str, tool_input: dict, tool_response: object = None) -> None:
+    def __init__(self, tool_name: str, tool_input: dict, tool_response: object = None, bubble_id: str = "") -> None:
         self.tool_name = tool_name
         self.tool_input = tool_input
         self.tool_response = tool_response
+        self.bubble_id = bubble_id
         super().__init__()
 
 
