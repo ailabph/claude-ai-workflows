@@ -144,6 +144,14 @@ Each milestone is **atomic**: the executor doesn't move forward until you explic
 | `input_handler.py` | Multi-line paste support for CLI input |
 | `logging_config.py` | Session-scoped file logging setup |
 | `convert.py` | Format conversion utilities |
+| `explore.py` | Codebase exploration helpers |
+| `todo.py` / `todo_parser.py` | Todo tracking and parsing |
+| `playwright_test.py` | Playwright MCP verification tool |
+| `io/input_provider.py` | Pluggable input abstraction (CLI, TUI, Telegram) |
+| `io/events.py` | IO event types |
+| `controllers/queue_controller.py` | Queue mode orchestration logic |
+| `controllers/watch_controller.py` | Watch mode directory polling logic |
+| `validation/` | Input validation pipeline (security, api, performance, base) |
 
 ### TUI Widgets (`tui/widgets/`)
 | Widget | Purpose |
@@ -203,7 +211,7 @@ Each milestone is **atomic**: the executor doesn't move forward until you explic
 
 CLI flags > env vars > repo config (`<repo>/.claude_orchestrator/config.yaml`) > global config (`~/.claude_orchestrator/config.yaml`) > defaults
 
-**Model aliases:** `opus` → claude-opus-4-5-20251101, `sonnet` → claude-sonnet-4-5-20250929, `haiku` → claude-haiku-3-5-20241022
+**Model aliases:** `opus` → claude-opus-4-5-20251101, `sonnet` → claude-sonnet-4-5-20250929, `haiku` → claude-3-5-haiku-20241022
 
 ## Best Practices & Patterns
 

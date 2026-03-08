@@ -5,18 +5,16 @@ This folder contains design notes for proposed and implemented features.
 - Telegram integration design: `docs/FEATURE_telegram_integration.md`
 - Activity indicator: `docs/FEATURE_activity_indicator.md`
 - Conversation continuity: `docs/FEATURE_conversation_continuity.md`
-- Import existing plan: `docs/FEATURE_import_existing_plan.md`
 - Model selection: `docs/FEATURE_model_selection.md`
 
 ---
 
 ## Next Priorities (Personal/Droplet Use)
 
-1. **Telegram Phase 2 (DM-only listener):** add `orchestrator telegram listen` so blockers can be answered from a phone and workflows can resume without SSH.
-2. **Retries (transport-level only):** automatic retry/backoff for transient API/network failures; keep semantic retries gated by planner/human.
-3. **Observability shortcuts:** add lightweight CLI helpers like `orchestrator status <id> --tail N` / `--since 10m` to quickly see what changed without exporting.
-4. **Safety controls for unattended runs:** quiet hours for non-blocker notifications, and caps per milestone (runtime/token/tool-call limits).
-5. **Plan templates:** `orchestrator start --template <name>` to standardize repeatable workflows and reduce setup overhead.
+1. **Retries (transport-level only):** automatic retry/backoff for transient API/network failures; keep semantic retries gated by planner/human.
+2. **Observability shortcuts:** add lightweight CLI helpers like `orchestrator status <id> --tail N` / `--since 10m` to quickly see what changed without exporting.
+3. **Safety controls for unattended runs:** quiet hours for non-blocker notifications, and caps per milestone (runtime/token/tool-call limits).
+4. **Plan templates:** `orchestrator start --template <name>` to standardize repeatable workflows and reduce setup overhead.
 
 ---
 

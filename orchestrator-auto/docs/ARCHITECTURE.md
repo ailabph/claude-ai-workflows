@@ -303,7 +303,54 @@ orchestrator-auto/
 │   ├── prompts.py           # System prompts
 │   ├── db.py                # Database ops
 │   ├── logging_config.py    # Per-session logging
-│   └── exceptions.py        # Custom exception hierarchy
+│   ├── exceptions.py        # Custom exception hierarchy
+│   ├── explore.py           # Codebase exploration helpers
+│   ├── todo.py              # Todo tracking
+│   ├── todo_parser.py       # Todo parsing
+│   ├── convert.py           # Plan format conversion (AI-assisted)
+│   ├── playwright_test.py   # Playwright MCP verification tool
+│   ├── output.py            # StreamingIndicator for activity display
+│   ├── input_handler.py     # Multi-line paste support
+│   ├── auth.py              # Auth source detection
+│   ├── chat.py              # Direct chat mode
+│   ├── io/
+│   │   ├── input_provider.py  # Pluggable input abstraction (CLI/TUI/Telegram)
+│   │   └── events.py          # IO event types
+│   ├── controllers/
+│   │   ├── queue_controller.py  # Queue mode orchestration
+│   │   └── watch_controller.py  # Watch mode directory polling
+│   ├── validation/
+│   │   ├── base.py            # Base validator
+│   │   ├── security.py        # Security checks
+│   │   ├── api.py             # API validation
+│   │   ├── pipeline.py        # Validation pipeline
+│   │   └── performance.py     # Performance checks
+│   └── tui/
+│       ├── app.py             # Main TUI application
+│       ├── watch_app.py       # Watch mode TUI
+│       ├── queue_app.py       # Queue mode TUI
+│       ├── todo_app.py        # Todo TUI
+│       ├── adapter.py         # TUI-engine adapter
+│       ├── bindings.py        # Keybindings
+│       ├── messages.py        # TUI message types
+│       └── widgets/           # Reusable TUI widgets
+│           ├── stats_panel.py
+│           ├── watch_panel.py
+│           ├── compact_sidebar.py
+│           ├── compact_milestone_row.py
+│           ├── milestone_list.py
+│           ├── agent_output.py
+│           ├── log_panel.py
+│           ├── status_panel.py
+│           ├── status_bar.py
+│           ├── header_bar.py
+│           ├── progress_bar.py
+│           ├── queue_panel.py
+│           ├── git_panel.py
+│           ├── subagent_panel.py
+│           ├── task_list.py
+│           ├── agent_toggle_panel.py
+│           └── input_modal.py
 ├── tests/
 ├── docs/
 └── README.md
