@@ -2745,11 +2745,11 @@ def chat_mode(tui: bool, verbose: bool, model: str, system_prompt: Optional[str]
             from .tui.chat_app import ChatTUIApp
         except ImportError:
             click.secho(
-                "TUI chat requires the tui module (not yet implemented). "
-                "Use without --tui for CLI chat.",
+                "TUI chat requires the 'textual' package. "
+                "Install with: pip install textual",
                 fg="red",
             )
-            return
+            sys.exit(1)
         app = ChatTUIApp(
             model=model,
             verbose=verbose,

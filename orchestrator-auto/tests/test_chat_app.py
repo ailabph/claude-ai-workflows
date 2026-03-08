@@ -3,6 +3,9 @@ Tests for the chat-mode TUI app (Milestones 2, 3, 4, and 5).
 """
 
 import pytest
+
+pytest.importorskip("textual")
+
 from unittest.mock import patch, MagicMock
 
 from textual.widgets import Markdown
@@ -16,6 +19,7 @@ from orchestrator_auto.tui.messages import (
     ChatResponseComplete,
     ChatNotification,
     ChatToolEvent,
+    ChatSendFailed,
 )
 
 
@@ -513,3 +517,85 @@ async def test_markdown_widget_used_in_assistant_bubbles():
         # The content widget should be a Markdown instance
         md_widgets = bubble.query(Markdown)
         assert len(md_widgets) > 0
+
+
+# --- Bug fix tests: /clear resets backend, worker error recovery, quit cleanup ---
+
+
+@pytest.mark.asyncio
+async def test_clear_resets_backend_context():
+    """Test that action_clear_chat calls backend.reset() to clear conversation history."""
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        app.action_clear_chat()
+        await pilot.pause()
+
+        mock_backend.reset.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_clear_reenables_input_bar():
+    """Test that action_clear_chat re-enables the input bar (handles clearing mid-stream)."""
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        # Simulate mid-stream: disable input
+        input_bar = app.query_one("#input-bar", ChatInputBar)
+        input_bar.disabled = True
+
+        app.action_clear_chat()
+        await pilot.pause()
+
+        assert input_bar.disabled is False
+
+
+@pytest.mark.asyncio
+async def test_worker_failure_reenables_input():
+    """Test that a backend.send() failure re-enables input and shows error."""
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        view = app.query_one("#chat-view", ChatMessageView)
+        input_bar = app.query_one("#input-bar", ChatInputBar)
+
+        # Start a bubble and disable input (simulating streaming start)
+        bubble_id = view.begin_assistant_message()
+        app._current_bubble_id = bubble_id
+        input_bar.disabled = True
+        await pilot.pause()
+
+        # Post a ChatSendFailed message (simulating what the worker would do)
+        app.post_message(ChatSendFailed(bubble_id=bubble_id, error="Connection timeout"))
+        await pilot.pause()
+
+        # Input should be re-enabled
+        assert input_bar.disabled is False
+        # Current bubble should be cleared
+        assert app._current_bubble_id is None
+        # Bubble should be finalized (no streaming cursor)
+        bubble = view._bubbles[bubble_id]
+        assert not bubble._streaming
+
+
+@pytest.mark.asyncio
+async def test_quit_calls_backend_reset():
+    """Test that confirming quit calls backend.reset() before exiting."""
+    app = ChatTUIApp(model="opus", verbose=False, system_prompt=None, tools_enabled=True)
+    async with app.run_test() as pilot:
+        mock_backend = MagicMock()
+        app._backend = mock_backend
+
+        app.action_quit()
+        await pilot.pause()
+
+        # Confirm quit
+        modal = app.screen_stack[-1]
+        yes_btn = modal.query_one("#confirm-yes")
+        await pilot.click(yes_btn)
+        await pilot.pause()
+
+        mock_backend.reset.assert_called_once()

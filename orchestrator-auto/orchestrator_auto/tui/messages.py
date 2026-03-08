@@ -598,3 +598,12 @@ class ChatToolEvent(Message):
         self.tool_input = tool_input
         self.tool_response = tool_response
         super().__init__()
+
+
+class ChatSendFailed(Message):
+    """Backend send() raised an exception."""
+
+    def __init__(self, bubble_id: str, error: str) -> None:
+        super().__init__()
+        self.bubble_id = bubble_id
+        self.error = error

@@ -171,7 +171,7 @@ class BaseAgent:
             self.system_prompt = build_system_prompt_with_claude_md(system_prompt, effective_cwd)
         else:
             self.system_prompt = system_prompt
-        self.allowed_tools = allowed_tools or DEFAULT_TOOLS
+        self.allowed_tools = allowed_tools if allowed_tools is not None else DEFAULT_TOOLS
         self.model = model
         self.session_id = session_id
         self.hooks = hooks
@@ -281,9 +281,10 @@ class BaseAgent:
             HookMatcher(matcher="*", hooks=[self._on_notification])
         ]
 
-        hooks["PostToolUse"] = [
-            HookMatcher(matcher="*", hooks=[self._on_tool_use])
-        ]
+        if self.on_tool_event is not None:
+            hooks["PostToolUse"] = [
+                HookMatcher(matcher="*", hooks=[self._on_tool_use])
+            ]
 
         # Merge user-provided hooks if any
         if self.hooks:
@@ -851,14 +852,9 @@ def create_planner_chat_agent(
     resolved_model = get_planner_model(model)
     prompt = system_prompt or PLANNER_CHAT_PROMPT
 
-    # BaseAgent.__init__ uses `allowed_tools or DEFAULT_TOOLS` which would
-    # replace [] (falsy) with DEFAULT_TOOLS. Pass explicitly to preserve
-    # the empty-list case (--no-tools).
-    tools = allowed_tools if allowed_tools is not None else DEFAULT_TOOLS
-
     agent = BaseAgent(
         system_prompt=prompt,
-        allowed_tools=tools,
+        allowed_tools=allowed_tools,
         model=resolved_model,
         session_id=session_id,
         on_token_usage=on_token_usage,

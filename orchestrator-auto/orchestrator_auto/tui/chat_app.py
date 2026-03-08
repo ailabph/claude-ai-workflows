@@ -20,6 +20,7 @@ from .messages import (
     ChatResponseComplete,
     ChatNotification,
     ChatToolEvent,
+    ChatSendFailed,
 )
 
 
@@ -285,8 +286,17 @@ class ChatTUIApp(App):
         self._backend.on_notification = adapter.on_notification
         self._backend.on_tool_event = adapter.on_tool_event
 
+        def _run_send(bid: str, msg: str) -> None:
+            try:
+                self._backend.send(msg)
+            except Exception as exc:
+                self.call_from_thread(
+                    self.post_message,
+                    ChatSendFailed(bubble_id=bid, error=str(exc)),
+                )
+
         self.run_worker(
-            lambda: self._backend.send(content),
+            lambda: _run_send(bubble_id, content),
             thread=True,
             name="chat-send",
         )
@@ -311,6 +321,21 @@ class ChatTUIApp(App):
         self._update_subtitle()
 
         # Re-enable input and refocus
+        input_bar = self.query_one("#input-bar", ChatInputBar)
+        input_bar.disabled = False
+        try:
+            self.query_one("#chat-input").focus()
+        except Exception:
+            pass
+
+    def on_chat_send_failed(self, event: ChatSendFailed) -> None:
+        """Handle backend send() failure: finalize bubble, show error, re-enable input."""
+        view = self.query_one("#chat-view", ChatMessageView)
+        view.finalize_assistant_message(event.bubble_id)
+        self._current_bubble_id = None
+        # Show error as a user-visible message
+        view.append_user_message(f"[Error] {event.error}")
+        # Re-enable input
         input_bar = self.query_one("#input-bar", ChatInputBar)
         input_bar.disabled = False
         try:
@@ -347,6 +372,10 @@ class ChatTUIApp(App):
         """Quit with confirmation."""
         def _on_quit_confirmed(confirmed: bool) -> None:
             if confirmed:
+                try:
+                    self._backend.reset()
+                except Exception:
+                    pass
                 self.exit()
 
         self.push_screen(ConfirmModal("End chat session?"), _on_quit_confirmed)
@@ -364,10 +393,15 @@ class ChatTUIApp(App):
             pass
 
     def action_clear_chat(self) -> None:
-        """Clear all chat messages."""
+        """Clear all chat messages and reset backend conversation context."""
         view = self.query_one("#chat-view", ChatMessageView)
         view.clear_messages()
         self._current_bubble_id = None
+        # Reset backend conversation history
+        if self._backend is not None:
+            self._backend.reset()
+        # Re-enable input in case clear happens mid-stream
+        self.query_one("#input-bar", ChatInputBar).disabled = False
         # Also clear verbose panel if present
         try:
             panel = self.query_one("#verbose-panel", VerbosePanel)
