@@ -22,7 +22,7 @@ From `orchestrator-auto/pyproject.toml`:
 |-------|-------|
 | Name | `orchestrator-auto` |
 | Version | `1.9.0` |
-| Python requirement | `>=3.10` (`environment.yml` pins `python=3.11` for local dev) |
+| Python requirement | `>=3.10` (local dev uses `python=3.11` per `environment.yml`; formula pins to current Homebrew Python independently) |
 | Entry point | `orchestrator = "orchestrator_auto.cli:cli"` |
 | Core deps | `claude-agent-sdk>=0.1.46`, `click>=8.0`, `prompt_toolkit>=3.0`, `pyyaml>=6.0` |
 | TUI extra | `textual>=0.80.0` (required for `--tui` flag, `cli.py:3664`) |
@@ -31,7 +31,7 @@ From `orchestrator-auto/pyproject.toml`:
 **watch command flags** (`cli.py:3651–3665`):
 - `--tui/--no-tui` — launches Textual TUI dashboard (default: off)
 - `--verbose/-v` — expanded dual-panel layout in TUI (default: compact)
-- `--convert/--no-convert` — auto-convert invalid plans (default: **disabled**) — include this or watch silently skips non-conforming plan files
+- `--convert/--no-convert` — auto-convert invalid plans (default: **disabled**) — without it, non-conforming plan files are quarantined as `_orchestrator-skip__<filename>` (`watch_controller.py:342`)
 
 ---
 
@@ -59,7 +59,7 @@ url "https://github.com/ailabph/claude-ai-workflows/archive/refs/tags/v1.9.0.tar
 Required formula `install` override for this case:
 ```ruby
 def install
-  venv = virtualenv_create(libexec, "python3.11")
+  venv = virtualenv_create(libexec, "python3.13")
   venv.pip_install resources
   venv.pip_install_and_link buildpath/"orchestrator-auto"
 end
