@@ -76,7 +76,7 @@ class TestAgentInitialization:
         agent = PlannerAgent()
 
         assert agent.system_prompt == PLANNER_SYSTEM_PROMPT
-        assert agent.model == "claude-opus-4-5-20251101"  # Opus for planning
+        assert agent.model == "claude-opus-4-6"  # Opus for planning
         assert agent.session_id == "planner"
         assert agent.allowed_tools == DEFAULT_TOOLS
 
@@ -85,7 +85,7 @@ class TestAgentInitialization:
         agent = ExecutorAgent()
 
         assert agent.system_prompt == EXECUTOR_SYSTEM_PROMPT
-        assert agent.model == "claude-sonnet-4-5-20250929"  # Sonnet for execution
+        assert agent.model == "claude-sonnet-4-6"  # Sonnet for execution
         assert agent.session_id == "executor"
         assert agent.allowed_tools == DEFAULT_TOOLS
 
@@ -99,7 +99,7 @@ class TestAgentInitialization:
 
         assert options is not None
         assert options.system_prompt == PLANNER_SYSTEM_PROMPT
-        assert options.model == "claude-opus-4-5-20251101"
+        assert options.model == "claude-opus-4-6"
         assert agent._options is not None  # Cached
 
     def test_agent_custom_model(self):
@@ -168,7 +168,7 @@ class TestAgentFactories:
 
         assert isinstance(agent, PlannerAgent)
         assert agent.session_id == "planner"
-        assert agent.model == "claude-opus-4-5-20251101"
+        assert agent.model == "claude-opus-4-6"
 
     def test_create_executor_agent(self):
         """Test creating an executor agent with factory function."""
@@ -176,7 +176,7 @@ class TestAgentFactories:
 
         assert isinstance(agent, ExecutorAgent)
         assert agent.session_id == "executor"
-        assert agent.model == "claude-sonnet-4-5-20250929"
+        assert agent.model == "claude-sonnet-4-6"
 
     def test_factory_custom_model(self):
         """Test factory functions with custom models."""

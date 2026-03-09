@@ -205,7 +205,7 @@ opencode "Implement milestone 1: Add user model and migrations"
 ```python
 from pydantic_ai import Agent
 
-planner = Agent('anthropic:claude-opus-4-5-20251101', system_prompt="...")
+planner = Agent('anthropic:claude-opus-4-6', system_prompt="...")
 executor = Agent('openai:gpt-4o', system_prompt="...")
 ```
 

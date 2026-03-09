@@ -223,8 +223,8 @@ Access pattern: always use `db.get_connection(db_path)` context manager, never r
 
 | Alias | Model ID | Default role |
 |-------|----------|--------------|
-| `opus` | `claude-opus-4-5-20251101` | Planner (default) |
-| `sonnet` | `claude-sonnet-4-5-20250929` | Executor (default) |
+| `opus` | `claude-opus-4-6` | Planner (default) |
+| `sonnet` | `claude-sonnet-4-6` | Executor (default) |
 | `haiku` | `claude-3-5-haiku-20241022` | Budget executor / commit AI |
 
 Config priority: CLI flags > env vars > repo config (`.claude_orchestrator/config.yaml`) > global config (`~/.claude_orchestrator/config.yaml`) > defaults.

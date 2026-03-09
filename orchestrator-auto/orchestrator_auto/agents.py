@@ -137,7 +137,7 @@ class BaseAgent:
         self,
         system_prompt: str,
         allowed_tools: Optional[List[str]] = None,
-        model: str = "claude-sonnet-4-5-20250929",
+        model: str = "claude-sonnet-4-6",
         session_id: str = "default",
         hooks: Optional[Dict[str, Any]] = None,
         cwd: Optional[Path] = None,
@@ -613,7 +613,7 @@ class PlannerAgent(BaseAgent):
 
     def __init__(
         self,
-        model: str = "claude-opus-4-5-20251101",  # Use Opus for strategic planning
+        model: str = "claude-opus-4-6",  # Use Opus for strategic planning
         session_id: str = "planner",
         mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         **kwargs
@@ -672,7 +672,7 @@ class ExecutorAgent(BaseAgent):
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5-20250929",  # Use Sonnet for implementation
+        model: str = "claude-sonnet-4-6",  # Use Sonnet for implementation
         session_id: str = "executor",
         mcp_servers: Optional[Union[McpServersConfig, str]] = None,
         **kwargs
@@ -866,7 +866,7 @@ def create_planner_chat_agent(
 
 
 def create_chat_agent(
-    model: str = "claude-sonnet-4-5-20250929",
+    model: str = "claude-sonnet-4-6",
     system_prompt: Optional[str] = None,
     allowed_tools: Optional[List[str]] = None,
     cwd: Optional[Path] = None,

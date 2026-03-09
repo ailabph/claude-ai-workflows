@@ -21,7 +21,7 @@ from claude_agent_sdk.types import (
 )
 
 # Model for commit message generation
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Timeout for AI generation (30 seconds)
 DEFAULT_TIMEOUT = 30

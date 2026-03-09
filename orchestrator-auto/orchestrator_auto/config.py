@@ -15,14 +15,14 @@ from typing import Optional, Dict, Any, Tuple, List
 
 # Model aliases mapping to full model IDs (latest versions)
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-5-20251101",
-    "sonnet": "claude-sonnet-4-5-20250929",
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-3-5-haiku-20241022",
 }
 
 # Default models
-DEFAULT_PLANNER_MODEL = "claude-opus-4-5-20251101"
-DEFAULT_EXECUTOR_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_PLANNER_MODEL = "claude-opus-4-6"
+DEFAULT_EXECUTOR_MODEL = "claude-sonnet-4-6"
 
 # Config file locations
 GLOBAL_CONFIG_DIR = Path.home() / ".claude_orchestrator"
@@ -266,10 +266,10 @@ def get_model_display_name(model: str) -> str:
     for alias, full_id in MODEL_ALIASES.items():
         if model == full_id:
             # Extract version from model ID
-            if "opus-4-5" in model:
-                return "opus-4.5"
-            elif "sonnet-4-5" in model:
-                return "sonnet-4.5"
+            if "opus-4-6" in model:
+                return "opus-4.6"
+            elif "sonnet-4-6" in model:
+                return "sonnet-4.6"
             elif "3-5-haiku" in model:
                 return "haiku-3.5"
             return alias

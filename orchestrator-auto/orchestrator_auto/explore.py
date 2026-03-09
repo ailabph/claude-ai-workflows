@@ -150,7 +150,7 @@ class ExploreSubAgent:
 
     def __init__(
         self,
-        model: str = "claude-sonnet-4-5-20250929",  # Sonnet for better exploration quality
+        model: str = "claude-sonnet-4-6",  # Sonnet for better exploration quality
         cwd: Optional[Path] = None,
         max_tokens: int = DEFAULT_MAX_TOKENS,
         max_turns: int = DEFAULT_MAX_TURNS,

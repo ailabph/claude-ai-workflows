@@ -243,9 +243,9 @@ class TestChatSessionCommands:
         mock_create_agent.side_effect = [mock_agent1, mock_agent2, MagicMock()]
 
         mock_get_model.side_effect = [
-            "claude-sonnet-4-5-20250929",
-            "claude-opus-4-5-20251101",
-            "claude-sonnet-4-5-20250929",
+            "claude-sonnet-4-6",
+            "claude-opus-4-6",
+            "claude-sonnet-4-6",
         ]
 
         mock_input.side_effect = [
@@ -430,7 +430,7 @@ class TestChatSessionEdgeCases:
 
         # Simulate ValueError for invalid model
         mock_get_model.side_effect = [
-            "claude-sonnet-4-5-20250929",  # Initial
+            "claude-sonnet-4-6",  # Initial
             ValueError("Invalid model"),    # /model invalid
         ]
 

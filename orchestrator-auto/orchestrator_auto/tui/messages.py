@@ -311,7 +311,7 @@ class TokensUsed(Message):
             cache_creation_input_tokens: Tokens used for cache creation
             cache_read_input_tokens: Tokens read from cache
             thinking_tokens: Extended thinking tokens (Claude with extended_thinking)
-            model: Model used (e.g., "claude-opus-4-5-20251101")
+            model: Model used (e.g., "claude-opus-4-6")
             cost_usd: Cost of the API call in USD
         """
         self.agent = agent

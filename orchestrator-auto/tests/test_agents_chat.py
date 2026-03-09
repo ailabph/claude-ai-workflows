@@ -37,14 +37,14 @@ class TestCreateChatAgent:
         call_kwargs = mock_base_agent_class.call_args[1]
         assert call_kwargs['system_prompt'] == DEFAULT_CHAT_PROMPT
         assert call_kwargs['allowed_tools'] == DEFAULT_TOOLS
-        assert call_kwargs['model'] == "claude-sonnet-4-5-20250929"
+        assert call_kwargs['model'] == "claude-sonnet-4-6"
         assert call_kwargs['session_id'] == "chat"
         assert call_kwargs['cwd'] is None
 
     @patch('orchestrator_auto.agents.BaseAgent')
     def test_custom_model(self, mock_base_agent_class):
         """Test with custom model."""
-        custom_model = "claude-opus-4-5-20251101"
+        custom_model = "claude-opus-4-6"
 
         create_chat_agent(model=custom_model)
 
@@ -122,7 +122,7 @@ class TestCreateChatAgent:
     @patch('orchestrator_auto.agents.BaseAgent')
     def test_all_custom_parameters(self, mock_base_agent_class):
         """Test with all custom parameters."""
-        custom_model = "claude-opus-4-5-20251101"
+        custom_model = "claude-opus-4-6"
         custom_prompt = "Custom prompt"
         custom_tools = ["Read"]
         custom_cwd = Path("/test")

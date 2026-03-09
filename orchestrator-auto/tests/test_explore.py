@@ -64,7 +64,7 @@ class TestExploreSubAgent:
 
     def test_default_initialization(self):
         agent = ExploreSubAgent()
-        assert agent.model == "claude-sonnet-4-5-20250929"
+        assert agent.model == "claude-sonnet-4-6"
         assert agent.cwd == Path.cwd()
         assert agent.max_tokens == DEFAULT_MAX_TOKENS
         assert agent.max_turns == DEFAULT_MAX_TURNS
@@ -73,13 +73,13 @@ class TestExploreSubAgent:
     def test_custom_initialization(self):
         cwd = Path("/tmp")
         agent = ExploreSubAgent(
-            model="claude-sonnet-4-5-20250929",
+            model="claude-sonnet-4-6",
             cwd=cwd,
             max_tokens=10000,
             max_turns=3,
             timeout=15.0,
         )
-        assert agent.model == "claude-sonnet-4-5-20250929"
+        assert agent.model == "claude-sonnet-4-6"
         assert agent.cwd == cwd
         assert agent.max_tokens == 10000
         assert agent.max_turns == 3

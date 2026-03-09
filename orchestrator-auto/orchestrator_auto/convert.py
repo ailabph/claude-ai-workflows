@@ -23,7 +23,7 @@ from claude_agent_sdk.types import (
 
 
 # Default model for conversion (good quality/cost balance)
-DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # Timeout for AI conversion (60 seconds - plans can be large)
 DEFAULT_TIMEOUT = 60

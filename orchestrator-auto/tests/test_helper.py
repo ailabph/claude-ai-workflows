@@ -87,14 +87,14 @@ class TestHelperCommand:
         # Test sonnet alias
         result = runner.invoke(cli, ['helper', 'test', '-m', 'sonnet'])
         call_kwargs = mock_create_agent.call_args[1]
-        assert call_kwargs['model'] == 'claude-sonnet-4-5-20250929'
+        assert call_kwargs['model'] == 'claude-sonnet-4-6'
 
         mock_create_agent.reset_mock()
 
         # Test opus alias
         result = runner.invoke(cli, ['helper', 'test', '-m', 'opus'])
         call_kwargs = mock_create_agent.call_args[1]
-        assert call_kwargs['model'] == 'claude-opus-4-5-20251101'
+        assert call_kwargs['model'] == 'claude-opus-4-6'
 
     @patch('orchestrator_auto.resources.load_docs')
     @patch('orchestrator_auto.agents.create_chat_agent')
@@ -110,10 +110,10 @@ class TestHelperCommand:
 
         from orchestrator_auto.cli import cli
         runner = CliRunner()
-        result = runner.invoke(cli, ['helper', 'test', '-m', 'claude-sonnet-4-5-20250929'])
+        result = runner.invoke(cli, ['helper', 'test', '-m', 'claude-sonnet-4-6'])
 
         call_kwargs = mock_create_agent.call_args[1]
-        assert call_kwargs['model'] == 'claude-sonnet-4-5-20250929'
+        assert call_kwargs['model'] == 'claude-sonnet-4-6'
 
     @patch('orchestrator_auto.resources.load_docs')
     @patch('orchestrator_auto.agents.create_chat_agent')

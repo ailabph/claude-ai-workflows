@@ -5,6 +5,18 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-03-09
+
+### Changed
+
+- **Default models upgraded to Claude 4.6** — `opus` alias updated to `claude-opus-4-6`; `sonnet` alias updated to `claude-sonnet-4-6`. All internal defaults (`DEFAULT_PLANNER_MODEL`, `DEFAULT_EXECUTOR_MODEL`) and sub-agent defaults (`explore.py`, `commit_ai.py`, `convert.py`, `playwright_test.py`) follow.
+
+### Added
+
+- **`orchestrator check`: Default Models section** — New section 5 in health check output shows the resolved planner and executor model IDs (with alias labels), so users can confirm which models will be used before starting a workflow.
+
+---
+
 ## [1.9.0] - 2026-03-08
 
 ### Added

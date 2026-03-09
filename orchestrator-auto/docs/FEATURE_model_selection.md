@@ -9,8 +9,8 @@ Add CLI flags to allow users to specify which Claude models to use for the Plann
 ## Problem
 
 Currently, agent models are hardcoded in `agents.py`:
-- Planner: `claude-opus-4-5-20251101` (most capable, highest cost)
-- Executor: `claude-sonnet-4-5-20250929` (balanced)
+- Planner: `claude-opus-4-6` (most capable, highest cost)
+- Executor: `claude-sonnet-4-6` (balanced)
 
 Users cannot:
 1. Use cheaper models for simple tasks
@@ -32,13 +32,13 @@ orchestrator start -f "My feature" --executor-model claude-haiku-3-5-20241022
 
 # Use Sonnet for both (balanced)
 orchestrator start -f "My feature" \
-  --planner-model claude-sonnet-4-5-20250929 \
-  --executor-model claude-sonnet-4-5-20250929
+  --planner-model claude-sonnet-4-6 \
+  --executor-model claude-sonnet-4-6
 
 # Use Opus for both (maximum capability)
 orchestrator start -f "My feature" \
-  --planner-model claude-opus-4-5-20251101 \
-  --executor-model claude-opus-4-5-20251101
+  --planner-model claude-opus-4-6 \
+  --executor-model claude-opus-4-6
 ```
 
 ## Implementation Plan
@@ -55,14 +55,14 @@ from typing import Optional, Dict, Any
 
 # Model aliases mapping to full model IDs
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-5-20251101",
-    "sonnet": "claude-sonnet-4-5-20250929",
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-3-5-20241022",
 }
 
 # Default models
-DEFAULT_PLANNER_MODEL = "claude-opus-4-5-20251101"
-DEFAULT_EXECUTOR_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_PLANNER_MODEL = "claude-opus-4-6"
+DEFAULT_EXECUTOR_MODEL = "claude-sonnet-4-6"
 
 def get_config_path() -> Path:
     """Get path to config file."""
@@ -225,8 +225,8 @@ Phase: EXECUTION
 
 | Model ID | Alias | Best For |
 |----------|-------|----------|
-| `claude-opus-4-5-20251101` | Opus 4.5 | Complex planning, strategic decisions |
-| `claude-sonnet-4-5-20250929` | Sonnet 4.5 | Balanced capability/cost |
+| `claude-opus-4-6` | Opus 4.5 | Complex planning, strategic decisions |
+| `claude-sonnet-4-6` | Sonnet 4.5 | Balanced capability/cost |
 | `claude-haiku-3-5-20241022` | Haiku 3.5 | Fast, simple tasks, cost-sensitive |
 
 ## Validation
@@ -255,8 +255,8 @@ Support short names that map to latest model versions:
 
 | Alias | Full Model ID |
 |-------|---------------|
-| `opus` | `claude-opus-4-5-20251101` |
-| `sonnet` | `claude-sonnet-4-5-20250929` |
+| `opus` | `claude-opus-4-6` |
+| `sonnet` | `claude-sonnet-4-6` |
 | `haiku` | `claude-haiku-3-5-20241022` |
 
 Usage:
@@ -267,8 +267,8 @@ orchestrator start -f "My feature" --planner-model opus --executor-model haiku
 Implementation:
 ```python
 MODEL_ALIASES = {
-    "opus": "claude-opus-4-5-20251101",
-    "sonnet": "claude-sonnet-4-5-20250929",
+    "opus": "claude-opus-4-6",
+    "sonnet": "claude-sonnet-4-6",
     "haiku": "claude-haiku-3-5-20241022",
 }
 

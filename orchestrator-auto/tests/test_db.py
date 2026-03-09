@@ -157,16 +157,16 @@ class TestSessionCRUD:
         """Test creating a session with model parameters."""
         session_id = db.create_session(
             feature_description="Test feature",
-            planner_model="claude-opus-4-5-20251101",
-            executor_model="claude-sonnet-4-5-20250929",
+            planner_model="claude-opus-4-6",
+            executor_model="claude-sonnet-4-6",
             db_path=temp_db
         )
 
         session = db.get_session(session_id, temp_db)
 
         assert session is not None
-        assert session["planner_model"] == "claude-opus-4-5-20251101"
-        assert session["executor_model"] == "claude-sonnet-4-5-20250929"
+        assert session["planner_model"] == "claude-opus-4-6"
+        assert session["executor_model"] == "claude-sonnet-4-6"
 
     def test_create_session_without_models(self, temp_db):
         """Test creating a session without model parameters."""

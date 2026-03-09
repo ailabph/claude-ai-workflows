@@ -39,7 +39,7 @@ PLAYWRIGHT_MCP_TOOLS = [
 DEFAULT_ARTIFACT_DIR = Path(".orchestrator_artifacts/playwright-test")
 
 # Default model for test agents
-DEFAULT_TEST_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_TEST_MODEL = "claude-sonnet-4-6"
 
 
 def _generate_verification_prompt(test_url: str, role: str) -> str:

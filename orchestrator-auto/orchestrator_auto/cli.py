@@ -2984,9 +2984,28 @@ def check(verbose: bool, mcp_config: Optional[str]):
     click.echo()
 
     # -------------------------------------------------------------------------
-    # 5. MCP Process Detection
+    # 5. Default Models
     # -------------------------------------------------------------------------
-    click.secho("5. MCP Processes", bold=True)
+    click.secho("5. Default Models", bold=True)
+
+    from .config import DEFAULT_PLANNER_MODEL, DEFAULT_EXECUTOR_MODEL, MODEL_ALIASES
+
+    planner_alias = next((k for k, v in MODEL_ALIASES.items() if v == DEFAULT_PLANNER_MODEL), None)
+    executor_alias = next((k for k, v in MODEL_ALIASES.items() if v == DEFAULT_EXECUTOR_MODEL), None)
+
+    planner_label = f"{planner_alias} ({DEFAULT_PLANNER_MODEL})" if planner_alias else DEFAULT_PLANNER_MODEL
+    executor_label = f"{executor_alias} ({DEFAULT_EXECUTOR_MODEL})" if executor_alias else DEFAULT_EXECUTOR_MODEL
+
+    click.echo(f"   {click.style('●', fg='cyan')} Planner  (-pm): {planner_label}")
+    click.echo(f"   {click.style('●', fg='cyan')} Executor (-em): {executor_label}")
+    click.echo(f"      Override with -pm / -em flags or config file")
+
+    click.echo()
+
+    # -------------------------------------------------------------------------
+    # 6. MCP Process Detection
+    # -------------------------------------------------------------------------
+    click.secho("6. MCP Processes", bold=True)
 
     mcp_processes, mcp_error = _detect_mcp_processes()
     if mcp_error == "windows":
@@ -3010,7 +3029,7 @@ def check(verbose: bool, mcp_config: Optional[str]):
     # 6. MCP Server Status (SDK 0.1.23+)
     # -------------------------------------------------------------------------
     if mcp_config:
-        click.secho("6. MCP Server Status", bold=True)
+        click.secho("7. MCP Server Status", bold=True)
 
         try:
             import asyncio

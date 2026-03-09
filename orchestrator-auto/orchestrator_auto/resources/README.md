@@ -639,8 +639,8 @@ orchestrator check
 
 | Alias | Model ID |
 |-------|----------|
-| `opus` | `claude-opus-4-5-20251101` |
-| `sonnet` | `claude-sonnet-4-5-20250929` |
+| `opus` | `claude-opus-4-6` |
+| `sonnet` | `claude-sonnet-4-6` |
 | `haiku` | `claude-3-5-haiku-20241022` |
 
 **Defaults:** Planner = Opus, Executor = Sonnet

@@ -304,7 +304,7 @@ class TestDefaults:
 
     def test_default_model(self):
         """Test default model is Sonnet."""
-        assert DEFAULT_MODEL == "claude-sonnet-4-5-20250929"
+        assert DEFAULT_MODEL == "claude-sonnet-4-6"
 
     def test_default_timeout(self):
         """Test default timeout is 30 seconds."""

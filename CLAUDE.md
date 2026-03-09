@@ -211,7 +211,7 @@ Each milestone is **atomic**: the executor doesn't move forward until you explic
 
 CLI flags > env vars > repo config (`<repo>/.claude_orchestrator/config.yaml`) > global config (`~/.claude_orchestrator/config.yaml`) > defaults
 
-**Model aliases:** `opus` → claude-opus-4-5-20251101, `sonnet` → claude-sonnet-4-5-20250929, `haiku` → claude-3-5-haiku-20241022
+**Model aliases:** `opus` → claude-opus-4-6, `sonnet` → claude-sonnet-4-6, `haiku` → claude-3-5-haiku-20241022
 
 ## Best Practices & Patterns
 
