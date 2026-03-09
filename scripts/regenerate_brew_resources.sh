@@ -16,8 +16,7 @@
 #       must track
 #
 # USAGE
-#   ./scripts/regenerate_brew_resources.sh              # uses version from pyproject.toml
-#   ./scripts/regenerate_brew_resources.sh 1.9.2        # explicit version
+#   ./scripts/regenerate_brew_resources.sh        # installs from local source
 #
 # OUTPUT
 #   Prints all resource stanzas to stdout. Redirect or copy-paste them into
@@ -35,27 +34,23 @@
 #
 # REQUIREMENTS
 #   • Python 3.10+ on PATH
-#   • Internet access (installs packages from PyPI)
-#   • homebrew-pypi-poet is installed in the temp venv (no system dep needed)
+#   • Internet access (to resolve transitive deps from PyPI)
+#   • No need to publish to PyPI first — installs from local source
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYPROJECT="$REPO_ROOT/orchestrator-auto/pyproject.toml"
+PKG_DIR="$REPO_ROOT/orchestrator-auto"
+PYPROJECT="$PKG_DIR/pyproject.toml"
 
-# ── Resolve version ────────────────────────────────────────────────────────────
+# ── Resolve version (display only — not used for install) ─────────────────────
 
-if [[ "${1:-}" != "" ]]; then
-    VERSION="$1"
-    echo "==> Using explicit version: $VERSION" >&2
-else
-    VERSION=$(grep '^version = ' "$PYPROJECT" | sed 's/^version = "\(.*\)"$/\1/')
-    if [[ -z "$VERSION" ]]; then
-        echo "Error: could not parse version from $PYPROJECT" >&2
-        exit 1
-    fi
-    echo "==> Detected version from pyproject.toml: $VERSION" >&2
+VERSION=$(grep '^version = ' "$PYPROJECT" | sed 's/^version = "\(.*\)"$/\1/')
+if [[ -z "$VERSION" ]]; then
+    echo "Error: could not parse version from $PYPROJECT" >&2
+    exit 1
 fi
+echo "==> Package version: $VERSION" >&2
 
 # ── Create isolated venv ───────────────────────────────────────────────────────
 
@@ -65,9 +60,13 @@ python3 -m venv "$VENV_DIR"
 # shellcheck source=/dev/null
 source "$VENV_DIR/bin/activate"
 
-echo "==> Installing homebrew-pypi-poet and orchestrator-auto[tui]==${VERSION} from PyPI..." >&2
+# Install from local source so this works before publishing to PyPI.
+# Transitive deps are still resolved from PyPI — only the top-level package
+# itself comes from the local checkout.
+echo "==> Installing homebrew-pypi-poet and orchestrator-auto[tui] from local source..." >&2
 pip install -q --upgrade pip
-pip install -q homebrew-pypi-poet "orchestrator-auto[tui]==${VERSION}"
+pip install -q homebrew-pypi-poet
+pip install -q "$PKG_DIR[tui]"
 
 # ── Run poet ───────────────────────────────────────────────────────────────────
 

@@ -61,7 +61,7 @@ Use this path when no deps or extras have changed since the last resource regene
 
 Use this path when `[project.dependencies]`, `[project.optional-dependencies]`, or any transitive dep has changed since the formula's resource blocks were last regenerated.
 
-1. Run `scripts/regenerate_brew_resources.sh` (reads version from `pyproject.toml`, or pass an explicit version)
+1. Run `scripts/regenerate_brew_resources.sh` (installs from local source — run this **before** publishing to PyPI)
 2. Copy the printed resource stanzas into `Formula/orchestrator-auto.rb` in `ailabph/homebrew-orchestrator-auto`, replacing all existing resource blocks
 3. Commit and push to the tap:
    ```bash
