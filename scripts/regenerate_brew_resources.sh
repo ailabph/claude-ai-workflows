@@ -24,12 +24,13 @@
 #   replacing the existing resource blocks, then commit and push.
 #
 # WORKFLOW (when deps changed)
-#   1. Run this script → copy resource stanzas
-#   2. In ailabph/homebrew-orchestrator-auto:
+#   1. Bump version in orchestrator-auto/pyproject.toml
+#   2. Run this script → copy resource stanzas
+#   3. In ailabph/homebrew-orchestrator-auto:
 #        edit Formula/orchestrator-auto.rb → replace resource blocks
 #        git commit -m "orchestrator-auto <version> — regenerate resources"
 #        git push
-#   3. Then bump version in orchestrator-auto/pyproject.toml and push to main
+#   4. Push version bump to main in this repo
 #      (the automated pipeline handles url + sha256 from there)
 #
 # REQUIREMENTS
