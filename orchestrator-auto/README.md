@@ -10,10 +10,27 @@ A planner (Claude Opus) breaks your feature request into milestones. An executor
 
 ### 1. Install & Verify
 
+**Via Homebrew (recommended for end users):**
+```bash
+brew tap ailabph/orchestrator-auto
+brew install orchestrator-auto
+```
+
+**Via pip:**
+```bash
+pip install orchestrator-auto        # Base install
+pip install "orchestrator-auto[tui]" # With TUI support
+```
+
+**From source (development):**
 ```bash
 cd orchestrator-auto
 conda env create -f environment.yml && conda activate orchestrator-auto
-pip install -e .
+pip install -e ".[tui]"
+```
+
+Then set up auth and verify:
+```bash
 export ANTHROPIC_API_KEY="sk-ant-api03-your-key"  # Or use Claude Pro OAuth token
 orchestrator check  # Verify everything works
 ```
@@ -624,6 +641,28 @@ Communication protocol between agents and orchestrator.
 
 ## Installation
 
+### Homebrew (recommended)
+
+```bash
+brew tap ailabph/orchestrator-auto
+brew install orchestrator-auto
+```
+
+Upgrade to the latest version:
+```bash
+brew upgrade orchestrator-auto
+```
+
+### pip
+
+```bash
+pip install orchestrator-auto           # Base install
+pip install "orchestrator-auto[tui]"    # With TUI support
+pip install "orchestrator-auto[telegram]" # With Telegram support
+```
+
+### From source (development)
+
 ```bash
 # 1. Navigate to directory
 cd orchestrator-auto
@@ -635,9 +674,11 @@ conda activate orchestrator-auto
 # 3. Install
 pip install -e .              # Base install
 pip install -e ".[tui]"       # With TUI support (optional)
+```
 
-# 4. Configure authentication (choose one)
+### Authentication (all install methods)
 
+```bash
 # Option A: Claude Pro/Max subscription (recommended)
 claude login
 claude setup-token
@@ -646,7 +687,7 @@ export CLAUDE_CODE_OAUTH_TOKEN="sk-ant-oat01-your-token"
 # Option B: API key (pay-as-you-go)
 export ANTHROPIC_API_KEY="sk-ant-api03-your-key"
 
-# 5. Verify installation and auth
+# Verify installation and auth
 orchestrator check
 ```
 
