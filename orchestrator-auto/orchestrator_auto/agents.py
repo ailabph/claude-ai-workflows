@@ -171,7 +171,7 @@ class BaseAgent:
             effort: Effort level ("low", "medium", "high", "max")
             thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
             on_notification: Optional callback for SDK notification events
-            on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
+            on_live_tokens: Optional callback for per-turn token usage snapshots (SDK 0.1.49+). Values are per-turn, not deltas — do not accumulate.
         """
         # Build system prompt with CLAUDE.md if enabled
         effective_cwd = cwd or Path.cwd()
@@ -214,7 +214,8 @@ class BaseAgent:
         self._notifications: List[Dict[str, Any]] = []
         self.on_notification = on_notification
 
-        # Live token delta callback (SDK 0.1.49+)
+        # Live token usage snapshot callback (SDK 0.1.49+)
+        # Per-turn values from AssistantMessage, not deltas — do not accumulate
         self.on_live_tokens = on_live_tokens
 
         # Tool event callback (PostToolUse success hook, SDK 0.1.29+)
@@ -383,20 +384,25 @@ class BaseAgent:
             elif RateLimitEvent is not None and isinstance(message, RateLimitEvent):
                 # Typed rate limit handling (SDK 0.1.49+)
                 logger.warning(f"Rate limited: {message}")
+                notification = {
+                    "type": "rate_limit",
+                    "message": str(message),
+                    "timestamp": time.time(),
+                }
+                self._notifications.append(notification)
                 if self.on_notification:
-                    self.on_notification({
-                        "type": "rate_limit",
-                        "message": str(message),
-                        "timestamp": time.time(),
-                    })
+                    self.on_notification(notification)
             elif isinstance(message, AssistantMessage):
-                # Emit live token delta (SDK 0.1.49+)
+                # Emit live token usage snapshot (SDK 0.1.49+)
+                # These are per-turn values from AssistantMessage, NOT deltas.
+                # Do not accumulate — use for transient display only.
+                # Final totals come from on_token_usage (ResultMessage).
                 if self.on_live_tokens and hasattr(message, 'usage') and message.usage:
                     self.on_live_tokens({
                         "input_tokens": message.usage.get("input_tokens", 0),
                         "output_tokens": message.usage.get("output_tokens", 0),
                         "thinking_tokens": message.usage.get("thinking_tokens", 0),
-                        "is_delta": True,
+                        "is_live": True,
                     })
                 for block in message.content:
                     if isinstance(block, TextBlock):
@@ -772,7 +778,7 @@ def create_planner_agent(
         on_token_usage: Optional callback for token usage reporting
         effort: Effort level ("low", "medium", "high", "max")
         thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
-        on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
+        on_live_tokens: Optional callback for per-turn token usage snapshots (SDK 0.1.49+). Values are per-turn, not deltas — do not accumulate.
 
     Returns:
         PlannerAgent instance
@@ -825,7 +831,7 @@ def create_executor_agent(
         on_token_usage: Optional callback for token usage reporting
         effort: Effort level ("low", "medium", "high", "max")
         thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
-        on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
+        on_live_tokens: Optional callback for per-turn token usage snapshots (SDK 0.1.49+). Values are per-turn, not deltas — do not accumulate.
 
     Returns:
         ExecutorAgent instance

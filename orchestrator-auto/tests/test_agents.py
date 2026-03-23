@@ -1078,6 +1078,48 @@ class TestRateLimitEvent:
         finally:
             agents_module.RateLimitEvent = original_rate_limit
 
+    @pytest.mark.asyncio
+    async def test_rate_limit_event_appends_to_notifications(self):
+        """RateLimitEvent should append to _notifications for get_notifications()."""
+        agent = BaseAgent(
+            system_prompt="Test",
+            on_notification=Mock(),
+        )
+
+        class FakeRateLimitEvent:
+            def __str__(self):
+                return "Rate limited — retry after 30s"
+
+        fake_event = FakeRateLimitEvent()
+
+        mock_result = MagicMock()
+        mock_result.stop_reason = "end_turn"
+        mock_result.usage = None
+
+        messages = [fake_event, mock_result]
+
+        import orchestrator_auto.agents as agents_module
+        original_rate_limit = agents_module.RateLimitEvent
+
+        try:
+            agents_module.RateLimitEvent = FakeRateLimitEvent
+
+            mock_client = AsyncMock()
+            mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+            mock_client.query = AsyncMock()
+
+            with patch.object(agent, '_get_client', return_value=mock_client):
+                await agent.send_message_async("test")
+
+            # Verify it's in _notifications (accessible via get_notifications)
+            notifications = agent.get_notifications()
+            assert len(notifications) == 1
+            assert notifications[0]["type"] == "rate_limit"
+            assert "Rate limited" in notifications[0]["message"]
+            assert "timestamp" in notifications[0]
+        finally:
+            agents_module.RateLimitEvent = original_rate_limit
+
 
 # ============================================================================
 # Factory Functions with New Parameters Tests (SDK 0.1.46+)
@@ -1198,13 +1240,13 @@ class TestLiveTokenDelta:
         assert first_call["input_tokens"] == 100
         assert first_call["output_tokens"] == 50
         assert first_call["thinking_tokens"] == 10
-        assert first_call["is_delta"] is True
+        assert first_call["is_live"] is True
 
         # Second call
         second_call = callback.call_args_list[1][0][0]
         assert second_call["input_tokens"] == 200
         assert second_call["output_tokens"] == 80
-        assert second_call["is_delta"] is True
+        assert second_call["is_live"] is True
 
     @pytest.mark.asyncio
     async def test_on_token_usage_fires_once_per_result_message(self):
@@ -1349,5 +1391,5 @@ class TestLiveTokenDelta:
         assert callback.call_count == 1
         delta = callback.call_args[0][0]
         assert "cost_usd" not in delta
-        assert "is_delta" in delta
-        assert delta["is_delta"] is True
+        assert "is_live" in delta
+        assert delta["is_live"] is True

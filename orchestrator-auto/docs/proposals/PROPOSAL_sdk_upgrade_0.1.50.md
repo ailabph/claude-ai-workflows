@@ -432,7 +432,7 @@ class BaseAgent:
                         "input_tokens": message.usage.get("input_tokens", 0),
                         "output_tokens": message.usage.get("output_tokens", 0),
                         "thinking_tokens": message.usage.get("thinking_tokens", 0),
-                        "is_delta": True,  # Signal: this is NOT a final total
+                        "is_live": True,  # Signal: per-turn snapshot, NOT a delta — do not accumulate
                     })
                 ...existing text extraction...
             elif isinstance(message, ResultMessage):
@@ -441,7 +441,7 @@ class BaseAgent:
 
 **Consumer contract:**
 - `on_token_usage` (existing): fires once per `ResultMessage`. Contains `cost_usd`, final totals. Consumers increment API call counts.
-- `on_live_tokens` (new): fires per `AssistantMessage` during streaming. Contains deltas only, no `cost_usd`. Consumers update progress display only — never increment API call counts or cumulative totals.
+- `on_live_tokens` (new): fires per `AssistantMessage` during streaming. Contains per-turn usage snapshots (not deltas — do not accumulate), no `cost_usd`. Consumers update transient progress display only — never increment API call counts or cumulative totals.
 
 **TUI guardrail:** Any TUI wiring of `on_live_tokens` MUST use a transient/live-only display method. It MUST NOT call:
 - `StatsPanel.add_tokens()` (`tui/widgets/stats_panel.py:150`) — this increments `self._api_calls += 1`
