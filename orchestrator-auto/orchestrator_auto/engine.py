@@ -84,6 +84,7 @@ class Orchestrator:
         planner_effort: Optional[str] = None,
         executor_effort: Optional[str] = None,
         thinking: Optional[str] = None,
+        on_live_tokens: Optional[Callable[[str, Dict[str, Any]], None]] = None,
     ):
         """
         Initialize orchestrator.
@@ -112,12 +113,14 @@ class Orchestrator:
             planner_effort: Effort level for planner ("low", "medium", "high", "max")
             executor_effort: Effort level for executor ("low", "medium", "high", "max")
             thinking: Thinking config ("adaptive", "disabled", or integer string for budget_tokens)
+            on_live_tokens: Optional callback for live token deltas (agent_name, delta_dict)
         """
         self.db_path = db_path
         self.on_output = on_output or print
         self.on_chunk = on_chunk
         self.on_state_change = on_state_change
         self.on_token_usage = on_token_usage
+        self.on_live_tokens = on_live_tokens
         self.input_provider = input_provider or CLIInputProvider()
         self.show_activity = show_activity
         self.state_machine = StateMachine(db_path=db_path)
@@ -394,6 +397,10 @@ class Orchestrator:
             if self.on_token_usage:
                 kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("planner", usage_dict)
 
+            # Add live token delta callback (SDK 0.1.49+)
+            if self.on_live_tokens:
+                kwargs["on_live_tokens"] = lambda delta_dict: self.on_live_tokens("planner", delta_dict)
+
             # Add effort and thinking (SDK 0.1.46+)
             if self.planner_effort:
                 kwargs["effort"] = self.planner_effort
@@ -429,6 +436,10 @@ class Orchestrator:
             # Add token usage callback
             if self.on_token_usage:
                 kwargs["on_token_usage"] = lambda usage_dict: self.on_token_usage("executor", usage_dict)
+
+            # Add live token delta callback (SDK 0.1.49+)
+            if self.on_live_tokens:
+                kwargs["on_live_tokens"] = lambda delta_dict: self.on_live_tokens("executor", delta_dict)
 
             # Add effort and thinking (SDK 0.1.46+)
             if self.executor_effort:

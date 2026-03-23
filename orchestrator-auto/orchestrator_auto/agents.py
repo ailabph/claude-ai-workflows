@@ -23,6 +23,12 @@ from claude_agent_sdk.types import (
     HookMatcher,
 )
 
+# RateLimitEvent added in SDK 0.1.49 — graceful fallback for older versions
+try:
+    from claude_agent_sdk import RateLimitEvent
+except ImportError:
+    RateLimitEvent = None  # type: ignore[misc,assignment]
+
 from .prompts import PLANNER_SYSTEM_PROMPT, EXECUTOR_SYSTEM_PROMPT, DEFAULT_CHAT_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -147,6 +153,7 @@ class BaseAgent:
         effort: Optional[str] = None,
         thinking: Optional[Union[str, int]] = None,
         on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
+        on_live_tokens: Optional[Callable[[Dict[str, Any]], None]] = None,
     ):
         """
         Initialize the agent.
@@ -164,6 +171,7 @@ class BaseAgent:
             effort: Effort level ("low", "medium", "high", "max")
             thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
             on_notification: Optional callback for SDK notification events
+            on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
         """
         # Build system prompt with CLAUDE.md if enabled
         effective_cwd = cwd or Path.cwd()
@@ -205,6 +213,9 @@ class BaseAgent:
         # Notification tracking (SDK 0.1.29+)
         self._notifications: List[Dict[str, Any]] = []
         self.on_notification = on_notification
+
+        # Live token delta callback (SDK 0.1.49+)
+        self.on_live_tokens = on_live_tokens
 
         # Tool event callback (PostToolUse success hook, SDK 0.1.29+)
         self.on_tool_event: Optional[Callable[[str, Dict[str, Any], Any], None]] = None
@@ -369,7 +380,24 @@ class BaseAgent:
                 # Capture tool results (SDK 0.1.22+)
                 if hasattr(message, 'tool_use_result') and message.tool_use_result:
                     self._tool_invocations.append(message.tool_use_result)
+            elif RateLimitEvent is not None and isinstance(message, RateLimitEvent):
+                # Typed rate limit handling (SDK 0.1.49+)
+                logger.warning(f"Rate limited: {message}")
+                if self.on_notification:
+                    self.on_notification({
+                        "type": "rate_limit",
+                        "message": str(message),
+                        "timestamp": time.time(),
+                    })
             elif isinstance(message, AssistantMessage):
+                # Emit live token delta (SDK 0.1.49+)
+                if self.on_live_tokens and hasattr(message, 'usage') and message.usage:
+                    self.on_live_tokens({
+                        "input_tokens": message.usage.get("input_tokens", 0),
+                        "output_tokens": message.usage.get("output_tokens", 0),
+                        "thinking_tokens": message.usage.get("thinking_tokens", 0),
+                        "is_delta": True,
+                    })
                 for block in message.content:
                     if isinstance(block, TextBlock):
                         response_text += block.text
@@ -729,6 +757,7 @@ def create_planner_agent(
     on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
     effort: Optional[str] = None,
     thinking: Optional[Union[str, int]] = None,
+    on_live_tokens: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> PlannerAgent:
     """
     Factory function to create a Planner agent.
@@ -743,6 +772,7 @@ def create_planner_agent(
         on_token_usage: Optional callback for token usage reporting
         effort: Effort level ("low", "medium", "high", "max")
         thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
+        on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
 
     Returns:
         PlannerAgent instance
@@ -764,6 +794,8 @@ def create_planner_agent(
         kwargs["effort"] = effort
     if thinking is not None:
         kwargs["thinking"] = thinking
+    if on_live_tokens:
+        kwargs["on_live_tokens"] = on_live_tokens
 
     return PlannerAgent(**kwargs)
 
@@ -778,6 +810,7 @@ def create_executor_agent(
     on_token_usage: Optional[Callable[[Dict[str, Any]], None]] = None,
     effort: Optional[str] = None,
     thinking: Optional[Union[str, int]] = None,
+    on_live_tokens: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> ExecutorAgent:
     """
     Factory function to create an Executor agent.
@@ -792,6 +825,7 @@ def create_executor_agent(
         on_token_usage: Optional callback for token usage reporting
         effort: Effort level ("low", "medium", "high", "max")
         thinking: Thinking config ("adaptive", "disabled", or int for budget_tokens)
+        on_live_tokens: Optional callback for live token deltas (SDK 0.1.49+)
 
     Returns:
         ExecutorAgent instance
@@ -813,6 +847,8 @@ def create_executor_agent(
         kwargs["effort"] = effort
     if thinking is not None:
         kwargs["thinking"] = thinking
+    if on_live_tokens:
+        kwargs["on_live_tokens"] = on_live_tokens
 
     return ExecutorAgent(**kwargs)
 
@@ -826,6 +862,7 @@ def create_planner_chat_agent(
     on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
     on_tool_event: Optional[Callable[[str, Dict[str, Any], Any], None]] = None,
     cwd: Optional[Path] = None,
+    on_live_tokens: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> BaseAgent:
     """
     Create a freeform chat agent using the planner-chat prompt.
@@ -859,6 +896,7 @@ def create_planner_chat_agent(
         session_id=session_id,
         on_token_usage=on_token_usage,
         on_notification=on_notification,
+        on_live_tokens=on_live_tokens,
         cwd=cwd,
     )
     agent.on_tool_event = on_tool_event

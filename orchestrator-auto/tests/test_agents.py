@@ -956,6 +956,130 @@ class TestNotificationHook:
 
 
 # ============================================================================
+# RateLimitEvent Handling Tests (SDK 0.1.49+)
+# ============================================================================
+
+
+class TestRateLimitEvent:
+    """Test RateLimitEvent handling in the message loop."""
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_event_is_logged(self):
+        """RateLimitEvent messages should be logged as warnings."""
+        agent = BaseAgent(system_prompt="Test")
+
+        # Create a fake RateLimitEvent class for testing (SDK may not have it yet)
+        class FakeRateLimitEvent:
+            def __str__(self):
+                return "Rate limit exceeded, retry after 30s"
+
+        fake_event = FakeRateLimitEvent()
+
+        # Mock the message loop to yield a RateLimitEvent then a ResultMessage
+        mock_result = MagicMock()
+        mock_result.stop_reason = "end_turn"
+        mock_result.usage = None
+
+        messages = [fake_event, mock_result]
+
+        # Patch RateLimitEvent in agents module so isinstance check works
+        import orchestrator_auto.agents as agents_module
+        original_rate_limit = agents_module.RateLimitEvent
+
+        try:
+            agents_module.RateLimitEvent = FakeRateLimitEvent
+
+            mock_client = AsyncMock()
+            mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+            mock_client.query = AsyncMock()
+
+            with patch.object(agent, '_get_client', return_value=mock_client):
+                with patch('orchestrator_auto.agents.logger') as mock_logger:
+                    await agent.send_message_async("test")
+                    mock_logger.warning.assert_any_call(
+                        "Rate limited: Rate limit exceeded, retry after 30s"
+                    )
+        finally:
+            agents_module.RateLimitEvent = original_rate_limit
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_event_forwarded_to_notification_callback(self):
+        """RateLimitEvent messages should be forwarded to on_notification callback."""
+        callback = Mock()
+        agent = BaseAgent(system_prompt="Test", on_notification=callback)
+
+        # Create a fake RateLimitEvent class
+        class FakeRateLimitEvent:
+            def __str__(self):
+                return "Rate limit exceeded, retry after 30s"
+
+        fake_event = FakeRateLimitEvent()
+
+        # Mock ResultMessage to end the loop
+        mock_result = MagicMock()
+        mock_result.stop_reason = "end_turn"
+        mock_result.usage = None
+
+        messages = [fake_event, mock_result]
+
+        import orchestrator_auto.agents as agents_module
+        original_rate_limit = agents_module.RateLimitEvent
+
+        try:
+            agents_module.RateLimitEvent = FakeRateLimitEvent
+
+            mock_client = AsyncMock()
+            mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+            mock_client.query = AsyncMock()
+
+            with patch.object(agent, '_get_client', return_value=mock_client):
+                await agent.send_message_async("test")
+
+            # Verify callback was called with rate_limit type
+            callback.assert_called_once()
+            call_arg = callback.call_args[0][0]
+            assert call_arg["type"] == "rate_limit"
+            assert "Rate limit exceeded" in call_arg["message"]
+            assert "timestamp" in call_arg
+        finally:
+            agents_module.RateLimitEvent = original_rate_limit
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_event_no_callback_no_error(self):
+        """RateLimitEvent should not error when no on_notification callback is set."""
+        agent = BaseAgent(system_prompt="Test")  # No on_notification
+
+        class FakeRateLimitEvent:
+            def __str__(self):
+                return "Rate limited"
+
+        fake_event = FakeRateLimitEvent()
+
+        mock_result = MagicMock()
+        mock_result.stop_reason = "end_turn"
+        mock_result.usage = None
+
+        messages = [fake_event, mock_result]
+
+        import orchestrator_auto.agents as agents_module
+        original_rate_limit = agents_module.RateLimitEvent
+
+        try:
+            agents_module.RateLimitEvent = FakeRateLimitEvent
+
+            mock_client = AsyncMock()
+            mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+            mock_client.query = AsyncMock()
+
+            with patch.object(agent, '_get_client', return_value=mock_client):
+                # Should not raise
+                result = await agent.send_message_async("test")
+                assert isinstance(result, str)
+        finally:
+            agents_module.RateLimitEvent = original_rate_limit
+
+
+# ============================================================================
 # Factory Functions with New Parameters Tests (SDK 0.1.46+)
 # ============================================================================
 
@@ -1004,3 +1128,226 @@ class TestFactoryFunctionsNewParams:
         agent = create_executor_agent(effort="medium", thinking="disabled")
         assert agent.effort == "medium"
         assert agent.thinking == "disabled"
+
+
+# ============================================================================
+# Live Token Delta Tests (SDK 0.1.49+)
+# ============================================================================
+
+
+class TestLiveTokenDelta:
+    """Test on_live_tokens callback for delta-style live token usage."""
+
+    @pytest.mark.asyncio
+    async def test_on_live_tokens_fires_per_assistant_message(self):
+        """on_live_tokens should fire for each AssistantMessage with usage."""
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+        callback = Mock()
+        agent = BaseAgent(system_prompt="Test", on_live_tokens=callback)
+
+        # Create AssistantMessage with usage (simulating SDK 0.1.49+)
+        assistant_msg = AssistantMessage(
+            content=[TextBlock(text="Hello")],
+            model="claude-sonnet-4-6",
+        )
+        # Attach usage attribute (SDK 0.1.49+ adds this)
+        assistant_msg.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "thinking_tokens": 10,
+        }
+
+        # Create a second AssistantMessage with usage
+        assistant_msg2 = AssistantMessage(
+            content=[TextBlock(text=" world")],
+            model="claude-sonnet-4-6",
+        )
+        assistant_msg2.usage = {
+            "input_tokens": 200,
+            "output_tokens": 80,
+            "thinking_tokens": 0,
+        }
+
+        # ResultMessage to end the loop
+        result_msg = ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=800,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            stop_reason="end_turn",
+            usage=None,
+        )
+
+        messages = [assistant_msg, assistant_msg2, result_msg]
+
+        mock_client = AsyncMock()
+        mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+        mock_client.query = AsyncMock()
+
+        with patch.object(agent, '_get_client', return_value=mock_client):
+            await agent.send_message_async("test")
+
+        # on_live_tokens should have been called twice (once per AssistantMessage)
+        assert callback.call_count == 2
+
+        # First call
+        first_call = callback.call_args_list[0][0][0]
+        assert first_call["input_tokens"] == 100
+        assert first_call["output_tokens"] == 50
+        assert first_call["thinking_tokens"] == 10
+        assert first_call["is_delta"] is True
+
+        # Second call
+        second_call = callback.call_args_list[1][0][0]
+        assert second_call["input_tokens"] == 200
+        assert second_call["output_tokens"] == 80
+        assert second_call["is_delta"] is True
+
+    @pytest.mark.asyncio
+    async def test_on_token_usage_fires_once_per_result_message(self):
+        """on_token_usage should fire only on ResultMessage, not on AssistantMessage."""
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+        token_callback = Mock()
+        live_callback = Mock()
+        agent = BaseAgent(
+            system_prompt="Test",
+            on_token_usage=token_callback,
+            on_live_tokens=live_callback,
+        )
+
+        # AssistantMessage with usage
+        assistant_msg = AssistantMessage(
+            content=[TextBlock(text="Hello")],
+            model="claude-sonnet-4-6",
+        )
+        assistant_msg.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "thinking_tokens": 10,
+        }
+
+        # ResultMessage with final usage
+        result_msg = ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=800,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            stop_reason="end_turn",
+            total_cost_usd=0.005,
+            usage={
+                "input_tokens": 500,
+                "output_tokens": 200,
+                "cache_creation_input_tokens": 0,
+                "cache_read_input_tokens": 0,
+                "thinking_tokens": 10,
+            },
+        )
+
+        messages = [assistant_msg, result_msg]
+
+        mock_client = AsyncMock()
+        mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+        mock_client.query = AsyncMock()
+
+        with patch.object(agent, '_get_client', return_value=mock_client):
+            await agent.send_message_async("test")
+
+        # on_token_usage fires exactly once (on ResultMessage)
+        assert token_callback.call_count == 1
+        token_data = token_callback.call_args[0][0]
+        assert token_data["input_tokens"] == 500
+        assert token_data["cost_usd"] == 0.005
+
+        # on_live_tokens fires exactly once (on AssistantMessage)
+        assert live_callback.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_on_live_tokens_not_called_when_none(self):
+        """No error should occur when on_live_tokens is None."""
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+        agent = BaseAgent(system_prompt="Test")  # on_live_tokens defaults to None
+        assert agent.on_live_tokens is None
+
+        # AssistantMessage with usage
+        assistant_msg = AssistantMessage(
+            content=[TextBlock(text="Hello")],
+            model="claude-sonnet-4-6",
+        )
+        assistant_msg.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "thinking_tokens": 0,
+        }
+
+        result_msg = ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=800,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            stop_reason="end_turn",
+            usage=None,
+        )
+
+        messages = [assistant_msg, result_msg]
+
+        mock_client = AsyncMock()
+        mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+        mock_client.query = AsyncMock()
+
+        with patch.object(agent, '_get_client', return_value=mock_client):
+            # Should not raise any exception
+            result = await agent.send_message_async("test")
+            assert result == "Hello"
+
+    @pytest.mark.asyncio
+    async def test_on_live_tokens_does_not_include_cost(self):
+        """The delta payload should NOT contain cost_usd."""
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+        callback = Mock()
+        agent = BaseAgent(system_prompt="Test", on_live_tokens=callback)
+
+        assistant_msg = AssistantMessage(
+            content=[TextBlock(text="Hello")],
+            model="claude-sonnet-4-6",
+        )
+        assistant_msg.usage = {
+            "input_tokens": 100,
+            "output_tokens": 50,
+            "thinking_tokens": 0,
+        }
+
+        result_msg = ResultMessage(
+            subtype="success",
+            duration_ms=1000,
+            duration_api_ms=800,
+            is_error=False,
+            num_turns=1,
+            session_id="test",
+            stop_reason="end_turn",
+            usage=None,
+        )
+
+        messages = [assistant_msg, result_msg]
+
+        mock_client = AsyncMock()
+        mock_client.receive_messages = Mock(return_value=AsyncIteratorMock(messages))
+        mock_client.query = AsyncMock()
+
+        with patch.object(agent, '_get_client', return_value=mock_client):
+            await agent.send_message_async("test")
+
+        assert callback.call_count == 1
+        delta = callback.call_args[0][0]
+        assert "cost_usd" not in delta
+        assert "is_delta" in delta
+        assert delta["is_delta"] is True

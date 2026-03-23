@@ -809,7 +809,7 @@ pytest tests/ --cov=orchestrator_auto
 
 | Package | Required Version | Purpose |
 |---------|------------------|---------|
-| `claude-agent-sdk` | ≥0.1.46 | Claude Code Python SDK |
+| `claude-agent-sdk` | ≥0.1.50 | Claude Code Python SDK |
 | `click` | ≥8.0 | CLI framework |
 | `prompt_toolkit` | ≥3.0 | Multi-line input handling |
 | `pyyaml` | ≥6.0 | Configuration files |
@@ -879,7 +879,8 @@ my_subagent = AgentDefinition(
 
 | SDK Version | Status | Key Features |
 |-------------|--------|--------------|
-| 0.1.46 | Current minimum | All features below included |
+| 0.1.50 | Current minimum | All features below included |
+| 0.1.50 | - | `max_tool_use_output_tokens`, `prompt_caching` config, improved streaming |
 | 0.1.46 | - | `effort` field, `ThinkingConfig` types, `ResultMessage.stop_reason` |
 | 0.1.40 | - | Forward-compatible message parsing |
 | 0.1.23 | - | `get_mcp_status()` for MCP health checks |
@@ -892,7 +893,7 @@ my_subagent = AgentDefinition(
 ## Related
 
 - [CLAUDE_orchestrator.md](../CLAUDE_orchestrator.md) - Framework docs
-- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.46+)
+- [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) - SDK docs (current: v0.1.50+)
 - [Subagents in the SDK](https://platform.claude.com/docs/en/agent-sdk/subagents) - Official sub-agent documentation
 
 ## Future Planned Features

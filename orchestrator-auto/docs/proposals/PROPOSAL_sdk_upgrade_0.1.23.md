@@ -1,3 +1,5 @@
+> **Status:** Superseded by PROPOSAL_sdk_upgrade_0.1.50.md
+
 # Proposal: Upgrade to Claude Agent SDK 0.1.23
 
 **Author:** Claude
