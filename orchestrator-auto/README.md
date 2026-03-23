@@ -880,7 +880,7 @@ my_subagent = AgentDefinition(
 | SDK Version | Status | Key Features |
 |-------------|--------|--------------|
 | 0.1.50 | Current minimum | All features below included |
-| 0.1.50 | - | `max_tool_use_output_tokens`, `prompt_caching` config, improved streaming |
+| 0.1.50 | - | `get_session_info()`, `tag_session()`, `rename_session()`, typed `RateLimitEvent`, per-turn `AssistantMessage.usage` |
 | 0.1.46 | - | `effort` field, `ThinkingConfig` types, `ResultMessage.stop_reason` |
 | 0.1.40 | - | Forward-compatible message parsing |
 | 0.1.23 | - | `get_mcp_status()` for MCP health checks |

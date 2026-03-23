@@ -5,6 +5,20 @@ All notable changes to orchestrator-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-03-23
+
+### Changed
+
+- **SDK minimum version bumped to `>=0.1.50`** — from `>=0.1.46`. Gets fine-grained tool streaming fix (v0.1.48/v0.1.49), bundled CLI v2.1.81, and new typed message/session APIs.
+
+### Added
+
+- **Typed `RateLimitEvent` handling** — `BaseAgent.send_message_async()` now handles `RateLimitEvent` messages (SDK 0.1.49+) as a distinct isinstance branch. Events are logged, appended to `_notifications` (accessible via `get_notifications()`), and forwarded to the `on_notification` callback. Import uses try/except fallback for SDK compatibility.
+- **`on_live_tokens` callback** — New optional callback on `BaseAgent` for per-turn token usage snapshots from `AssistantMessage.usage` (SDK 0.1.49+). Completely separate from the existing `on_token_usage` path — `ResultMessage` remains the sole source of truth for final totals, cost, and API call counts. Payload includes `input_tokens`, `output_tokens`, `thinking_tokens`, and `is_live: True` flag. Values are per-turn snapshots, not deltas — consumers must not accumulate them. Threaded through `create_planner_agent()`, `create_executor_agent()`, `create_planner_chat_agent()`, and `Orchestrator.__init__()`.
+- **8 new tests** — 4 for `RateLimitEvent` handling (logged, forwarded, no-crash-when-None, appends to `_notifications`), 4 for `on_live_tokens` (fires per AssistantMessage, separation from `on_token_usage`, no-crash-when-None, no `cost_usd` in payload).
+
+---
+
 ## [1.9.1] - 2026-03-09
 
 ### Changed
