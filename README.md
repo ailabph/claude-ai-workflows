@@ -140,6 +140,14 @@ Key modules in [`orchestrator-auto/`](orchestrator-auto/):
 | `git.py` | Auto-commit with AI-generated messages |
 | `tui/` | Textual-based dashboard widgets |
 
+## Scripts
+
+| Script | Purpose | Usage |
+|--------|---------|-------|
+| `scripts/kagi-api.py` | Kagi API CLI (search, summarize, enrich, fastgpt) | `python scripts/kagi-api.py search "query"` |
+
+See `README_KAGI.md` for full Kagi API documentation and response formats.
+
 ## Requirements
 
 - **Python 3.10+**
@@ -149,6 +157,7 @@ Optional:
 - [Telegram Bot](https://core.telegram.org/bots) for mobile notifications
 - [Playwright](https://playwright.dev/) for visual QA workflows
 - [Figma Access Token](https://www.figma.com/developers/api) for Figma workflows
+- [Kagi API key](https://kagi.com/settings?p=api) for Kagi search/summarize (`kagiapi` package)
 
 ## Contributing
 

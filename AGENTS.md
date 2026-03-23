@@ -10,6 +10,7 @@ Scoped rules:
 
 ## Repo map
 - `orchestrator-auto/`: primary Python package + tests (SQLite-backed CLI orchestrator)
+- `scripts/`: standalone utility scripts (e.g., `kagi-api.py` for Kagi search/summarize/enrich)
 - `docs/`, `design-system/`, `backend-system/`, `CLAUDE_*.md`: workflow docs/templates
 - `claude/`, `opencode/`: helper scripts/configs for agents
 
