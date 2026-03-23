@@ -641,7 +641,7 @@ orchestrator check
 |-------|----------|
 | `opus` | `claude-opus-4-6` |
 | `sonnet` | `claude-sonnet-4-6` |
-| `haiku` | `claude-3-5-haiku-20241022` |
+| `haiku` | `claude-haiku-4-5-20251001` |
 
 **Defaults:** Planner = Opus, Executor = Sonnet
 

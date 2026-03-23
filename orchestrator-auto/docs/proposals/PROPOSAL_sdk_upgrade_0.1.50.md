@@ -561,7 +561,7 @@ Items documented here for future proposals, not part of this upgrade:
 | `include_partial_messages` for TUI | Audit message volume; add throttling to TUI adapter | ~3 hours |
 | `max_budget_usd` CLI flag | Straightforward wiring, no blockers | ~1 hour |
 | `fallback_model` CLI flag | Straightforward wiring, no blockers | ~1 hour |
-| Haiku 3 → Haiku 4.5 migration | Update `MODEL_ALIASES` in `config.py` before April 19, 2026 | ~30 min |
+| ~~Haiku 3 → Haiku 4.5 migration~~ | ~~Update `MODEL_ALIASES` in `config.py`~~ | **Done** (v1.10.0) |
 
 ---
 
@@ -575,7 +575,7 @@ Deprecations already addressed:
 
 ### Model Deprecation Warning
 
-**Claude Haiku 3 (`claude-3-5-haiku-20241022`) retirement: April 19, 2026.** orchestrator-auto uses this as the `haiku` model alias in `config.py`. Migration to Claude Haiku 4.5 should be planned before that date. This is tracked in Future Work but is independent of the SDK upgrade.
+~~**Claude Haiku 3 (`claude-3-5-haiku-20241022`) retirement: April 19, 2026.**~~ **Resolved** — `haiku` alias migrated to `claude-haiku-4-5-20251001` in v1.10.0.
 
 ---
 
@@ -587,7 +587,7 @@ Deprecations already addressed:
 | `RateLimitEvent` message type falls through existing `isinstance` chain | Low | Low | Add as explicit branch before `AssistantMessage` check |
 | `on_live_tokens` callback adds overhead to hot path | Low | Low | Callback is optional (`None` by default); no work done if not set |
 | Consumers accidentally subscribe to `on_live_tokens` thinking it replaces `on_token_usage` | Medium | Medium | Docstring explicitly states "delta-only, no cost, no API call count"; `is_delta: True` flag in payload |
-| Haiku 3 retirement breaks `haiku` model alias | High | High | Update `MODEL_ALIASES` in `config.py` before April 19 (separate task) |
+| ~~Haiku 3 retirement breaks `haiku` model alias~~ | — | — | **Resolved** — migrated to `claude-haiku-4-5-20251001` in v1.10.0 |
 
 ---
 

@@ -2910,7 +2910,7 @@ def check(verbose: bool, mcp_config: Optional[str]):
 
                 async def test_oauth_connection():
                     options = ClaudeAgentOptions(
-                        model="claude-3-5-haiku-20241022",
+                        model="claude-haiku-4-5-20251001",
                     )
                     async with ClaudeSDKClient(options) as client:
                         await client.query("Say 'ok'")
@@ -2949,7 +2949,7 @@ def check(verbose: bool, mcp_config: Optional[str]):
                 # Create client and make a minimal request
                 client = anthropic.Anthropic()
                 response = client.messages.create(
-                    model="claude-3-5-haiku-20241022",
+                    model="claude-haiku-4-5-20251001",
                     max_tokens=10,
                     messages=[{"role": "user", "content": "Say 'ok'"}],
                 )
@@ -2958,7 +2958,7 @@ def check(verbose: bool, mcp_config: Optional[str]):
                 if response.content and len(response.content) > 0:
                     click.echo(f"   {click.style('✓', fg='green')} Connection successful")
                     if verbose:
-                        click.echo(f"      Model: claude-3-5-haiku-20241022")
+                        click.echo(f"      Model: claude-haiku-4-5-20251001")
                         click.echo(f"      Response: {response.content[0].text.strip()}")
                 else:
                     click.echo(f"   {click.style('✗', fg='red')} Connection failed: Empty response")
@@ -3051,7 +3051,7 @@ def check(verbose: bool, mcp_config: Optional[str]):
 
                 async def check_mcp_status():
                     options = ClaudeAgentOptions(
-                        model="claude-3-5-haiku-20241022",
+                        model="claude-haiku-4-5-20251001",
                         mcp_servers=mcp_servers,
                     )
                     async with ClaudeSDKClient(options) as client:

@@ -2026,7 +2026,7 @@ class TestCheckMcpSection:
 
             result = runner.invoke(cli, ['check'])
 
-            assert '5. MCP Processes' in result.output
+            assert '6. MCP Processes' in result.output
             assert 'No MCP server processes detected' in result.output
 
     def test_check_mcp_processes_found(self, runner, temp_db):
@@ -2045,7 +2045,7 @@ class TestCheckMcpSection:
 
             result = runner.invoke(cli, ['check'])
 
-            assert '5. MCP Processes' in result.output
+            assert '6. MCP Processes' in result.output
             assert 'MCP processes detected: 1 running' in result.output
             assert 'PID: 12345' in result.output
             assert 'orchestrator cleanup --dry-run' in result.output
@@ -2063,7 +2063,7 @@ class TestCheckMcpSection:
 
             result = runner.invoke(cli, ['check'])
 
-            assert '5. MCP Processes' in result.output
+            assert '6. MCP Processes' in result.output
             assert 'not supported on Windows' in result.output
 
     def test_check_mcp_pgrep_missing(self, runner, temp_db):
@@ -2079,5 +2079,5 @@ class TestCheckMcpSection:
 
             result = runner.invoke(cli, ['check'])
 
-            assert '5. MCP Processes' in result.output
+            assert '6. MCP Processes' in result.output
             assert 'pgrep not found' in result.output

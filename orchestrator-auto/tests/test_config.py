@@ -30,13 +30,13 @@ class TestModelAliases:
     def test_resolve_haiku_alias(self):
         """Test that 'haiku' resolves to full model ID."""
         result = config.resolve_model("haiku")
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_resolve_alias_case_insensitive(self):
         """Test that alias resolution is case insensitive."""
         assert config.resolve_model("OPUS") == "claude-opus-4-6"
         assert config.resolve_model("Sonnet") == "claude-sonnet-4-6"
-        assert config.resolve_model("HaIkU") == "claude-3-5-haiku-20241022"
+        assert config.resolve_model("HaIkU") == "claude-haiku-4-5-20251001"
 
     def test_resolve_full_model_id(self):
         """Test that full model IDs pass through unchanged."""
@@ -56,17 +56,17 @@ class TestModelDisplayName:
     def test_display_name_opus(self):
         """Test display name for opus model."""
         result = config.get_model_display_name("claude-opus-4-6")
-        assert result == "opus-4.5"
+        assert result == "opus-4.6"
 
     def test_display_name_sonnet(self):
         """Test display name for sonnet model."""
         result = config.get_model_display_name("claude-sonnet-4-6")
-        assert result == "sonnet-4.5"
+        assert result == "sonnet-4.6"
 
     def test_display_name_haiku(self):
         """Test display name for haiku model."""
-        result = config.get_model_display_name("claude-3-5-haiku-20241022")
-        assert result == "haiku-3.5"
+        result = config.get_model_display_name("claude-haiku-4-5-20251001")
+        assert result == "haiku-4.5"
 
     def test_display_name_unknown_model(self):
         """Test display name for unknown model with 202x date."""
@@ -96,7 +96,7 @@ class TestDefaultModels:
     def test_cli_planner_model_override(self):
         """Test that CLI model overrides default."""
         result = config.get_planner_model("haiku")
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_cli_executor_model_override(self):
         """Test that CLI model overrides default."""
@@ -362,7 +362,7 @@ class TestAutoCommitModelConfig:
     def test_cli_flag_takes_priority(self):
         """Test that CLI flag takes highest priority."""
         result = config.get_auto_commit_model("haiku", "claude-sonnet-4-6")
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_cli_flag_resolves_alias(self):
         """Test that CLI flag aliases are resolved."""
@@ -378,7 +378,7 @@ class TestAutoCommitModelConfig:
         """Test that env var takes priority over executor model."""
         monkeypatch.setenv("ORCHESTRATOR_AUTO_COMMIT_MODEL", "haiku")
         result = config.get_auto_commit_model(None, "claude-sonnet-4-6")
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_env_var_resolves_alias(self, monkeypatch):
         """Test that env var aliases are resolved."""
@@ -390,7 +390,7 @@ class TestAutoCommitModelConfig:
         """Test that CLI flag overrides env var."""
         monkeypatch.setenv("ORCHESTRATOR_AUTO_COMMIT_MODEL", "opus")
         result = config.get_auto_commit_model("haiku", None)
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_config_file_model(self, tmp_path, monkeypatch):
         """Test config file specifies commit model."""
@@ -402,7 +402,7 @@ class TestAutoCommitModelConfig:
         monkeypatch.setattr(config, "find_repo_config", lambda: config_file)
 
         result = config.get_auto_commit_model(None, None)
-        assert result == "claude-3-5-haiku-20241022"
+        assert result == "claude-haiku-4-5-20251001"
 
     def test_config_file_overridden_by_cli(self, tmp_path, monkeypatch):
         """Test CLI flag overrides config file."""

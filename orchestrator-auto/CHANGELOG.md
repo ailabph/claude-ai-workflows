@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **SDK minimum version bumped to `>=0.1.50`** — from `>=0.1.46`. Gets fine-grained tool streaming fix (v0.1.48/v0.1.49), bundled CLI v2.1.81, and new typed message/session APIs.
+- **Haiku model alias upgraded to Claude Haiku 4.5** — `haiku` alias now resolves to `claude-haiku-4-5-20251001` (was `claude-3-5-haiku-20241022`). Claude Haiku 3 retires April 19, 2026. Updated across `config.py`, `cli.py`, all documentation, and tests.
 
 ### Added
 

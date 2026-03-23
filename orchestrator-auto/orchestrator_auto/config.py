@@ -17,7 +17,7 @@ from typing import Optional, Dict, Any, Tuple, List
 MODEL_ALIASES = {
     "opus": "claude-opus-4-6",
     "sonnet": "claude-sonnet-4-6",
-    "haiku": "claude-3-5-haiku-20241022",
+    "haiku": "claude-haiku-4-5-20251001",
 }
 
 # Default models
@@ -270,8 +270,8 @@ def get_model_display_name(model: str) -> str:
                 return "opus-4.6"
             elif "sonnet-4-6" in model:
                 return "sonnet-4.6"
-            elif "3-5-haiku" in model:
-                return "haiku-3.5"
+            elif "haiku-4-5" in model:
+                return "haiku-4.5"
             return alias
 
     # If not in aliases, return shortened version
