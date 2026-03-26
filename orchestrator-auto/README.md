@@ -86,7 +86,7 @@ orchestrator resume <session-id>     # Continue where you left off
 ```mermaid
 graph TD
     subgraph orchestrator-auto
-        Planner["Planner Agent<br/>(Opus 4.5)"] <--> Executor["Executor Agent<br/>(Sonnet 4.5)"]
+        Planner["Planner Agent<br/>(Opus 4.6)"] <--> Executor["Executor Agent<br/>(Sonnet 4.6)"]
         Engine["Orchestrator Engine<br/>State machine · Message routing · Blocker handling"]
         Engine --> Planner
         Engine --> Executor
@@ -159,9 +159,9 @@ flowchart TD
 | `convert.py` | Plan format conversion | `convert_plan()`, `validate_plan()`, `PlanConverter` |
 | `controllers/queue_controller.py` | Queue mode orchestration | `QueueController`, `QueueEvent`, `QueueItem` |
 | `controllers/watch_controller.py` | Watch mode orchestration | `WatchController`, `WatchEvent`, `FileState` |
-| `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, widgets, screens |
+| `tui/` | Text User Interface | `OrchestratorTUI`, `QueueTUI`, `WatchTUI`, `ChatTUI`, widgets, screens |
 | `explore.py` | Exploration sub-agent | `ExploreSubAgent`, `explore_async()`, `compact_findings()` |
-| `validation/` | Validation sub-agents | `SecurityValidator`, `PerformanceValidator`, `APIValidator`, `ValidationPipeline` |
+| `validation/` | Validation sub-agents | `SecurityValidator`, `PerformanceValidator`, `APIValidator`, `ValidationPipeline`, `BaseValidator` |
 | `chat.py` | Direct chat interface | `ChatSession` |
 | `playwright_test.py` | Playwright MCP verification | `run_playwright_test()`, `run_playwright_test_both()` |
 | `io/` | Input/output abstraction | `ChunkEvent`, `StateChangeEvent`, `InputProvider`, `CLIInputProvider` |
@@ -775,6 +775,7 @@ orchestrator-auto/
 │   │   ├── security.py      # SQL injection, XSS, secrets
 │   │   ├── performance.py   # N+1 queries, sync-in-async
 │   │   ├── api.py           # Missing validation, hardcoded URLs
+│   │   ├── base.py          # Base validator class
 │   │   └── pipeline.py      # Parallel validation runner
 │   ├── io/                  # Input/output abstraction
 │   │   ├── events.py        # ChunkEvent, StateChangeEvent
@@ -785,6 +786,9 @@ orchestrator-auto/
 │       ├── queue_app.py     # QueueTUI
 │       ├── watch_app.py     # WatchTUI
 │       ├── todo_app.py      # TodoTUI
+│       ├── chat_app.py      # ChatTUI
+│       ├── chat_adapter.py  # Chat thread-safe adapter
+│       ├── chat_backend.py  # Chat backend logic
 │       ├── adapter.py       # Thread-safe adapters
 │       ├── messages.py      # Custom messages
 │       ├── bindings.py      # Keybindings
@@ -810,6 +814,7 @@ pytest tests/ --cov=orchestrator_auto
 | Package | Required Version | Purpose |
 |---------|------------------|---------|
 | `claude-agent-sdk` | ≥0.1.50 | Claude Code Python SDK |
+| `anthropic` | ≥0.40.0 | Anthropic API client |
 | `click` | ≥8.0 | CLI framework |
 | `prompt_toolkit` | ≥3.0 | Multi-line input handling |
 | `pyyaml` | ≥6.0 | Configuration files |
