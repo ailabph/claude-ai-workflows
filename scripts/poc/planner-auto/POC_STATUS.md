@@ -33,7 +33,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 
 | POC | Script | Status | Result | Notes |
 |-----|--------|--------|--------|-------|
-| 1d | `poc_reviewer_comparison.py` | Pending | — | Needs 1a, 1b, 1c |
+| 1d | `poc_reviewer_comparison.py` | Done | 2/3 adapters passed | Direct API: fastest ($0.007, 11.7s, 7 issues). OpenCode HTTP: works but 5.7x costlier. Codex MCP: failed (subprocess flaky). Recommendation: Direct API. |
 | 5b | `poc_review_loop_e2e.py` | Pending | — | Needs 4a + 1a + 2a + 3a |
 
 ---
@@ -45,5 +45,5 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | A | 3 | 3 | 0 |
 | B | 3 | 3 | 0 |
 | C | 4 | 4 | 0 |
-| D | 2 | 0 | 2 |
-| **Total** | **13** | **10** | **3** |
+| D | 2 | 1 | 1 |
+| **Total** | **13** | **11** | **2** |
