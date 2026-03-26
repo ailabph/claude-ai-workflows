@@ -270,3 +270,4 @@ credentials*.json
 *.sqlite
 *.sqlite3
 *.db
+scripts/poc/planner-auto/__pycache__/
