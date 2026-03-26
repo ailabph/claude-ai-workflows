@@ -32,3 +32,12 @@ Simulated session data — no API calls, no agents. Pure DB operations with hard
 ## Dependencies
 
 - `sqlite3` (stdlib)
+
+## Actual Results
+
+- 13/13 tests passed
+- Full lifecycle validated: setup → context → discussion → planning → review → complete
+- Draft versioning works (draft 1, 2 within same session)
+- WAL mode + foreign keys enabled (foreign key pragma added after review)
+- File-based DB inspectable with `sqlite3` CLI
+- Row counts verified: 1 session, 5 messages, 3 context_entries, 2 plan_drafts, 2 reviews

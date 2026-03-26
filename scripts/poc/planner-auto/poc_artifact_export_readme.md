@@ -29,3 +29,13 @@ A pre-populated SQLite DB (reuses POC 3a schema and test data).
 
 - `sqlite3` (stdlib), `csv` (stdlib)
 - POC 3a DB schema
+
+## Actual Results
+
+- 14/14 tests passed
+- 7 files exported: chat.csv, context-summary.md, a-01-plan.md, a-02-review.md, a-03-plan.md, a-04-review.md, a-03-plan-final.md
+- Naming convention verified: plan draft N → a-{2N-1:02d}-plan.md, review N → a-{2N:02d}-review.md
+- Final plan matches corresponding draft content exactly (734 bytes)
+- Idempotency verified: re-export produces identical files
+- chat.csv uses QUOTE_ALL for safe handling of commas/newlines in content
+- context-summary.md groups entries by type (Files, Entities, Decisions)

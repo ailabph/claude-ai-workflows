@@ -30,3 +30,14 @@ Same sample plan as POC 1a for fair comparison.
 - Codex MCP server configured in Claude
 - `claude-agent-sdk`
 - `OPENAI_API_KEY` and `ANTHROPIC_API_KEY` env vars
+
+## Actual Results
+
+- 1/1 run parsed successfully
+- GPT-5.4 returned NO_GO with 5 well-structured issues via Codex MCP
+- Latency: 30.9s (2.2x slower than Direct API due to Claude->Codex->GPT round-trip)
+- Cost: $0.035 (5x more expensive than Direct API -- pays for both Claude and GPT tokens)
+- 3 turns required (Claude sends to Codex, Codex returns, Claude relays)
+- Key finding: `codex login --with-api-key` required for auth -- SDK env passthrough to MCP server subprocesses is unreliable
+- Key finding: Claude sometimes paraphrases GPT's response instead of relaying JSON verbatim -- prompt tuning needed for reliable parse
+- Comparison: Direct API is faster, cheaper, and more reliable for plan-text-only review. Codex MCP's advantage (GPT tool access) wasn't needed for this use case.

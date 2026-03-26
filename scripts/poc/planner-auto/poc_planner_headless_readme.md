@@ -30,3 +30,13 @@ Validate that Claude can be invoked via the Agent SDK in headless mode to genera
 
 - `claude-agent-sdk` (or Claude CLI with `-p` flag)
 - `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` env var
+
+## Actual Results
+
+- 23/23 validation checks passed
+- Claude Sonnet 4.6 generated a 5-milestone plan following CLAUDE_orch_v2.md format
+- Each milestone has ### Tasks and ### Deliverables with checkbox items
+- Duration: 25.7s, Cost: $0.029, 1 turn
+- Required SDK upgrade from 0.1.47 to 0.1.50 (subprocess initialization failure with old version)
+- Key fix: use ResultMessage.result (plain string) not AssistantMessage.content (list of TextBlock)
+- Plan quality: realistic task decomposition for user registration feature

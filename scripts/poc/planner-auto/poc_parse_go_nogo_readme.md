@@ -36,3 +36,13 @@ A set of hardcoded test responses covering:
 ## Dependencies
 
 - None (pure Python, no API calls)
+
+## Actual Results
+
+- 14/14 test cases passed
+- Three-stage fallback chain works: JSON → XML → free-form → parse failure
+- Simplified GO regex from complex lookahead to clean `\bGO\b` after review
+- Added markdown-fenced JSON test case (most likely real-world GPT format)
+- Parser never crashes — all malformed/edge cases return valid ReviewerResponse
+- Free-form keyword matching correctly handles conflicting signals (defaults to NO_GO)
+- Word boundary test confirms "GO" doesn't false-match inside "NO_GO"

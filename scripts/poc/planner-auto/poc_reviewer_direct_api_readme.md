@@ -32,3 +32,13 @@ A sample milestone plan (hardcoded or loaded from file) following the `CLAUDE_or
 
 - `openai` Python SDK
 - `OPENAI_API_KEY` env var
+
+## Actual Results
+
+- 3/3 runs consistent NO_GO verdict
+- 3/3 responses parseable into ReviewerResponse schema (JSON format)
+- GPT-5.4 identifies 7-8 issues per review (consistent across runs)
+- Average latency: 14.1s (well under 30s target)
+- Average cost: $0.007/review (~1,272 tokens)
+- Token split: ~574 prompt, ~698 completion
+- Required openai SDK upgrade from 1.35.3 to 2.30.0 (httpx conflict)
