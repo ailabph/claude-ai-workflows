@@ -27,3 +27,15 @@ A pre-populated DB with simulated conversation (10-15 messages) and context entr
 - `sqlite3` (stdlib)
 - `claude-agent-sdk` or `anthropic` SDK (for synthesis via Claude)
 - POC 3a DB schema
+
+## Actual Results
+
+- 11/11 validation checks passed
+- Claude Haiku 4.5 synthesized 292 words (well under 500 target) from 15 messages + 6 context entries
+- Output is structured markdown with 5 clear sections: Files & Purpose, Key Entities, Requirements, Decisions Made, Open Questions
+- All key decisions captured: username from email, bcrypt hashing, rate limiting (5/min/IP), JWT deferred, REST error codes
+- All loaded files referenced with correct descriptions
+- Greeting noise ("Hi, I need help", "Hello! I see you've loaded") successfully filtered out
+- Duration: 8.3s, Cost: $0.019
+- Output is directly usable as planner input — no further processing needed
+- Haiku is sufficient quality for synthesis (no need for Sonnet/Opus)
