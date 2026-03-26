@@ -27,7 +27,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | 1b | `poc_reviewer_codex_mcp.py` | Done | 1/1 parsed | GPT via Codex MCP: NO_GO, 5 issues, 30.9s, $0.035. 2.2x slower than Direct API, 5x more expensive. Requires `codex login` for auth (env passthrough unreliable). |
 | 1c | `poc_reviewer_opencode_http.py` | Done | 1/1 parsed | GPT-5.4 via OpenCode HTTP: NO_GO, 6 issues, 13.8s, $0.039. Latency matches Direct API but 5.6x costlier (OpenCode injects 10K+ system tokens). Requires `opencode serve` running separately. |
 | 4b | `poc_context_synthesis.py` | Done | 11/11 passed | Haiku synthesizes 292 words from 15 msgs + 6 entries in 8.3s, $0.019. All decisions captured, noise filtered. Directly usable as planner input. |
-| 5a | `poc_failure_paths.py` | Pending | — | Depends on 2a + 3a |
+| 5a | `poc_failure_paths.py` | Done | 18/18 passed | 5 scenarios: timeout, malformed, partial_json, network_error, success. Retry-once + pause + blocker + resume lifecycle validated. Blockers table added. |
 
 ## Phase D (depends on all above)
 
@@ -44,6 +44,6 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 |-------|-------|------|---------|
 | A | 3 | 3 | 0 |
 | B | 3 | 3 | 0 |
-| C | 4 | 3 | 1 |
+| C | 4 | 4 | 0 |
 | D | 2 | 0 | 2 |
-| **Total** | **13** | **9** | **4** |
+| **Total** | **13** | **10** | **3** |
