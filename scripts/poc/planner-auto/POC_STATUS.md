@@ -1,6 +1,6 @@
 # Planner-Auto POC Status
 
-Tracking sheet for all POC scripts. Updated as each POC is implemented and validated.
+Tracking sheet for all POC scripts and convergence experiments. Updated as each POC is implemented and validated.
 
 ---
 
@@ -34,11 +34,11 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | POC | Script | Status | Result | Notes |
 |-----|--------|--------|--------|-------|
 | 1d | `poc_reviewer_comparison.py` | Done | 2/3 adapters passed | Direct API: fastest ($0.007, 11.7s, 7 issues). OpenCode HTTP: works but 5.7x costlier. Codex MCP: failed (subprocess flaky). Recommendation: Direct API. |
-| 5b | `poc_review_loop_e2e.py` | Done | 5/5 DB checks | Full loop works: plan→review→revise→review. Did not converge in 3 rounds (GPT keeps finding issues). $0.260 total, 257s. Convergence tuning needed for production. |
+| 5b | `poc_review_loop_e2e.py` | Done | 5/5 DB checks | Full loop works. Multiple convergence experiments run (see below). |
 
 ---
 
-## Summary
+## All 13 POCs Complete
 
 | Phase | Total | Done | Pending |
 |-------|-------|------|---------|
@@ -47,3 +47,152 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | C | 4 | 4 | 0 |
 | D | 2 | 2 | 0 |
 | **Total** | **13** | **13** | **0** |
+
+---
+
+## Convergence Experiments (POC 5b)
+
+All experiments use the same feature: "Add user registration with email validation, password hashing, and rate limiting"
+
+### Experiment 1: Sonnet Baseline (no intervention)
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-sonnet-4-6 (default effort, no thinking) |
+| Reviewer | gpt-5.4 (temperature=0.3) |
+| Flags | None |
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| 3 | 6→8→7 (oscillating) | $0.261 | 254s |
+| 6 | 9→8→6→9→6→6 (oscillating) | $0.785 | 793s |
+
+**Result:** Never converges. Issue count oscillates 6-9 per round.
+
+### Experiment 2: Self-Review (check → repair → wrap-up after each revision)
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-sonnet-4-6 |
+| Reviewer | gpt-5.4 (temperature=0.3) |
+| Flags | `--self-review` |
+
+| Rounds | Issues | Cost | Time | Plan Size |
+|--------|--------|------|------|-----------|
+| 3 | 7→6→7 | $0.790 | 700s | 10.9 KB (29% smaller than baseline) |
+
+**Result:** 3x cost, no issue improvement. Wrap-up pass reduces bloat. Full self-review not justified.
+
+### Experiment 3: Resolution Guidance (GPT provides acceptance criteria)
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-sonnet-4-6 |
+| Reviewer | gpt-5.4 (temperature=0.3) |
+| Flags | `--resolution-guidance` |
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| 3 | 8→5→5 (declining) | $0.305 | 311s |
+| 6 | 7→7→6→6→7→5 (marginal) | $0.833 | 897s |
+
+**Result:** Best 3-round trajectory. +17% cost. Over 6 rounds, marginal improvement.
+
+### Experiment 4: Opus + High Effort + Thinking + Guidance (max_turns=1)
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-opus-4-6 (effort=high, thinking=adaptive) |
+| Reviewer | gpt-5.4 (reasoning_effort=high) |
+| Flags | `--resolution-guidance --planner-effort high --planner-thinking --reviewer-reasoning high` |
+| Note | max_turns=1 (originally a bug — Opus couldn't use tools, gave text-only responses) |
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| 8 | 4→1→1→1→4→1→4→5 | $1.148 | 595s |
+
+**Result:** Best issue trajectory — reaches 1 issue by round 2. Oscillates but stays low. The constrained max_turns=1 produced tighter, more focused revisions.
+
+### Experiment 5: Opus + High + Thinking + Validate + Filter (max_turns=10, fixed)
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-opus-4-6 (effort=high, thinking=adaptive) |
+| Reviewer | gpt-5.4 (reasoning_effort=high) |
+| Flags | `--resolution-guidance --validate-feedback --filter-severity critical,major --planner-effort high --planner-thinking --reviewer-reasoning high` |
+| Note | max_turns=10 (Opus used tools extensively — Read, Write, explore codebase) |
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| 10 | 5→4→4→4→4→5→4→5→4→3 | $3.834 | 2959s (49 min) |
+
+**Result:** 3.3x more expensive than Experiment 4. Opus used tools extensively (avg 100s review, 182s revision). Issue count stabilized at 3-5 but never reached the 1-issue low from Experiment 4.
+
+### Experiment 4 vs 5: Quality Comparison
+
+| Metric | Exp 4 (max_turns=1) | Exp 5 (max_turns=10) |
+|--------|---------------------|----------------------|
+| Final plan size | 30 KB (89 lines) | 29 KB (135 lines) |
+| Tasks in plan | 61 | 93 |
+| Milestones | 5 | 5 |
+| Scope | Expanded (JWT, login, auth, protected routes) | Focused (registration + validation + rate limiting) |
+| Over-engineering | High (sentinel hashes, MIGRATIONS.md, mask_ip) | Moderate (ProxyFix, CREATE_TABLES guardrail) |
+| Implementability | 2-3 days | 1-2 days |
+| Cost | $1.15 | $3.83 |
+
+**Key insight:** max_turns=1 forces Claude to give text-only responses without tool use. This produces plans that are deeper in specification but prone to scope creep. max_turns=10 lets Claude explore the codebase, producing more disciplined plans, but at 3.3x the cost. The "bug" (max_turns=1) was producing better convergence behavior.
+
+---
+
+## Features Added to POC 5b (E2E Loop)
+
+The e2e loop script now supports many experimental flags:
+
+| Flag | What It Does |
+|------|-------------|
+| `--self-review` | Bounded self-check → repair → wrap-up after each revision |
+| `--resolution-guidance` | GPT provides `resolution_guidance` + `target_section` per issue |
+| `--validate-feedback` | Claude assesses each issue's validity before fixing (accept/defer/reject) |
+| `--filter-severity critical,major` | Only pass critical+major issues to Claude; filter export too |
+| `--keep-trim` | GPT includes "what to keep" and "what to trim" sections |
+| `--planner-effort low/medium/high/max` | Claude effort level |
+| `--planner-thinking` | Enable Claude adaptive thinking |
+| `--reviewer-reasoning low/medium/high` | GPT reasoning effort (drops temperature when active) |
+
+### Schema Extensions (POC 2a parser)
+
+| Field | Added To | Purpose |
+|-------|----------|---------|
+| `resolution_guidance` | `ReviewIssue` | 1-3 sentences: what must change for the issue to be resolved |
+| `target_section` | `ReviewIssue` | Which milestone/section the issue applies to |
+| `keep` | `ReviewerResponse` | List of plan elements to preserve during revision |
+| `trim` | `ReviewerResponse` | List of plan elements to simplify or remove |
+
+### Prompt Changes
+
+| Component | Change |
+|-----------|--------|
+| Planner system prompt | Added scope constraints (only implement what's requested), size limits (max 8 tasks/milestone, 1-2 sentences per task, under 3000 words), template from CLAUDE_orch_v2.md |
+| Reviewer prompt (guidance) | `SYSTEM_PROMPT_WITH_GUIDANCE` — requests resolution_guidance + target_section |
+| Reviewer prompt (keep/trim) | `SYSTEM_PROMPT_WITH_KEEP_TRIM` — requests keep/trim lists in addition to guidance |
+| Revision prompt (validate) | Claude assesses each issue as ACCEPT/DEFER/REJECT before fixing |
+| Revision prompt (keep/trim) | Includes "What to Keep" and "What to Trim" sections from reviewer |
+
+### Other Fixes
+
+- `run_review()` now accepts optional `system_prompt` override and `reasoning_effort`
+- Review export now filters by severity (no more `[minor]` in filtered exports)
+- Review export includes resolution_guidance, target_section, keep/trim sections
+- `max_turns=1` default (was 10, then 5, settled on 1 for tighter plans)
+- Blockers table added to schema (validated by POC 5a)
+
+---
+
+## Pending Experiments
+
+Two runs currently in progress:
+
+| Run | Config | Output Dir |
+|-----|--------|-----------|
+| B (killed & restarted) | Opus medium + keep-trim + validate + guidance + filter crit/major, 6r, max_turns=5 | `/tmp/poc_e2e_opus_keeptrim_v2` |
+| C (new prompt) | Opus medium + keep-trim + validate + guidance + filter crit/major, 6r, max_turns=1, **constrained planner prompt** | `/tmp/poc_e2e_constrained_prompt` |

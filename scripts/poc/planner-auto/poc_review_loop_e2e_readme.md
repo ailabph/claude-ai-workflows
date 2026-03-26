@@ -178,3 +178,72 @@ Tested with upgraded model settings: Claude Opus 4.6 (effort=high, thinking=adap
 | Opus + guidance + zero-critical stop | 2 (projected) | ~$0.20 | ~3 min |
 
 **Recommendation update:** Opus + thinking + guidance is the strongest combination. For users with API budget, Opus at 2-3 rounds is cheaper AND faster than Sonnet at 5+ rounds because it resolves issues in fewer iterations.
+
+### Experiment 5: Opus + Validate + Filter (max_turns=10, fixed)
+
+Re-ran Experiment 4 with the max_turns bug fixed (10 turns so Opus can use tools) plus `--validate-feedback` and `--filter-severity critical,major`.
+
+**Results (10 rounds):**
+
+| Round | Issues | Review Time | Revision Time | Round Cost |
+|-------|--------|-------------|---------------|------------|
+| 1 | 5 | 67s | 172s | $0.396 |
+| 2 | 4 | 92s | 54s | $0.172 |
+| 3 | 4 | 87s | 74s | $0.194 |
+| 4 | 4 | 99s | 134s | $0.329 |
+| 5 | 4 | 104s | 149s | $0.332 |
+| 6 | 5 | 94s | 193s | $0.476 |
+| 7 | 4 | 95s | 110s | $0.265 |
+| 8 | 5 | 120s | 244s | $0.499 |
+| 9 | 4 | 93s | 457s | $0.363 |
+| 10 | 3 | 147s | 238s | $0.490 |
+
+**Total: $3.83, 2959s (49 min), still NO_GO.**
+
+**Key finding — max_turns=1 vs max_turns=10 plan quality comparison:**
+
+| Metric | Exp 4 (max_turns=1) | Exp 5 (max_turns=10) |
+|--------|---------------------|----------------------|
+| Issue trend | 4→1→1→1→4→1→4→5 | 5→4→4→4→4→5→4→5→4→3 |
+| Cost | $1.15 (8r) | $3.83 (10r) |
+| Time | 595s | 2959s (49 min) |
+| Final plan | 30 KB, 61 tasks, JWT+auth+login | 29 KB, 93 tasks, registration only |
+| Scope discipline | Low (added JWT, login, protected routes) | High (stayed on registration) |
+| Implementability | 2-3 days | 1-2 days |
+
+**The "bug" (max_turns=1) produced better convergence** because it constrained Claude to text-only responses without tool use, resulting in tighter revisions. max_turns=10 let Claude explore the codebase and use tools, producing more disciplined but expensive plans.
+
+**Decision: max_turns=1 is now the default.** It's cheaper, converges faster, and produces plans that — while needing scope constraints in the prompt — are more detailed.
+
+### Feedback Validation and Severity Filtering
+
+Two features added based on the manual workflow insight: "Claude should assess if feedback is valid before fixing."
+
+**`--validate-feedback`:** Claude evaluates each issue as ACCEPT (fix it), DEFER (valid but later phase), or REJECT (not valid for this scope). Prevents Claude from blindly adding complexity for every GPT critique.
+
+**`--filter-severity critical,major`:** Only critical and major issues are passed to Claude for revision. Minor issues are recorded in the DB but not acted on. Reduces noise in the revision prompt.
+
+Both features were tested in Experiment 5 but their isolated impact could not be measured because max_turns=10 dominated the cost/behavior. Pending re-test with max_turns=1.
+
+### Keep/Trim Feature
+
+Added `--keep-trim` flag: GPT reviewer includes "what to keep" (3-5 plan elements that are well-designed) and "what to trim" (elements that are over-engineered or out of scope). These sections are passed to Claude during revision to prevent good content from being removed and to actively reduce bloat.
+
+- New `SYSTEM_PROMPT_WITH_KEEP_TRIM` in POC 1a
+- `keep` and `trim` fields added to `ReviewerResponse` schema in POC 2a
+- Review export includes keep/trim sections in the md file
+- Revision prompt includes "What to Keep (do NOT change)" and "What to Trim (simplify or remove)"
+
+### Planner Prompt Constraints (Latest Change)
+
+The planner system prompt was unconstrained — no limits on tasks per milestone, words per task, total plan size, or scope boundaries. This caused plan bloat and scope creep across revision rounds.
+
+**New constraints added:**
+- Max 5-8 tasks per milestone
+- Max 1-2 sentences per task
+- Max 3-5 deliverables per milestone
+- Total plan under 3,000 words (target 1,500-2,000)
+- "Implement ONLY what was requested" — explicit scope constraint
+- Template aligned with CLAUDE_orch_v2.md format
+
+**Pending test:** Run with constrained prompt + all features to measure impact on plan size and convergence.

@@ -40,3 +40,15 @@ Validate that Claude can be invoked via the Agent SDK in headless mode to genera
 - Required SDK upgrade from 0.1.47 to 0.1.50 (subprocess initialization failure with old version)
 - Key fix: use ResultMessage.result (plain string) not AssistantMessage.content (list of TextBlock)
 - Plan quality: realistic task decomposition for user registration feature
+
+### Prompt Update (Post-Convergence Testing)
+
+The original planner system prompt had no constraints on plan size, tasks per milestone, or scope. This caused plan bloat (4KB→30KB over 6 revision rounds) and scope creep (registration feature expanded to include JWT, login, protected routes).
+
+**Constraints added:**
+- Max 5-8 tasks per milestone (split if more needed)
+- Max 1-2 sentences per task description
+- Max 3-5 deliverables per milestone
+- Total plan under 3,000 words (target 1,500-2,000)
+- Scope constraint: "Implement ONLY what was requested"
+- Template aligned with CLAUDE_orch_v2.md format used by orchestrator-auto
