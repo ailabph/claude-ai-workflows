@@ -17,7 +17,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | POC | Script | Status | Result | Notes |
 |-----|--------|--------|--------|-------|
 | 2b | `poc_structured_prompt.py` | Done | 12/12 parsed | All 4 strategies 3/3 parseable. xml_tagged fastest (8.7s, 1007 tok). few_shot most thorough (9.0 issues). free_form noisy (118 issues from bullet extraction). json_instructed solid middle ground. |
-| 3b | `poc_artifact_export.py` | Pending | — | Depends on 3a schema |
+| 3b | `poc_artifact_export.py` | Done | 14/14 passed | 7 files exported (chat.csv, context-summary.md, 2 plans, 2 reviews, final plan). Naming convention correct. Idempotent re-export verified. |
 | 4a | `poc_planner_headless.py` | Pending | — | — |
 
 ## Phase C (depends on Phase A)
@@ -43,7 +43,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 | Phase | Total | Done | Pending |
 |-------|-------|------|---------|
 | A | 3 | 3 | 0 |
-| B | 3 | 1 | 2 |
+| B | 3 | 2 | 1 |
 | C | 4 | 0 | 4 |
 | D | 2 | 0 | 2 |
-| **Total** | **13** | **4** | **9** |
+| **Total** | **13** | **5** | **8** |
