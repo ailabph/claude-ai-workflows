@@ -104,9 +104,37 @@ Tested the senior dev's follow-up suggestion: add `resolution_guidance` (1-3 sen
 - Still didn't converge in 3 rounds — likely needs 4-5 with a zero-critical threshold
 - Plan size is identical — guidance doesn't reduce bloat (wrap-up pass still needed separately)
 
-**Recommendation for v1:**
-1. Zero-critical threshold as acceptance condition
-2. Hard cap at 3-5 rounds
-3. Single wrap-up/compression pass per round
-4. Resolution guidance ON by default (declining issue trajectory worth +17% cost)
-5. Human fallback if criticals persist at cap
+### Resolution Guidance — 6-Round Extended Test
+
+Ran guidance variant at 6 rounds to see if the declining trend from the 3-round test holds.
+
+**6-round comparison:**
+
+| Metric | Baseline 6r | Guidance 6r | Delta |
+|--------|------------|-------------|-------|
+| Issue trend | 9→8→6→9→6→6 | 7→7→6→6→7→5 | Marginally better end state |
+| Final issues | 6 | 5 | -1 |
+| Converged? | No | No | Same |
+| Total cost | $0.785 | $0.833 | +6% |
+| Total time | 793s | 897s | +13% |
+| Final plan size | 30 KB | 37 KB | Worse (guidance didn't help bloat) |
+| Plan growth | 4→30 KB (7.5x) | 4→37 KB (9.7x) | Worse |
+
+**Key finding:** Over 6 rounds, resolution guidance provides only marginal improvement. The 3-round declining trend (8→5→5) didn't sustain — at 6 rounds both variants stabilize around 5-6 issues. Plan bloat is actually worse with guidance because GPT's longer responses (with acceptance criteria) prompt Claude to add more detail.
+
+**Conclusion across all experiments:** GPT will never say GO on its own for a complex feature plan. The loop produces better plans each round, but the reviewer always finds more to critique. The right strategy is controlling *when to stop*, not *how to make GPT say GO*.
+
+### Final Recommendation for v1
+
+Based on all three experiments (baseline, self-review, resolution guidance) across 3-round and 6-round runs:
+
+1. **Zero-critical threshold** — stop when no critical issues remain after any round
+2. **Hard cap at 3-5 rounds** — diminishing returns after round 3; cost grows linearly but quality plateaus
+3. **Resolution guidance ON** — the 3-round improvement (8→5→5 vs 6→8→7) justifies the modest +17% cost; helps most in early rounds when plan has real gaps
+4. **Single wrap-up pass per round** — needed for bloat control (neither guidance nor self-review addresses this)
+5. **Human fallback** — if critical issues persist at cap, pause for human review
+
+**Cost projection for v1 default loop (3 rounds, guidance + wrap-up):**
+- Rounds 1-3: ~$0.30 (guidance) + ~$0.09 (3 wrap-up passes at ~$0.03 each) = ~$0.39
+- Time: ~5-6 minutes
+- Expected outcome: plan with 0 critical issues, 3-5 major/minor remaining (acceptable for implementation)

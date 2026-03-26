@@ -459,45 +459,54 @@ Analysis of all 6 review artifacts revealed three root causes:
 | Persistent 3+ rounds | 16+ (40%) | Migration safety, rate limiting, auth flow — architectural concerns that specification can't close |
 | Newly introduced per round | 3-4 avg | Each revision creates new failure modes GPT catches |
 
-### Convergence Strategy for planner-auto
+### Convergence Experiments (POC 5b)
 
-The loop works and produces high-quality plans — the issue is knowing when to stop. Options to explore during implementation:
+Three approaches were tested in A/B experiments:
 
-**A. Severity-based threshold (recommended starting point)**
-- GO if zero `critical` issues remain (regardless of major/minor count)
-- Rationale: manual experience confirms GPT eventually says GO once critical gaps are addressed; major/minor issues are acceptable scope for implementation to handle
+**Experiment 1: Baseline (no intervention)**
+- Issue trend (3 rounds): 6→8→7 (oscillating)
+- Issue trend (6 rounds): 9→8→6→9→6→6 (oscillating, never converges)
+- Cost: $0.26 (3r), $0.79 (6r)
 
-**B. Issue churn detection**
-- Track which issues are new vs persistent across rounds
-- If round N has no new `critical` issues and no persistent `critical` issues, treat as GO
-- Detects when revisions are producing diminishing returns
+**Experiment 2: Self-review (self-check → repair → wrap-up after each revision)**
+- Issue trend (3 rounds): 7→6→7 (no improvement over baseline)
+- Plan bloat: 29% smaller (wrap-up pass works)
+- Cost: $0.79 (3r) — **3x baseline, not justified**
+- Verdict: Full self-review too expensive. Standalone wrap-up pass is the useful piece.
 
-**C. Max rounds with "good enough" heuristic**
-- Hard cap at 3-5 rounds
-- After max rounds, if no `critical` issues remain, accept as GO
-- If `critical` issues persist after max rounds, pause for human review
+**Experiment 3: Resolution guidance (GPT provides acceptance criteria per issue)**
+- Issue trend (3 rounds): 8→5→5 (declining — best trajectory)
+- Issue trend (6 rounds): 7→7→6→6→7→5 (marginally better than baseline)
+- Cost: $0.31 (3r, +17%), $0.83 (6r, +6%)
+- Plan bloat: same or slightly worse (guidance doesn't help bloat)
+- Verdict: Helps most in first 3 rounds. Over 6 rounds, both variants stabilize around 5-6 issues.
 
-**D. Reviewer acceptance criteria prompt**
-- After round 2+, ask GPT: "For each remaining issue, state what specifically would resolve it"
-- Feed those acceptance criteria to Claude instead of the raw issues
-- Addresses the "GPT critiques but doesn't prescribe" problem
+**Core conclusion:** GPT will never say GO on its own for a complex feature plan. The loop produces better plans each round, but the reviewer always finds more to critique. The right strategy is controlling *when to stop*, not *how to make GPT say GO*.
 
-**E. Plan size cap**
-- If plan exceeds a threshold (e.g., 15KB), tell Claude to revise concisely rather than adding detail
-- Prevents the bloat→more issues→more bloat cycle
+### Convergence Strategy for v1
+
+Based on all experiments, the recommended v1 default loop:
+
+| Component | What | Why |
+|-----------|------|-----|
+| **Zero-critical threshold** | Stop when no `critical` issues remain | GPT's criticals are genuine blockers; major/minor are acceptable for implementation |
+| **Hard cap at 3-5 rounds** | Stop regardless after cap | Diminishing returns after round 3; cost grows linearly but quality plateaus |
+| **Resolution guidance ON** | GPT provides `resolution_guidance` + `target_section` per issue | 3-round trend (8→5→5) justifies +17% cost; helps most when plan has real gaps |
+| **Single wrap-up pass per round** | Claude compresses plan after revision | Controls bloat (~$0.03/pass); proven by self-review experiment |
+| **Human fallback** | Pause for human if criticals persist at cap | Some architectural issues need human judgment |
 
 ### Cost Projection
 
-| Strategy | Expected Rounds | Est. Cost | Est. Time |
-|----------|----------------|-----------|-----------|
-| No convergence tuning | 6+ (may never) | $0.80+ | 13+ min |
-| Severity threshold (A) | 2-4 | $0.15-0.35 | 3-7 min |
-| Max rounds + good enough (C) | 3 (capped) | $0.25 | 4-5 min |
-| Acceptance criteria (D) | 2-3 | $0.15-0.25 | 3-5 min |
+| Configuration | Rounds | Est. Cost | Est. Time |
+|---------------|--------|-----------|-----------|
+| No tuning (baseline) | 6+ (never converges) | $0.80+ | 13+ min |
+| Guidance + 3-round cap + wrap-up | 3 | ~$0.39 | ~6 min |
+| Guidance + 5-round cap + wrap-up | 5 | ~$0.65 | ~10 min |
+| Guidance + zero-critical threshold | 2-4 (projected) | ~$0.25-0.50 | ~4-8 min |
 
 ### Note on Final Output Quality
 
-Despite non-convergence, the review loop produces materially better plans than a single pass. The final plan (round 6) addresses error handling, migration safety, rate limiting configuration, JWT specifics, and deployment gates — none of which were in the initial draft. When these plans are forwarded to orchestrator-auto for implementation, the implementation quality is notably higher because the plan already anticipates edge cases.
+Despite non-convergence, the review loop produces materially better plans than a single pass. The final plan addresses error handling, migration safety, rate limiting configuration, JWT specifics, and deployment gates — none of which were in the initial draft. When these plans are forwarded to orchestrator-auto for implementation, the implementation quality is notably higher because the plan already anticipates edge cases.
 
 **The value is in the process, not in achieving a clean GO.** The convergence strategy should optimize for "good enough to implement well" rather than "zero issues."
 
