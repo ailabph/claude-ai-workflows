@@ -246,4 +246,62 @@ The planner system prompt was unconstrained — no limits on tasks per milestone
 - "Implement ONLY what was requested" — explicit scope constraint
 - Template aligned with CLAUDE_orch_v2.md format
 
-**Pending test:** Run with constrained prompt + all features to measure impact on plan size and convergence.
+### Experiment 7: CONVERGED — Constrained Prompt + All Features (max_turns=2)
+
+**First successful convergence across all experiments.**
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-opus-4-6 (effort=medium, thinking=adaptive, max_turns=2) |
+| Reviewer | gpt-5.4 (reasoning_effort=high) |
+| Flags | `--resolution-guidance --validate-feedback --filter-severity critical,major --keep-trim --planner-effort medium --planner-thinking --reviewer-reasoning high` |
+| Prompt | Constrained planner prompt (max 8 tasks/milestone, 1-2 sentences, under 3000 words, stay on scope) |
+
+| Round | Issues | Review Time | Revision Time | Round Cost |
+|-------|--------|-------------|---------------|------------|
+| 1 | 5 | 83.7s | 35.3s | $0.125 |
+| 2 | 4 | 89.4s | 34.8s | $0.143 |
+| 3 | 4 | 101.5s | 122.5s | $0.310 |
+| 4 | 4 | 152.5s | 37.6s | $0.185 |
+| **5** | **GO** (3 notes) | 99.0s | — | $0.051 |
+
+**Total: $0.87, 791s (13 min), CONVERGED at round 5.**
+
+**Plan evolution:**
+
+| Draft | Size | Words | Growth |
+|-------|------|-------|--------|
+| a-01 (initial) | 5.2 KB | ~700 | — |
+| a-03 (rev 1) | 7.3 KB | ~1000 | +40% |
+| a-05 (rev 2) | 8.5 KB | ~1150 | +17% |
+| a-07 (rev 3) | 8.8 KB | ~1200 | +3% |
+| a-09 (final, GO) | 10.2 KB | 1,346 | +16% |
+
+Plan grew 2x total (5KB→10KB) vs 7.5x in the unconstrained baseline (4KB→30KB).
+
+**What made it converge (all 6 factors required):**
+1. **Constrained planner prompt** — size limits prevented plan bloat, scope constraint prevented feature creep
+2. **Validate feedback** — Claude assessed each issue as ACCEPT/DEFER/REJECT instead of blindly fixing everything. Deferred migration strategy ("out of scope for this feature") and partial-accepted Redis ("deployment config, not feature scope")
+3. **Filter severity** — only critical+major issues reached Claude; minor noise filtered out
+4. **Keep/trim** — GPT told Claude what to preserve and what to simplify, preventing good content from being accidentally removed or unnecessarily elaborated
+5. **Resolution guidance** — GPT stated acceptance criteria per issue, giving Claude a concrete target
+6. **max_turns=2** — tight text-only responses without tool-use sprawl
+
+**GPT's GO review praised:**
+- Architectural refactor (extensions.py split)
+- Request parsing sequence (is_json → get_json → isinstance)
+- IntegrityError rollback with session-recovery test
+- Input normalization strategy
+- Rate limiting scope tradeoff (memory:// for pre-prod)
+
+**Full experiment comparison:**
+
+| # | Config | Issues | Converged? | Cost | Time | Plan Size |
+|---|--------|--------|-----------|------|------|-----------|
+| 1 | Sonnet baseline | 6→8→7 (3r) | No | $0.26 | 254s | 15 KB |
+| 2 | Sonnet + self-review | 7→6→7 (3r) | No | $0.79 | 700s | 11 KB |
+| 3 | Sonnet + guidance | 8→5→5 (3r) | No | $0.31 | 311s | 15 KB |
+| 4 | Opus high mt=1 | 4→1→1→1→4→1→4→5 (8r) | No | $1.15 | 595s | 30 KB |
+| 5 | Opus high mt=10 | 5→4→4→4→4→5→4→5→4→3 (10r) | No | $3.83 | 2959s | 29 KB |
+| 6 | Opus med mt=5 | 5→6→4→4→4→4 (6r) | No | $1.67 | 1286s | ~25 KB |
+| **7** | **Opus med constrained** | **5→4→4→4→GO** | **YES (R5)** | **$0.87** | **791s** | **10 KB** |

@@ -499,42 +499,65 @@ Three approaches were tested in A/B experiments:
 | Sonnet + guidance | 8/5/5 | $0.31 | Low |
 | **Opus + high + thinking + guidance** | **4/1/1** | ~$0.33 | High |
 
-**Core conclusion:** GPT will never say GO on its own for a complex feature plan. The loop produces better plans each round, but the reviewer always finds more to critique. The right strategy is controlling *when to stop*, not *how to make GPT say GO*. Opus + thinking reaches "implementation-ready" quality (1 issue) dramatically faster than Sonnet.
+**Experiment 7: CONVERGED** — With the full feature set and a constrained planner prompt, GPT said GO at round 5 for the first time across all experiments.
 
-### Convergence Strategy for v1
+| # | Configuration | Issues | Converged? | Cost | Time | Plan |
+|---|---------------|--------|-----------|------|------|------|
+| 1 | Sonnet baseline | 6→8→7 (3r) | No | $0.26 | 254s | 15 KB |
+| 2 | Sonnet + self-review | 7→6→7 (3r) | No | $0.79 | 700s | 11 KB |
+| 3 | Sonnet + guidance | 8→5→5 (3r) | No | $0.31 | 311s | 15 KB |
+| 4 | Opus high mt=1 | 4→1→1→1→4→1→4→5 (8r) | No | $1.15 | 595s | 30 KB |
+| 5 | Opus high mt=10 | 5→4→4→...→3 (10r) | No | $3.83 | 2959s | 29 KB |
+| 6 | Opus med mt=5, old prompt | 5→6→4→4→4→4 (6r) | No | $1.67 | 1286s | ~25 KB |
+| **7** | **Opus med mt=2, constrained** | **5→4→4→4→GO** | **YES (R5)** | **$0.87** | **791s** | **10 KB** |
 
-Based on all four experiments, the recommended v1 default loop:
+### What Made It Converge (Experiment 7)
 
-| Component | What | Why |
-|-----------|------|-----|
-| **Zero-critical threshold** | Stop when no `critical` issues remain | GPT's criticals are genuine blockers; major/minor are acceptable for implementation |
-| **Hard cap at 3-5 rounds** | Stop regardless after cap | Diminishing returns after round 3; cost grows linearly but quality plateaus |
-| **Resolution guidance ON** | GPT provides `resolution_guidance` + `target_section` per issue | 3-round trend (8→5→5) justifies +17% cost; helps most when plan has real gaps |
-| **Single wrap-up pass per round** | Claude compresses plan after revision | Controls bloat (~$0.03/pass); proven by self-review experiment |
-| **Human fallback** | Pause for human if criticals persist at cap | Some architectural issues need human judgment |
+Six factors combined, all required:
 
-### Model Selection
+| Factor | What | Impact |
+|--------|------|--------|
+| **Constrained planner prompt** | Max 8 tasks/milestone, 1-2 sentences per task, under 3000 words, "implement ONLY what was requested" | Plan stayed 10 KB (vs 30 KB unconstrained). Prevented scope creep. |
+| **Validate feedback** | Claude assesses each issue: ACCEPT (fix), DEFER (out of scope), REJECT (not valid) | Claude deferred migration strategy and partial-accepted Redis requirement. Stopped blindly adding complexity. |
+| **Filter severity** | Only critical + major issues passed to Claude | Removed minor noise. GPT still reports minors in review but Claude doesn't act on them. |
+| **Keep/trim** | GPT lists what to preserve and what to simplify | Prevented good content from being accidentally removed. Actively reduced bloat. |
+| **Resolution guidance** | GPT states acceptance criteria per issue | Claude had concrete targets instead of guessing what "resolved" means. |
+| **max_turns=2** | Thinking needs 2 turns (think + respond), no more | Tight text-only responses. No tool-use sprawl that inflated Experiment 5 to $3.83. |
 
-| Use Case | Planner Config | Expected Rounds | Notes |
-|----------|---------------|----------------|-------|
-| **Budget** | Sonnet + guidance | 3-5 | Cheaper per round but more rounds needed; ~5 issues remain |
-| **Quality (recommended)** | Opus + high effort + thinking + guidance | 2-3 | Gets to 1 issue by R2; more expensive per round but fewer rounds needed |
-| **Fast iteration** | Sonnet + no guidance | 3 (capped) | Cheapest; accept 6-8 remaining issues for implementation to handle |
+### Convergence Strategy for v1 (Final)
 
-### Cost Projection
+Based on all seven experiments, the recommended v1 default:
 
-| Configuration | Rounds | Est. Cost | Est. Time |
-|---------------|--------|-----------|-----------|
-| No tuning (Sonnet baseline) | 6+ (never converges) | $0.80+ | 13+ min |
-| Sonnet + guidance + 3r cap + wrap-up | 3 | ~$0.39 | ~6 min |
-| Opus + guidance + 3r cap | 2-3 | ~$0.33-0.45 | ~4 min |
-| Opus + guidance + zero-critical stop | 2 (projected) | ~$0.20 | ~3 min |
+| Component | Setting | Why |
+|-----------|---------|-----|
+| **Planner model** | `claude-opus-4-6` | Opus resolves issues faster than Sonnet (fewer rounds = lower total cost) |
+| **Planner effort** | `medium` | High effort + max_turns=10 caused $3.83 blowout; medium is sufficient |
+| **Planner thinking** | `adaptive` | Enables deeper reasoning; combined with max_turns=2 stays tight |
+| **max_turns** | `2` | Enough for think + respond; prevents tool-use cost creep |
+| **Reviewer model** | `gpt-5.4` | Consistent, thorough reviewer |
+| **Reviewer reasoning** | `high` | More structured, stable reviews |
+| **Resolution guidance** | ON | Acceptance criteria per issue |
+| **Keep/trim** | ON | Preserve good content, flag bloat |
+| **Validate feedback** | ON | Claude filters invalid/out-of-scope feedback |
+| **Severity filter** | `critical,major` | Ignore minor noise |
+| **Constrained prompt** | ON | Size + scope limits on plan output |
+| **Hard cap** | 5-6 rounds | Safety net; Experiment 7 converged at round 5 |
+| **Human fallback** | If criticals persist at cap | Last resort |
+
+### Cost Projection (Updated)
+
+| Configuration | Rounds | Cost | Time |
+|---------------|--------|------|------|
+| No tuning (Sonnet baseline) | 6+ (never) | $0.80+ | 13+ min |
+| Sonnet + guidance + 3r cap | 3 | ~$0.39 | ~6 min |
+| **v1 default (Opus + all features)** | **5 (converges)** | **~$0.87** | **~13 min** |
+| v1 default with 3r cap | 3 | ~$0.45 | ~6 min |
 
 ### Note on Final Output Quality
 
-Despite non-convergence, the review loop produces materially better plans than a single pass. The final plan addresses error handling, migration safety, rate limiting configuration, JWT specifics, and deployment gates — none of which were in the initial draft. When these plans are forwarded to orchestrator-auto for implementation, the implementation quality is notably higher because the plan already anticipates edge cases.
+The converged plan (Experiment 7) is 10 KB, 1,346 words, 5 milestones — well within the 3,000-word constraint. GPT's GO review praised the architectural refactor, request parsing sequence, IntegrityError rollback handling, input normalization strategy, and rate limiting scope tradeoff. The plan is implementation-ready for orchestrator-auto.
 
-**The value is in the process, not in achieving a clean GO.** The convergence strategy should optimize for "good enough to implement well" rather than "zero issues."
+**The convergence problem is solved.** The combination of constrained prompts, feedback validation, severity filtering, keep/trim guidance, and resolution criteria produces plans that GPT approves within 5 rounds.
 
 ---
 
@@ -648,4 +671,7 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Artifact export timing | Not specified | Explicit table per event | Senior dev: audit model clarity |
 | Observability | Not specified | Headless default, `--verbose`, `--tui`, `--debug` flags, session-scoped log files | Gap: no logging or debug story in v1.0 |
 | DB schema | 5 tables | 6 tables (added `blockers`) | POC 5a: pause/resume lifecycle requires persistent blocker records with source, question, answer, resolution status |
-| Convergence strategy | Not addressed | Severity threshold + max rounds + acceptance criteria options | POC 5b: loop doesn't converge naively; 40+ issues across 6 rounds, plan bloats 7.5x. Convergence tuning is critical path. |
+| Convergence strategy | Not addressed | 6-factor combination: constrained prompt, validate feedback, filter severity, keep/trim, resolution guidance, max_turns=2 | POC 5b: 7 experiments, convergence achieved at round 5 ($0.87, 10 KB plan). Solved. |
+| Planner prompt | Unconstrained | Max 8 tasks/milestone, 1-2 sentences, under 3000 words, scope-locked | POC 5b: unconstrained prompt caused 7.5x plan bloat and scope creep (registration → JWT+login+auth) |
+| Reviewer schema | verdict + issues + summary | Added resolution_guidance, target_section, keep[], trim[] | Senior dev suggestion + POC 5b: guidance gives Claude concrete targets; keep/trim prevents bloat |
+| Feedback validation | Not addressed | Claude ACCEPT/DEFER/REJECT per issue | POC 5b: mirrors manual workflow where user assesses feedback validity before fixing |

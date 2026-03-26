@@ -188,11 +188,42 @@ The e2e loop script now supports many experimental flags:
 
 ---
 
-## Pending Experiments
+### Experiment 6: Opus medium + keep-trim (max_turns=5, old prompt)
 
-Two runs currently in progress:
+| Config | Value |
+|--------|-------|
+| Planner | claude-opus-4-6 (effort=medium, thinking=adaptive, max_turns=5) |
+| Reviewer | gpt-5.4 (reasoning_effort=high) |
+| Flags | `--keep-trim --validate-feedback --resolution-guidance --filter-severity critical,major` |
+| Prompt | Old planner prompt (no size/scope constraints) |
 
-| Run | Config | Output Dir |
-|-----|--------|-----------|
-| B (killed & restarted) | Opus medium + keep-trim + validate + guidance + filter crit/major, 6r, max_turns=5 | `/tmp/poc_e2e_opus_keeptrim_v2` |
-| C (new prompt) | Opus medium + keep-trim + validate + guidance + filter crit/major, 6r, max_turns=1, **constrained planner prompt** | `/tmp/poc_e2e_constrained_prompt` |
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| 6 | 5→6→4→4→4→4 | $1.67 | 1286s (21 min) |
+
+**Result:** Did not converge. max_turns=5 made Opus use tools, increasing cost 2.4x vs constrained runs. Stuck at 4 issues.
+
+### Experiment 7: CONVERGED — Constrained Prompt (max_turns=2)
+
+**First successful convergence across all experiments.**
+
+| Config | Value |
+|--------|-------|
+| Planner | claude-opus-4-6 (effort=medium, thinking=adaptive, max_turns=2) |
+| Reviewer | gpt-5.4 (reasoning_effort=high) |
+| Flags | `--keep-trim --validate-feedback --resolution-guidance --filter-severity critical,major` |
+| Prompt | **Constrained planner prompt** (max 8 tasks/milestone, 1-2 sentences, under 3000 words, stay on scope) |
+
+| Rounds | Issues | Cost | Time | Plan Size |
+|--------|--------|------|------|-----------|
+| 5 | **5→4→4→4→GO** | **$0.87** | **791s (13 min)** | 10 KB (1,346 words) |
+
+**Result: CONVERGED at round 5.** GPT said GO with 3 minor notes. Plan grew 2x (5→10 KB) vs 7.5x in baseline.
+
+**Winning configuration (6 factors combined):**
+1. Constrained planner prompt (size + scope limits)
+2. Validate feedback (ACCEPT/DEFER/REJECT)
+3. Filter severity (critical + major only)
+4. Keep/trim (preserve good content, remove bloat)
+5. Resolution guidance (acceptance criteria per issue)
+6. max_turns=2 (tight responses, no tool sprawl)
