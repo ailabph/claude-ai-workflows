@@ -24,7 +24,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 
 | POC | Script | Status | Result | Notes |
 |-----|--------|--------|--------|-------|
-| 1b | `poc_reviewer_codex_mcp.py` | Pending | — | Compare against 1a |
+| 1b | `poc_reviewer_codex_mcp.py` | Done | 1/1 parsed | GPT via Codex MCP: NO_GO, 5 issues, 30.9s, $0.035. 2.2x slower than Direct API, 5x more expensive. Requires `codex login` for auth (env passthrough unreliable). |
 | 1c | `poc_reviewer_opencode_http.py` | Pending | — | Compare against 1a |
 | 4b | `poc_context_synthesis.py` | Pending | — | Depends on 3a |
 | 5a | `poc_failure_paths.py` | Pending | — | Depends on 2a + 3a |
@@ -44,6 +44,6 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 |-------|-------|------|---------|
 | A | 3 | 3 | 0 |
 | B | 3 | 3 | 0 |
-| C | 4 | 0 | 4 |
+| C | 4 | 1 | 3 |
 | D | 2 | 0 | 2 |
-| **Total** | **13** | **6** | **7** |
+| **Total** | **13** | **7** | **6** |
