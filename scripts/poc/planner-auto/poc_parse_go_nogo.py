@@ -67,6 +67,8 @@ class ReviewerResponse:
     verdict: Verdict
     issues: list[ReviewIssue] = field(default_factory=list)
     summary: str = ""
+    keep: list[str] = field(default_factory=list)
+    trim: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +166,14 @@ def _try_parse_json(text: str) -> ReviewerResponse | None:
     issues = _issues_from_dicts(raw_issues) if isinstance(raw_issues, list) else []
 
     summary = str(data.get("summary", ""))
-    return ReviewerResponse(verdict=verdict, issues=issues, summary=summary)
+
+    # Extract optional keep/trim lists
+    raw_keep = data.get("keep", [])
+    keep = [str(item) for item in raw_keep] if isinstance(raw_keep, list) else []
+    raw_trim = data.get("trim", [])
+    trim = [str(item) for item in raw_trim] if isinstance(raw_trim, list) else []
+
+    return ReviewerResponse(verdict=verdict, issues=issues, summary=summary, keep=keep, trim=trim)
 
 
 # ---------------------------------------------------------------------------

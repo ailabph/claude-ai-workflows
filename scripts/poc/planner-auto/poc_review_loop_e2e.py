@@ -70,11 +70,12 @@ from poc_artifact_export import export_all
 # POC 4a -- planner headless (system prompt + prompt builder)
 from poc_planner_headless import PLANNER_SYSTEM_PROMPT, SAMPLE_FILES, build_user_prompt
 
-# POC 1a -- reviewer (both standard and guidance-enhanced prompts)
+# POC 1a -- reviewer (standard, guidance, and keep/trim prompts)
 from poc_reviewer_direct_api import (
     run_review,
     SYSTEM_PROMPT as REVIEWER_SYSTEM_PROMPT,
     SYSTEM_PROMPT_WITH_GUIDANCE as REVIEWER_SYSTEM_PROMPT_GUIDED,
+    SYSTEM_PROMPT_WITH_KEEP_TRIM as REVIEWER_SYSTEM_PROMPT_KEEP_TRIM,
 )
 
 
@@ -104,10 +105,13 @@ async def _call_claude(
     thinking: bool = False,
 ) -> ResultMessage | None:
     """Call Claude via the Agent SDK and return the ResultMessage."""
+    # max_turns=1 produces tighter, more focused plans.
+    # Higher values let Claude use tools but increase cost and cause scope creep.
+    turns = 1
     opts = ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=model,
-        max_turns=1,
+        max_turns=turns,
         permission_mode="bypassPermissions",
         stderr=lambda s: None,
     )
@@ -180,18 +184,55 @@ async def revise_plan(
     use_guidance: bool = False,
     effort: str | None = None,
     thinking: bool = False,
+    validate_feedback: bool = False,
+    filter_severity: list[str] | None = None,
+    keep_trim: bool = False,
 ) -> dict:
     """Revise a plan based on reviewer feedback via Claude.
 
     If use_guidance=True, includes resolution_guidance from the reviewer in the
     revision prompt, giving Claude concrete acceptance criteria per issue.
 
+    If validate_feedback=True, instructs Claude to assess each issue's validity
+    before fixing — only apply valid feedback, skip or defer invalid/out-of-scope items.
+
+    If filter_severity is set, only includes issues with matching severity levels
+    (e.g., ["critical", "major"] to skip minor issues).
+
     Returns:
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
-    formatted_issues = format_issues_for_revision(review_issues, include_guidance=use_guidance)
+    # Filter issues by severity if requested
+    filtered_response = review_issues
+    if filter_severity:
+        filtered_issues = [
+            iss for iss in review_issues.issues
+            if iss.severity.value in filter_severity
+        ]
+        filtered_response = ReviewerResponse(
+            verdict=review_issues.verdict,
+            issues=filtered_issues,
+            summary=review_issues.summary,
+        )
 
-    if use_guidance:
+    formatted_issues = format_issues_for_revision(filtered_response, include_guidance=use_guidance)
+
+    if validate_feedback:
+        instructions = (
+            "## Instructions\n"
+            "Before fixing anything, assess each issue for validity:\n"
+            "- Is this issue relevant to the plan's scope and requirements?\n"
+            "- Is the concern valid given the project's context and constraints?\n"
+            "- Would fixing it genuinely improve the plan, or is it over-engineering?\n\n"
+            "For each issue, do ONE of:\n"
+            "- **ACCEPT and FIX**: The issue is valid — revise the plan to address it.\n"
+            "- **DEFER**: The issue is valid but belongs in a later phase — note it briefly but don't add scope.\n"
+            "- **REJECT**: The issue is not valid for this plan's context — ignore it.\n\n"
+            "Do not add unnecessary complexity. Do not introduce new features or scope beyond "
+            "what's needed to address accepted issues. Keep the plan concise.\n"
+            "Return the complete revised plan."
+        )
+    elif use_guidance:
         instructions = (
             "## Instructions\n"
             "Revise the plan to address each issue. Each issue includes a 'To resolve' "
@@ -208,17 +249,26 @@ async def revise_plan(
             "Return the complete revised plan."
         )
 
+    # Build keep/trim sections if available
+    keep_trim_section = ""
+    if keep_trim and filtered_response.keep:
+        keep_items = "\n".join(f"- {item}" for item in filtered_response.keep)
+        keep_trim_section += f"\n## What to Keep (do NOT change these)\n{keep_items}\n"
+    if keep_trim and filtered_response.trim:
+        trim_items = "\n".join(f"- {item}" for item in filtered_response.trim)
+        keep_trim_section += f"\n## What to Trim (simplify or remove these)\n{trim_items}\n"
+
     revision_prompt = (
         "The following implementation plan was reviewed and received a NO_GO verdict.\n"
-        "Please revise the plan to address all the issues listed below.\n"
+        "Please revise the plan to address the issues listed below.\n"
         "Keep the same milestone format (## Milestone N: Name, ### Tasks, ### Deliverables).\n"
         "\n"
         "## Current Plan\n"
         f"{current_plan}\n"
         "\n"
-        "## Issues to Address\n"
+        "## Reviewer Feedback\n"
         f"{formatted_issues}\n"
-        "\n"
+        f"{keep_trim_section}\n"
         f"{instructions}"
     )
 
@@ -493,9 +543,23 @@ def _export_plan(plan_text: str, artifact_num: int, output_dir: Path, suffix: st
     return path
 
 
-def _export_review(review_result: dict, parsed: ReviewerResponse, artifact_num: int, output_dir: Path) -> Path:
-    """Write a review artifact file and return its path."""
+def _export_review(
+    review_result: dict,
+    parsed: ReviewerResponse,
+    artifact_num: int,
+    output_dir: Path,
+    filter_severity: list[str] | None = None,
+) -> Path:
+    """Write a review artifact file and return its path.
+
+    If filter_severity is set, only includes issues matching those severity levels.
+    """
     filename = f"a-{artifact_num:02d}-review.md"
+
+    # Filter issues for export if severity filter is active
+    export_issues = parsed.issues
+    if filter_severity:
+        export_issues = [iss for iss in parsed.issues if iss.severity.value in filter_severity]
 
     lines: list[str] = [
         f"# Review",
@@ -507,12 +571,28 @@ def _export_review(review_result: dict, parsed: ReviewerResponse, artifact_num: 
         "",
     ]
 
-    if parsed.issues:
+    if export_issues:
         lines.append("## Issues")
-        for i, issue in enumerate(parsed.issues, 1):
+        for i, issue in enumerate(export_issues, 1):
             lines.append(f"{i}. **[{issue.severity.value}]** {issue.description}")
             if issue.rationale:
                 lines.append(f"   - Rationale: {issue.rationale}")
+            if issue.resolution_guidance:
+                lines.append(f"   - To resolve: {issue.resolution_guidance}")
+            if issue.target_section:
+                lines.append(f"   - Target: {issue.target_section}")
+        lines.append("")
+
+    if parsed.keep:
+        lines.append("## What to Keep")
+        for item in parsed.keep:
+            lines.append(f"- {item}")
+        lines.append("")
+
+    if parsed.trim:
+        lines.append("## What to Trim")
+        for item in parsed.trim:
+            lines.append(f"- {item}")
         lines.append("")
 
     path = output_dir / filename
@@ -537,6 +617,9 @@ async def run_e2e_loop(
     planner_effort: str | None = None,
     planner_thinking: bool = False,
     reviewer_reasoning_effort: str | None = None,
+    validate_feedback: bool = False,
+    filter_severity: list[str] | None = None,
+    keep_trim: bool = False,
 ) -> dict:
     """Run the full plan -> review -> revise -> review -> GO loop.
 
@@ -589,7 +672,12 @@ async def run_e2e_loop(
         round_info: dict = {"round": round_num}
 
         # ── Review current plan via GPT ──
-        reviewer_prompt = REVIEWER_SYSTEM_PROMPT_GUIDED if use_guidance else None
+        if keep_trim:
+            reviewer_prompt = REVIEWER_SYSTEM_PROMPT_KEEP_TRIM
+        elif use_guidance:
+            reviewer_prompt = REVIEWER_SYSTEM_PROMPT_GUIDED
+        else:
+            reviewer_prompt = None
         review_result = run_review(
             gpt_client, current_plan, reviewer_model,
             system_prompt=reviewer_prompt,
@@ -628,7 +716,7 @@ async def run_e2e_loop(
 
         # Export review artifact: a-{2*round_num:02d}-review.md
         review_artifact_num = 2 * round_num
-        review_path = _export_review(review_result, parsed, review_artifact_num, output_dir)
+        review_path = _export_review(review_result, parsed, review_artifact_num, output_dir, filter_severity=filter_severity)
         artifacts.append(review_path.name)
 
         # ── Check verdict ──
@@ -647,7 +735,12 @@ async def run_e2e_loop(
             break
 
         # ── NO_GO: Revise plan via Claude ──
-        revision_result = await revise_plan(current_plan, parsed, planner_model, use_guidance=use_guidance, effort=planner_effort, thinking=planner_thinking)
+        revision_result = await revise_plan(
+            current_plan, parsed, planner_model,
+            use_guidance=use_guidance, effort=planner_effort, thinking=planner_thinking,
+            validate_feedback=validate_feedback, filter_severity=filter_severity,
+            keep_trim=keep_trim,
+        )
         current_plan = revision_result["plan_text"]
         revision_duration_ms = revision_result["duration_ms"]
         revision_cost = revision_result["cost_usd"] or 0.0
@@ -909,6 +1002,24 @@ def main() -> None:
         choices=["low", "medium", "high"],
         help="GPT reasoning effort level (default: none — uses temperature=0.3 instead)",
     )
+    parser.add_argument(
+        "--validate-feedback",
+        action="store_true",
+        default=False,
+        help="Claude assesses each issue's validity before fixing (accept/defer/reject)",
+    )
+    parser.add_argument(
+        "--filter-severity",
+        type=str,
+        default=None,
+        help="Comma-separated severity levels to include (e.g., 'critical,major' to skip minor)",
+    )
+    parser.add_argument(
+        "--keep-trim",
+        action="store_true",
+        default=False,
+        help="GPT reviewer includes 'what to keep' and 'what to trim' sections to guide revision",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -941,6 +1052,10 @@ def main() -> None:
     print(f"P. effort:   {args.planner_effort or 'default'}")
     print(f"P. thinking: {'ON' if args.planner_thinking else 'OFF'}")
     print(f"R. reasoning: {args.reviewer_reasoning or 'default (temp=0.3)'}")
+    severity_filter = args.filter_severity.split(",") if args.filter_severity else None
+    print(f"Validate FB: {'ON' if args.validate_feedback else 'OFF'}")
+    print(f"Keep/trim:   {'ON' if args.keep_trim else 'OFF'}")
+    print(f"Sev. filter: {','.join(severity_filter) if severity_filter else 'all'}")
     print(f"Output:     {output_dir}")
     print(f"Session:    {session_id}")
     print(f"{'=' * 55}")
@@ -961,6 +1076,9 @@ def main() -> None:
             planner_effort=args.planner_effort,
             planner_thinking=args.planner_thinking,
             reviewer_reasoning_effort=args.reviewer_reasoning,
+            validate_feedback=args.validate_feedback,
+            filter_severity=severity_filter,
+            keep_trim=args.keep_trim,
         )
     )
 
