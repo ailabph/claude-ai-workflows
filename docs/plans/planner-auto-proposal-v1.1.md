@@ -420,6 +420,88 @@ Note: planner-auto defaults to headless/quiet because it's designed to run as pa
 | GPT review output unpredictable | Complicates parsing | `ReviewerContract` schema + structured prompt + fallback to keyword matching | Strengthened in v1.1 |
 | Per-response sub-agent latency | Affects Plan 1 UX | **Deferred** to post-v1 optimization | Descoped in v1.1 |
 | File/DB state drift | Tool and artifacts disagree | **Eliminated** — DB is canonical, files are exports | Resolved in v1.1 |
+| Review loop non-convergence | Loop runs indefinitely, cost escalates | Convergence strategy required (see below) | **New — discovered by POC 5b** |
+
+---
+
+## Review Loop Convergence (POC 5b Findings)
+
+POC 5b ran the full plan→review→revise loop with real API calls (Claude Sonnet + GPT-5.4). **The loop did not converge in 6 rounds** ($0.785 total, 13 minutes). This matches the manual experience: planning takes ~30 minutes but eventually produces a high-quality plan that orchestrator-auto implements well.
+
+### What Happens in the Loop
+
+| Round | Issues | Plan Size | Revision Time | Round Cost |
+|-------|--------|-----------|---------------|------------|
+| 1 | 9 | 4 KB | 43s | $0.062 |
+| 2 | 8 | 8 KB | 66s | $0.084 |
+| 3 | 6 | 11 KB | 92s | $0.113 |
+| 4 | 9 | 17 KB | 142s | $0.157 |
+| 5 | 6 | 21 KB | 152s | $0.164 |
+| 6 | 6 | 30 KB | 183s | $0.184 |
+
+**Issue count oscillates (9→8→6→9→6→6)** instead of converging to zero. Plan size grows 7.5x (4KB→30KB).
+
+### Why It Doesn't Converge
+
+Analysis of all 6 review artifacts revealed three root causes:
+
+**1. Claude adds features that create new issues.** When Claude fixes "authentication incomplete," it adds JWT with refresh tokens, which GPT then flags for "missing revocation strategy." Each fix expands the attack surface for the reviewer.
+
+**2. GPT critiques symptoms, not root causes.** Round 1: "Migration strategy undefined." Round 4: "Alembic couples to app code." Round 6: "Migration gates depend on manual discipline." Same domain, different angle each round — GPT never says "here's what would make this acceptable."
+
+**3. Plan bloat reduces revision quality.** By round 4+, Claude is revising a 17KB+ plan and spending 140s+ per revision. Larger plans mean more surface area for GPT to critique, creating a positive feedback loop.
+
+### Issue Lifecycle (6 rounds, 40+ unique issues)
+
+| Category | Count | Examples |
+|----------|-------|---------|
+| Resolved by round 6 | 6 (15%) | Logging, schema contracts, password policy — mostly documentation/clarification issues |
+| Persistent 3+ rounds | 16+ (40%) | Migration safety, rate limiting, auth flow — architectural concerns that specification can't close |
+| Newly introduced per round | 3-4 avg | Each revision creates new failure modes GPT catches |
+
+### Convergence Strategy for planner-auto
+
+The loop works and produces high-quality plans — the issue is knowing when to stop. Options to explore during implementation:
+
+**A. Severity-based threshold (recommended starting point)**
+- GO if zero `critical` issues remain (regardless of major/minor count)
+- Rationale: manual experience confirms GPT eventually says GO once critical gaps are addressed; major/minor issues are acceptable scope for implementation to handle
+
+**B. Issue churn detection**
+- Track which issues are new vs persistent across rounds
+- If round N has no new `critical` issues and no persistent `critical` issues, treat as GO
+- Detects when revisions are producing diminishing returns
+
+**C. Max rounds with "good enough" heuristic**
+- Hard cap at 3-5 rounds
+- After max rounds, if no `critical` issues remain, accept as GO
+- If `critical` issues persist after max rounds, pause for human review
+
+**D. Reviewer acceptance criteria prompt**
+- After round 2+, ask GPT: "For each remaining issue, state what specifically would resolve it"
+- Feed those acceptance criteria to Claude instead of the raw issues
+- Addresses the "GPT critiques but doesn't prescribe" problem
+
+**E. Plan size cap**
+- If plan exceeds a threshold (e.g., 15KB), tell Claude to revise concisely rather than adding detail
+- Prevents the bloat→more issues→more bloat cycle
+
+### Cost Projection
+
+| Strategy | Expected Rounds | Est. Cost | Est. Time |
+|----------|----------------|-----------|-----------|
+| No convergence tuning | 6+ (may never) | $0.80+ | 13+ min |
+| Severity threshold (A) | 2-4 | $0.15-0.35 | 3-7 min |
+| Max rounds + good enough (C) | 3 (capped) | $0.25 | 4-5 min |
+| Acceptance criteria (D) | 2-3 | $0.15-0.25 | 3-5 min |
+
+### Note on Final Output Quality
+
+Despite non-convergence, the review loop produces materially better plans than a single pass. The final plan (round 6) addresses error handling, migration safety, rate limiting configuration, JWT specifics, and deployment gates — none of which were in the initial draft. When these plans are forwarded to orchestrator-auto for implementation, the implementation quality is notably higher because the plan already anticipates edge cases.
+
+**The value is in the process, not in achieving a clean GO.** The convergence strategy should optimize for "good enough to implement well" rather than "zero issues."
+
+---
 
 ## Pre-Implementation POCs (Revised)
 
@@ -531,3 +613,4 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Artifact export timing | Not specified | Explicit table per event | Senior dev: audit model clarity |
 | Observability | Not specified | Headless default, `--verbose`, `--tui`, `--debug` flags, session-scoped log files | Gap: no logging or debug story in v1.0 |
 | DB schema | 5 tables | 6 tables (added `blockers`) | POC 5a: pause/resume lifecycle requires persistent blocker records with source, question, answer, resolution status |
+| Convergence strategy | Not addressed | Severity threshold + max rounds + acceptance criteria options | POC 5b: loop doesn't converge naively; 40+ issues across 6 rounds, plan bloats 7.5x. Convergence tuning is critical path. |
