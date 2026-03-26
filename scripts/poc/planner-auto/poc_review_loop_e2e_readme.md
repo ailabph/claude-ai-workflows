@@ -34,3 +34,21 @@ Prove the full review loop works end-to-end: plan → reviewer → parse → if 
 - `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` env vars
 - POC 2a parser, POC 3a DB schema, POC 3b artifact export
 - POC 4a planner headless (for representative Claude responses)
+
+## Actual Results
+
+- Full loop works end-to-end: plan → review → revise → review (real API calls to both Claude and GPT)
+- DB consistency verified: 5/5 checks passed (session, drafts, reviews, messages, draft numbering)
+- Artifact numbering correct: a-01-plan.md, a-02-review.md, ..., a-07-plan.md
+- **Did not converge in 3 rounds** — GPT keeps finding new issues each round (7 → 6 → 7 issues)
+- Each revision addresses prior issues but GPT surfaces new concerns at similar depth
+- Total cost for 3 rounds: $0.260 (Claude: $0.231 for plan+revisions, GPT: $0.029 for reviews)
+- Total wall clock: 257.3s (~4.3 minutes) for 3 rounds
+- Revision latency grows per round (49s → 61s → 80s) as plan grows from incorporating feedback
+
+**Key findings for planner-auto design:**
+- The review loop mechanism works — all components integrate cleanly
+- Convergence tuning needed: either relax reviewer threshold, cap severity levels, or add a "good enough" heuristic (e.g., no critical issues = GO)
+- Claude revisions are substantive — each draft genuinely addresses the prior issues
+- Cost scales linearly per round (~$0.09/round), so capping at 3-5 rounds is important
+- Revision prompts may need to tell Claude to be more concise to avoid plan bloat
