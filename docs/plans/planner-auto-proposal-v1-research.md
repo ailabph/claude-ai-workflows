@@ -1,6 +1,6 @@
 # Planner-Auto Research Findings
 
-Research conducted 2026-03-26 using Kagi API (search + summarize).
+Research conducted 2026-03-26 using Kagi API (search + summarize), plus targeted doc and issue validation.
 
 ---
 
@@ -16,12 +16,12 @@ opencode run "your prompt here"
 opencode -p "your prompt"
 ```
 
-This is the primary path for scripting and automation.
+This is the simplest CLI path for scripting and automation, but current issue reports make it a poor primary foundation for planner-auto.
 
 ### Known Issues
 
-- **subprocess.Popen hangs**: [opencode/issues/11891](https://github.com/anomalyco/opencode/issues/11891) — launching OpenCode via Python subprocess.Popen causes indefinite hangs. This is a confirmed bug.
-- **Non-interactive pipeline limitations**: [opencode/issues/13851](https://github.com/anomalyco/opencode/issues/13851) — `opencode run` in non-interactive mode cannot reliably execute repo-changing tools (write/edit) without user confirmation prompts. The `--force` / `-f` flag may help but is not fully resolved.
+- **`opencode run` can hang after tool calls complete**: [opencode/issues/17516](https://github.com/anomalyco/opencode/issues/17516) — a March 2026 report shows `opencode run` finishing Read/Write work and then never exiting, which breaks subprocess-driven automation loops.
+- **Non-interactive pipeline limitations**: [opencode/issues/13851](https://github.com/anomalyco/opencode/issues/13851) — `opencode run` in non-interactive mode may fail to execute repo-changing tools (write/edit) reliably in CI-like flows because of permission/bootstrap behavior. The issue also reports `run --attach` problems for headless server usage in that version.
 
 ### Alternative: HTTP Server Mode
 
@@ -32,7 +32,14 @@ opencode serve
 # Set OPENCODE_SERVER_PASSWORD for auth
 ```
 
-This avoids subprocess issues entirely — planner-auto could POST prompts to the local server and read responses via HTTP. **This may be more reliable than subprocess invocation.**
+This avoids subprocess issues entirely — planner-auto could POST prompts to the local server and read responses via HTTP. The official server docs confirm:
+
+- OpenAPI spec at `/doc`
+- session/message APIs for programmatic control
+- HTTP basic auth via `OPENCODE_SERVER_PASSWORD`
+- SSE/event endpoints for streaming updates
+
+This makes `opencode serve` a real automation surface, not just an undocumented workaround.
 
 ### Alternative: Direct API Call
 
@@ -41,9 +48,9 @@ Skip OpenCode entirely and call the OpenAI/GPT API directly from Python. This re
 ### POC 1 Verdict
 
 Three approaches to test, in priority order:
-1. `opencode run "prompt" > output.md` — simplest, but known hanging issues
-2. `opencode serve` + HTTP requests — avoids subprocess, more reliable
-3. Direct GPT API call — fallback if OpenCode integration is unreliable
+1. `opencode serve` + HTTP requests — documented automation API, avoids subprocess hang risk
+2. Direct GPT API call — simplest reliable fallback if reviewer only needs plan text
+3. `opencode run "prompt" > output.md` — simplest shell path, but should be treated as experimental only
 
 ---
 
@@ -114,7 +121,7 @@ npm install -g @openai/codex
 claude mcp add codex -s user -- codex mcp-server
 ```
 
-Claude can then invoke GPT-5.4 through the Codex MCP tool directly within its agent loop — no file handoff, no subprocess, no hanging issues.
+Claude can then invoke GPT-5.4 through the Codex MCP tool directly within its agent loop — no subprocess management, and no dependence on `opencode run` batch behavior. Separately, OpenAI's Codex docs confirm first-class MCP configuration and `codex mcp` CLI support on the Codex side.
 
 ### Differences from planner-auto
 
@@ -123,7 +130,7 @@ Claude can then invoke GPT-5.4 through the Codex MCP tool directly within its ag
 | Domain | ML research papers | Software implementation plans |
 | Review target | Paper quality score | Plan feasibility (go/no-go) |
 | Artifact format | LaTeX papers | Milestone markdown plans |
-| Persistence | In-session only | Session folder with chat.csv, context tracker, numbered plan/review files |
+| Persistence | In-session only | SQLite canonical state plus exported audit artifacts (plan/review files, chat/context views) |
 | Audit trail | Minimal | Full (every draft and review preserved) |
 
 ---
@@ -139,18 +146,20 @@ subprocess.run(["opencode", "run", prompt], capture_output=True, text=True)
 ```
 
 - **Pro**: Uses existing OpenCode setup, GPT has tool access
-- **Con**: Known hanging issues, non-interactive tool limitations
+- **Con**: Known hanging issues, non-interactive tool limitations, weak fit for CI-style automation
 - **Risk**: HIGH
 
 ### Option B: OpenCode HTTP server
 
 ```python
 # Start once: opencode serve
-requests.post("http://localhost:PORT/api/run", json={"prompt": prompt})
+# Then drive the documented session/message HTTP APIs
+session = requests.post("http://localhost:4096/session", json={}).json()
+requests.post(f"http://localhost:4096/session/{session['id']}/message", json={...})
 ```
 
-- **Pro**: Avoids subprocess issues, GPT has tool access
-- **Con**: Requires server running in background, extra setup
+- **Pro**: Avoids subprocess issues, GPT has tool access, documented OpenAPI/session APIs
+- **Con**: Requires server lifecycle management and authentication/setup
 - **Risk**: MEDIUM
 
 ### Option C: Codex MCP server (ARIS approach)
@@ -161,9 +170,9 @@ claude mcp add codex -s user -- codex mcp-server
 
 Claude invokes GPT directly through MCP within its agent loop. No subprocess, no file handoff.
 
-- **Pro**: Clean integration, proven by ARIS, no process management
-- **Con**: Requires Codex CLI installed, MCP setup
-- **Risk**: LOW (proven in production by ARIS)
+- **Pro**: Clean integration, proven by ARIS, no subprocess management, keeps review inside the planner agent loop
+- **Con**: Requires Codex CLI installed, MCP setup, and confidence that planner-auto's Claude runtime can manage the needed MCP config cleanly
+- **Risk**: MEDIUM-LOW
 
 ### Option D: Direct OpenAI API
 
@@ -173,13 +182,21 @@ client = OpenAI()
 response = client.chat.completions.create(model="gpt-5.4", messages=[...])
 ```
 
-- **Pro**: Most reliable, no CLI dependencies
-- **Con**: GPT has no tool access (can't read repo files), just reviews plan text
-- **Risk**: LOW (but limited capability)
+- **Pro**: Most reliable, no CLI dependencies, easiest to test and ship as an initial reviewer adapter
+- **Con**: GPT has no tool access (can't read repo files), just reviews plan text unless planner-auto injects more context explicitly
+- **Risk**: LOW
 
 ### Recommendation
 
-**Option C (Codex MCP)** is the strongest choice — proven by ARIS, avoids subprocess issues, and gives GPT tool access within Claude's agent loop. Option D is the simplest fallback if MCP setup is a barrier (GPT only needs to read the plan file, which can be passed as prompt content).
+Do **not** make OpenCode subprocess the primary design.
+
+Recommended rollout:
+
+1. **If reviewer scope is plan-text review only, start with Option D (Direct API).** It is the fastest, most reliable way to prove the review loop and validate the reviewer contract.
+2. **If reviewer tool access or repo inspection is a real requirement, Option C (Codex MCP) is the strongest full-capability path.** ARIS validates the pattern, and Codex has first-class MCP support.
+3. **Keep Option B (OpenCode HTTP server) as a viable alternative** for teams already invested in OpenCode, especially now that the server API is documented.
+
+In short: **ship with Direct API or Codex MCP; avoid centering the design on `opencode run`.**
 
 ---
 
@@ -200,28 +217,32 @@ orchestrator-auto's existing `ExploreSubAgent` pattern (explore.py) is a good re
 
 | Proposal Assumption | Research Finding | Impact |
 |---------------------|-----------------|--------|
-| "Invoke OpenCode via subprocess" | Known hanging issues, unreliable for non-interactive use | **Change approach**: use Codex MCP or HTTP server instead |
-| "GPT reviews plan via file handoff" | ARIS proves MCP integration works for cross-model review | **Simplifies architecture**: no file handoff needed if using MCP |
-| "Numbered plan/review files" | ARIS doesn't use file-based handoff, keeps everything in-session | **Keep our approach**: file-based audit trail is a differentiator |
+| "Invoke OpenCode via subprocess" | Known hanging issues, unreliable for non-interactive use | **Change approach**: do not use subprocess as the primary adapter |
+| "GPT reviews plan via file handoff" | ARIS proves MCP integration works for cross-model review | **Optional simplification**: MCP removes handoff as a transport requirement, but exported artifacts are still useful for audit trail |
+| "Numbered plan/review files" | ARIS doesn't use file-based handoff, keeps everything in-session | **Keep our approach**: export numbered artifacts for audit trail, but do not use them as canonical state |
 | "Sub-agent updates after every response" | No blockers found, existing SDK patterns support this | **No change needed** |
 
 ### Recommended Changes to Proposal
 
-1. **Replace "OpenCode subprocess" with "Codex MCP server"** as the primary cross-model integration method
-2. **Add Option D (direct API) as fallback** for environments without Codex CLI
-3. **POC 1 should test Codex MCP setup** rather than OpenCode subprocess
-4. **Reference ARIS** as prior art and validation of the cross-model review pattern
+1. **Replace "OpenCode subprocess" with either "Codex MCP" or "Direct API"** as the primary reviewer adapter, depending on whether reviewer tool access is actually required
+2. **Keep OpenCode HTTP server as an alternative adapter** instead of treating it as a side note
+3. **POC 1 should test reviewer contract + adapter seam**, not just subprocess invocation
+4. **Reference ARIS** as prior art for cross-model review loops, while noting that its persistence model differs from planner-auto
+5. **Update proposal language to reflect SQLite canonical state + exported audit artifacts**
 
 ---
 
 ## Sources
 
 - [OpenCode CLI docs](https://opencode.ai/docs/cli/)
+- [OpenCode server docs](https://opencode.ai/docs/server/)
 - [OpenCode GitHub](https://github.com/opencode-ai/opencode)
 - [OpenCode subprocess hang issue #11891](https://github.com/anomalyco/opencode/issues/11891)
+- [OpenCode run hangs after tool calls issue #17516](https://github.com/anomalyco/opencode/issues/17516)
 - [OpenCode non-interactive issue #13851](https://github.com/anomalyco/opencode/issues/13851)
 - [Claude Code headless docs](https://code.claude.com/docs/en/headless)
 - [Claude Agent SDK Python](https://github.com/anthropics/claude-agent-sdk-python)
+- [OpenAI Codex MCP docs](https://developers.openai.com/codex/mcp)
 - [ARIS — Auto-claude-code-research-in-sleep](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep)
 - [Adversarial collaboration between AI coding tools (Reddit)](https://www.reddit.com/r/LocalLLaMA/comments/1navnzc/adversarial_collaboration_between_ai_coding_tools/)
 - [LLM-Collab: task planning via chain-of-thought](https://www.aimspress.com/article/doi/10.3934/aci.2024019)
