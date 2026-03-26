@@ -10,7 +10,7 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 |-----|--------|--------|--------|-------|
 | 2a | `poc_parse_go_nogo.py` | Done | 14/14 passed | JSON, XML, free-form fallback chain. Markdown-fenced JSON covered. Simplified GO regex after review. |
 | 3a | `poc_session_db.py` | Done | 13/13 passed | 5 tables, full lifecycle (setup→complete), WAL + foreign keys enabled, file-based DB inspectable with sqlite3 CLI. |
-| 1a | `poc_reviewer_direct_api.py` | Pending | — | — |
+| 1a | `poc_reviewer_direct_api.py` | Done | 3/3 consistent | GPT-5.4 returns NO_GO with 7-8 issues, all parseable. Avg latency 14.1s, avg cost $0.007/review. Verdict 100% consistent across runs. |
 
 ## Phase B (depends on Phase A)
 
@@ -42,8 +42,8 @@ Tracking sheet for all POC scripts. Updated as each POC is implemented and valid
 
 | Phase | Total | Done | Pending |
 |-------|-------|------|---------|
-| A | 3 | 2 | 1 |
+| A | 3 | 3 | 0 |
 | B | 3 | 0 | 3 |
 | C | 4 | 0 | 4 |
 | D | 2 | 0 | 2 |
-| **Total** | **13** | **2** | **11** |
+| **Total** | **13** | **3** | **10** |
