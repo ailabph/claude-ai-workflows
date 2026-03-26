@@ -351,3 +351,47 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | `planner-auto` | To be built | Generates reviewed plans (feeds `a-01-plans/`) |
 | `reviewer-fixer-auto` | Not yet planned | Post-implementation review (processes `a-03-for-review/`) |
 | PM agent | Not yet planned | Traffic controller across all pipeline stages |
+
+---
+
+## Proposed Implementation Split
+
+planner-auto should be built in two separate plans (phases) rather than a single monolithic plan. The two halves have different technical challenges, different risk profiles, and each is independently useful.
+
+### Plan 1: Conversation + Plan Generation (Phases 1-4)
+
+**Scope:** Session management, context loading, interactive conversation, sub-agent file tracking, milestone plan generation.
+
+**Delivers:** A working `planner-auto` CLI that produces a structured `a-01-plan.md` through interactive conversation with full audit trail (`chat.csv`, `context-tracker-live.md`).
+
+**Why standalone:** This is useful on its own — structured planning with context tracking and conversation history, even without the automated review loop.
+
+### Plan 2: Cross-Model Review Loop (Phases 5-8)
+
+**Scope:** OpenCode/GPT-5.4 programmatic invocation, go/no-go parsing, feedback routing back to planner agent, file numbering (`a-02-review.md`, `a-03-plan.md`, ...), finalization and copy to `.kafra/a-01-plans/`.
+
+**Delivers:** Automated review loop bolted onto Plan 1. Full end-to-end planner-auto.
+
+**Why separate:** Invoking OpenCode programmatically (auth, CLI subprocess, output capture) is the biggest technical unknown. Isolating it prevents it from blocking Plan 1's delivery. The review loop can also be tested independently with a manually-created `a-01-plan.md`.
+
+### Risk Consideration
+
+| Risk | Impact | Mitigation |
+|------|--------|------------|
+| OpenCode CLI invocation may require auth workarounds | Blocks Plan 2 | Plan 1 still delivers value independently |
+| Sub-agent updating files after every response adds latency | Affects Plan 1 UX | Can be made async or batched |
+| GPT review output format may be unpredictable | Complicates go/no-go parsing in Plan 2 | Define structured output prompt, fallback to keyword matching |
+
+### Pre-Implementation POCs
+
+Standalone proof-of-concept scripts to validate technical unknowns before committing to full implementation. Each POC is a minimal script that tests one assumption in isolation.
+
+| POC | Unknown | What to Validate | Blocks |
+|-----|---------|-----------------|--------|
+| 1. OpenCode CLI invocation | Can we call OpenCode programmatically and capture its output? | Subprocess call, auth passthrough, output capture to file | Plan 2 |
+| 2. Go/no-go parsing | Is GPT's review output consistent enough to parse? | Prompt engineering, keyword detection vs structured output | Plan 2 |
+| 3. Sub-agent file updates | Can a sub-agent update chat.csv and context-tracker-live.md after every response without blocking the conversation? | Latency impact, async feasibility | Plan 1 |
+
+**Priority order:** POC 1 first — if OpenCode can't be invoked from a script, Plan 2's design needs to change before planning begins. POC 3 second — it affects Plan 1's architecture. POC 2 can be explored during Plan 2 development.
+
+**POC location:** `scripts/poc/planner-auto/`
