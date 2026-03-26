@@ -481,11 +481,29 @@ Three approaches were tested in A/B experiments:
 - Plan bloat: same or slightly worse (guidance doesn't help bloat)
 - Verdict: Helps most in first 3 rounds. Over 6 rounds, both variants stabilize around 5-6 issues.
 
-**Core conclusion:** GPT will never say GO on its own for a complex feature plan. The loop produces better plans each round, but the reviewer always finds more to critique. The right strategy is controlling *when to stop*, not *how to make GPT say GO*.
+**Experiment 4: Opus + high effort + thinking + guidance (8 rounds)**
+- Planner: Claude Opus 4.6, effort=high, thinking=adaptive
+- Reviewer: GPT-5.4, reasoning_effort=high, resolution guidance ON
+- Issue trend (8 rounds): **4→1→1→1→4→1→4→5**
+- Gets to **1 issue by round 2** — dramatically better than Sonnet's 5-8
+- Oscillation pattern: GPT periodically finds new angles, Opus resolves them quickly
+- Cost: $1.15 (8r) — Opus ~4x more per revision than Sonnet
+- Cheap rounds ($0.02) = targeted fix; expensive rounds ($0.19) = section rewrite
+- **Still doesn't converge to GO** — confirms threshold stop is required regardless of model
+
+**Cross-configuration summary (3-round window):**
+
+| Configuration | Issues R1/R2/R3 | Cost (3r) | Model Cost |
+|---------------|----------------|-----------|------------|
+| Sonnet baseline | 6/8/7 | $0.26 | Low |
+| Sonnet + guidance | 8/5/5 | $0.31 | Low |
+| **Opus + high + thinking + guidance** | **4/1/1** | ~$0.33 | High |
+
+**Core conclusion:** GPT will never say GO on its own for a complex feature plan. The loop produces better plans each round, but the reviewer always finds more to critique. The right strategy is controlling *when to stop*, not *how to make GPT say GO*. Opus + thinking reaches "implementation-ready" quality (1 issue) dramatically faster than Sonnet.
 
 ### Convergence Strategy for v1
 
-Based on all experiments, the recommended v1 default loop:
+Based on all four experiments, the recommended v1 default loop:
 
 | Component | What | Why |
 |-----------|------|-----|
@@ -495,14 +513,22 @@ Based on all experiments, the recommended v1 default loop:
 | **Single wrap-up pass per round** | Claude compresses plan after revision | Controls bloat (~$0.03/pass); proven by self-review experiment |
 | **Human fallback** | Pause for human if criticals persist at cap | Some architectural issues need human judgment |
 
+### Model Selection
+
+| Use Case | Planner Config | Expected Rounds | Notes |
+|----------|---------------|----------------|-------|
+| **Budget** | Sonnet + guidance | 3-5 | Cheaper per round but more rounds needed; ~5 issues remain |
+| **Quality (recommended)** | Opus + high effort + thinking + guidance | 2-3 | Gets to 1 issue by R2; more expensive per round but fewer rounds needed |
+| **Fast iteration** | Sonnet + no guidance | 3 (capped) | Cheapest; accept 6-8 remaining issues for implementation to handle |
+
 ### Cost Projection
 
 | Configuration | Rounds | Est. Cost | Est. Time |
 |---------------|--------|-----------|-----------|
-| No tuning (baseline) | 6+ (never converges) | $0.80+ | 13+ min |
-| Guidance + 3-round cap + wrap-up | 3 | ~$0.39 | ~6 min |
-| Guidance + 5-round cap + wrap-up | 5 | ~$0.65 | ~10 min |
-| Guidance + zero-critical threshold | 2-4 (projected) | ~$0.25-0.50 | ~4-8 min |
+| No tuning (Sonnet baseline) | 6+ (never converges) | $0.80+ | 13+ min |
+| Sonnet + guidance + 3r cap + wrap-up | 3 | ~$0.39 | ~6 min |
+| Opus + guidance + 3r cap | 2-3 | ~$0.33-0.45 | ~4 min |
+| Opus + guidance + zero-critical stop | 2 (projected) | ~$0.20 | ~3 min |
 
 ### Note on Final Output Quality
 

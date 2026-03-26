@@ -37,7 +37,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from claude_agent_sdk import query
-from claude_agent_sdk.types import ClaudeAgentOptions, ResultMessage
+from claude_agent_sdk.types import ClaudeAgentOptions, ResultMessage, ThinkingConfigAdaptive
 
 # ---------------------------------------------------------------------------
 # Sibling POC imports
@@ -96,19 +96,28 @@ DEFAULT_MAX_ROUNDS = 5
 # Claude Agent SDK helper
 # ---------------------------------------------------------------------------
 
-async def _call_claude(system_prompt: str, user_prompt: str, model: str) -> ResultMessage | None:
+async def _call_claude(
+    system_prompt: str,
+    user_prompt: str,
+    model: str,
+    effort: str | None = None,
+    thinking: bool = False,
+) -> ResultMessage | None:
     """Call Claude via the Agent SDK and return the ResultMessage."""
+    opts = ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        model=model,
+        max_turns=1,
+        permission_mode="bypassPermissions",
+        stderr=lambda s: None,
+    )
+    if effort:
+        opts.effort = effort
+    if thinking:
+        opts.thinking = ThinkingConfigAdaptive(type="adaptive")
+
     result_msg: ResultMessage | None = None
-    async for message in query(
-        prompt=user_prompt,
-        options=ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            model=model,
-            max_turns=1,
-            permission_mode="bypassPermissions",
-            stderr=lambda s: None,
-        ),
-    ):
+    async for message in query(prompt=user_prompt, options=opts):
         if isinstance(message, ResultMessage):
             result_msg = message
     return result_msg
@@ -118,14 +127,19 @@ async def _call_claude(system_prompt: str, user_prompt: str, model: str) -> Resu
 # Plan generation
 # ---------------------------------------------------------------------------
 
-async def generate_initial_plan(feature: str, planner_model: str) -> dict:
+async def generate_initial_plan(
+    feature: str,
+    planner_model: str,
+    effort: str | None = None,
+    thinking: bool = False,
+) -> dict:
     """Generate the initial milestone plan via Claude.
 
     Returns:
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
     user_prompt = build_user_prompt(feature, SAMPLE_FILES)
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, user_prompt, planner_model)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, user_prompt, planner_model, effort=effort, thinking=thinking)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -164,6 +178,8 @@ async def revise_plan(
     review_issues: ReviewerResponse,
     planner_model: str,
     use_guidance: bool = False,
+    effort: str | None = None,
+    thinking: bool = False,
 ) -> dict:
     """Revise a plan based on reviewer feedback via Claude.
 
@@ -206,7 +222,7 @@ async def revise_plan(
         f"{instructions}"
     )
 
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, revision_prompt, planner_model)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, revision_prompt, planner_model, effort=effort, thinking=thinking)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -270,14 +286,14 @@ Tighten this implementation plan for clarity and conciseness:
 Return the complete plan, tightened and consistent. Same milestone format."""
 
 
-async def self_check(plan_text: str, planner_model: str) -> dict:
+async def self_check(plan_text: str, planner_model: str, effort: str | None = None, thinking: bool = False) -> dict:
     """Run a focused self-check on a revised plan.
 
     Returns:
         {"has_problems": bool, "problems_text": str, "duration_ms": int, "cost_usd": float | None}
     """
     prompt = SELF_CHECK_PROMPT_TEMPLATE.format(plan=plan_text)
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model, effort=effort, thinking=thinking)
 
     text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -295,14 +311,14 @@ async def self_check(plan_text: str, planner_model: str) -> dict:
     }
 
 
-async def repair_plan(plan_text: str, problems: str, planner_model: str) -> dict:
+async def repair_plan(plan_text: str, problems: str, planner_model: str, effort: str | None = None, thinking: bool = False) -> dict:
     """Fix problems found by self-check without adding new scope.
 
     Returns:
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
     prompt = REPAIR_PROMPT_TEMPLATE.format(plan=plan_text, problems=problems)
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model, effort=effort, thinking=thinking)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -311,14 +327,14 @@ async def repair_plan(plan_text: str, problems: str, planner_model: str) -> dict
     return {"plan_text": plan_text, "duration_ms": duration_ms, "cost_usd": cost_usd}
 
 
-async def wrapup_plan(plan_text: str, planner_model: str) -> dict:
+async def wrapup_plan(plan_text: str, planner_model: str, effort: str | None = None, thinking: bool = False) -> dict:
     """Tighten plan for conciseness and consistency.
 
     Returns:
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
     prompt = WRAPUP_PROMPT_TEMPLATE.format(plan=plan_text)
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model, effort=effort, thinking=thinking)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -327,7 +343,7 @@ async def wrapup_plan(plan_text: str, planner_model: str) -> dict:
     return {"plan_text": plan_text, "duration_ms": duration_ms, "cost_usd": cost_usd}
 
 
-async def run_self_review(plan_text: str, planner_model: str) -> dict:
+async def run_self_review(plan_text: str, planner_model: str, effort: str | None = None, thinking: bool = False) -> dict:
     """Run the bounded self-review pipeline: self-check → repair → wrap-up.
 
     Returns:
@@ -344,14 +360,14 @@ async def run_self_review(plan_text: str, planner_model: str) -> dict:
     current_plan = plan_text
 
     # Step 1: Self-check
-    check_result = await self_check(current_plan, planner_model)
+    check_result = await self_check(current_plan, planner_model, effort=effort, thinking=thinking)
     total_duration_ms += check_result["duration_ms"]
     total_cost += check_result["cost_usd"] or 0.0
     steps_run = 1
 
     if not check_result["has_problems"]:
         # Clean — still run wrap-up for conciseness
-        wrapup_result = await wrapup_plan(current_plan, planner_model)
+        wrapup_result = await wrapup_plan(current_plan, planner_model, effort=effort, thinking=thinking)
         current_plan = wrapup_result["plan_text"]
         total_duration_ms += wrapup_result["duration_ms"]
         total_cost += wrapup_result["cost_usd"] or 0.0
@@ -366,14 +382,14 @@ async def run_self_review(plan_text: str, planner_model: str) -> dict:
         }
 
     # Step 2: Repair
-    repair_result = await repair_plan(current_plan, check_result["problems_text"], planner_model)
+    repair_result = await repair_plan(current_plan, check_result["problems_text"], planner_model, effort=effort, thinking=thinking)
     current_plan = repair_result["plan_text"]
     total_duration_ms += repair_result["duration_ms"]
     total_cost += repair_result["cost_usd"] or 0.0
     steps_run = 2
 
     # Step 3: Wrap-up
-    wrapup_result = await wrapup_plan(current_plan, planner_model)
+    wrapup_result = await wrapup_plan(current_plan, planner_model, effort=effort, thinking=thinking)
     current_plan = wrapup_result["plan_text"]
     total_duration_ms += wrapup_result["duration_ms"]
     total_cost += wrapup_result["cost_usd"] or 0.0
@@ -518,6 +534,9 @@ async def run_e2e_loop(
     output_dir: Path,
     self_review: bool = False,
     use_guidance: bool = False,
+    planner_effort: str | None = None,
+    planner_thinking: bool = False,
+    reviewer_reasoning_effort: str | None = None,
 ) -> dict:
     """Run the full plan -> review -> revise -> review -> GO loop.
 
@@ -543,7 +562,7 @@ async def run_e2e_loop(
     # ── Step 1: Generate initial plan via Claude ──
     update_session_phase(conn, session_id, "planning")
 
-    plan_result = await generate_initial_plan(feature, planner_model)
+    plan_result = await generate_initial_plan(feature, planner_model, effort=planner_effort, thinking=planner_thinking)
     current_plan = plan_result["plan_text"]
     initial_plan_duration_ms = plan_result["duration_ms"]
     initial_plan_cost = plan_result["cost_usd"] or 0.0
@@ -571,7 +590,11 @@ async def run_e2e_loop(
 
         # ── Review current plan via GPT ──
         reviewer_prompt = REVIEWER_SYSTEM_PROMPT_GUIDED if use_guidance else None
-        review_result = run_review(gpt_client, current_plan, reviewer_model, system_prompt=reviewer_prompt)
+        review_result = run_review(
+            gpt_client, current_plan, reviewer_model,
+            system_prompt=reviewer_prompt,
+            reasoning_effort=reviewer_reasoning_effort,
+        )
         parsed: ReviewerResponse = review_result["parsed"]
 
         review_latency_s = review_result["latency_s"]
@@ -624,7 +647,7 @@ async def run_e2e_loop(
             break
 
         # ── NO_GO: Revise plan via Claude ──
-        revision_result = await revise_plan(current_plan, parsed, planner_model, use_guidance=use_guidance)
+        revision_result = await revise_plan(current_plan, parsed, planner_model, use_guidance=use_guidance, effort=planner_effort, thinking=planner_thinking)
         current_plan = revision_result["plan_text"]
         revision_duration_ms = revision_result["duration_ms"]
         revision_cost = revision_result["cost_usd"] or 0.0
@@ -640,7 +663,7 @@ async def run_e2e_loop(
         self_review_found_problems = False
 
         if self_review:
-            sr_result = await run_self_review(current_plan, planner_model)
+            sr_result = await run_self_review(current_plan, planner_model, effort=planner_effort, thinking=planner_thinking)
             current_plan = sr_result["plan_text"]
             self_review_cost = sr_result["total_cost_usd"]
             self_review_duration_ms = sr_result["total_duration_ms"]
@@ -866,6 +889,26 @@ def main() -> None:
         default=False,
         help="Use enhanced reviewer prompt with resolution_guidance and target_section per issue",
     )
+    parser.add_argument(
+        "--planner-effort",
+        type=str,
+        default=None,
+        choices=["low", "medium", "high", "max"],
+        help="Claude effort level (default: SDK default)",
+    )
+    parser.add_argument(
+        "--planner-thinking",
+        action="store_true",
+        default=False,
+        help="Enable Claude adaptive thinking",
+    )
+    parser.add_argument(
+        "--reviewer-reasoning",
+        type=str,
+        default=None,
+        choices=["low", "medium", "high"],
+        help="GPT reasoning effort level (default: none — uses temperature=0.3 instead)",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -895,6 +938,9 @@ def main() -> None:
     print(f"Max rounds: {args.max_rounds}")
     print(f"Self-review: {'ON' if args.self_review else 'OFF'}")
     print(f"Guidance:    {'ON' if args.resolution_guidance else 'OFF'}")
+    print(f"P. effort:   {args.planner_effort or 'default'}")
+    print(f"P. thinking: {'ON' if args.planner_thinking else 'OFF'}")
+    print(f"R. reasoning: {args.reviewer_reasoning or 'default (temp=0.3)'}")
     print(f"Output:     {output_dir}")
     print(f"Session:    {session_id}")
     print(f"{'=' * 55}")
@@ -912,6 +958,9 @@ def main() -> None:
             output_dir=output_dir,
             self_review=args.self_review,
             use_guidance=args.resolution_guidance,
+            planner_effort=args.planner_effort,
+            planner_thinking=args.planner_thinking,
+            reviewer_reasoning_effort=args.reviewer_reasoning,
         )
     )
 

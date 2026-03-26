@@ -134,7 +134,47 @@ Based on all three experiments (baseline, self-review, resolution guidance) acro
 4. **Single wrap-up pass per round** — needed for bloat control (neither guidance nor self-review addresses this)
 5. **Human fallback** — if critical issues persist at cap, pause for human review
 
-**Cost projection for v1 default loop (3 rounds, guidance + wrap-up):**
-- Rounds 1-3: ~$0.30 (guidance) + ~$0.09 (3 wrap-up passes at ~$0.03 each) = ~$0.39
-- Time: ~5-6 minutes
-- Expected outcome: plan with 0 critical issues, 3-5 major/minor remaining (acceptable for implementation)
+### Opus + High Effort + Thinking Experiment
+
+Tested with upgraded model settings: Claude Opus 4.6 (effort=high, thinking=adaptive) as planner, GPT-5.4 (reasoning_effort=high) as reviewer, resolution guidance ON, 8-round cap.
+
+**Results (8 rounds):**
+
+| Round | Issues | Review Time | Revision Time | Round Cost |
+|-------|--------|-------------|---------------|------------|
+| 1 | 4 | 12.8s | 74.6s | $0.150 |
+| 2 | **1** | 5.5s | 7.9s | $0.023 |
+| 3 | **1** | 6.1s | 75.3s | $0.159 |
+| 4 | **1** | 6.2s | 94.7s | $0.185 |
+| 5 | 4 | 19.2s | 5.9s | $0.028 |
+| 6 | **1** | 5.6s | 7.4s | $0.023 |
+| 7 | 4 | 11.9s | 68.4s | $0.145 |
+| 8 | 5 | 13.3s | 91.9s | $0.194 |
+
+**Total: $1.15, 595s (10 min), still NO_GO after 8 rounds.**
+
+**Cross-configuration comparison (3-round window):**
+
+| Config | Issues R1/R2/R3 | Cost (3r) |
+|--------|----------------|-----------|
+| Sonnet baseline | 6/8/7 | $0.26 |
+| Sonnet + guidance | 8/5/5 | $0.31 |
+| **Opus + high + thinking + guidance** | **4/1/1** | ~$0.33 |
+
+**Key findings:**
+- **Opus gets to 1 issue by round 2** — dramatically better than Sonnet's 5-8
+- Oscillation pattern (1→1→1→4→1→4→5): GPT periodically finds new angles, Opus resolves them quickly
+- Cheap rounds ($0.02) = Opus makes small targeted fixes; expensive rounds ($0.19) = Opus rewrites sections
+- **Still doesn't converge to GO** — confirms threshold-based stop is the right strategy regardless of model
+- **With a zero-critical threshold, Opus likely converges by round 2-3** — 1 remaining issue is almost certainly major/minor
+- Opus is ~4x more expensive per revision than Sonnet, but reaches "implementation-ready" quality much faster
+
+**Cost projection for v1 default loop:**
+
+| Config | Rounds to ~0 criticals | Est. Cost | Est. Time |
+|--------|----------------------|-----------|-----------|
+| Sonnet + guidance + 3r cap | 3 (may still have criticals) | ~$0.39 | ~6 min |
+| Opus + guidance + 3r cap | 2-3 (likely 0 criticals by R2) | ~$0.45 | ~4 min |
+| Opus + guidance + zero-critical stop | 2 (projected) | ~$0.20 | ~3 min |
+
+**Recommendation update:** Opus + thinking + guidance is the strongest combination. For users with API budget, Opus at 2-3 rounds is cheaper AND faster than Sonnet at 5+ rounds because it resolves issues in fewer iterations.

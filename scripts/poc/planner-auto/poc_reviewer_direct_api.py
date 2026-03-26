@@ -177,6 +177,7 @@ def run_review(
     plan_text: str,
     model: str,
     system_prompt: str | None = None,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Run a single plan review via the OpenAI API.
 
@@ -184,21 +185,29 @@ def run_review(
         system_prompt: Optional override for the system prompt. If None, uses
             the default SYSTEM_PROMPT. Pass SYSTEM_PROMPT_WITH_GUIDANCE for
             the resolution-guidance variant.
+        reasoning_effort: Optional reasoning effort level ("low", "medium", "high").
+            When set, temperature is omitted (OpenAI requires default temp with reasoning).
 
     Returns a dict with raw response, parsed result, and metrics.
     """
     user_prompt = USER_PROMPT_TEMPLATE.format(plan_text=plan_text)
     effective_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
 
-    start = time.time()
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
+    kwargs: dict = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": effective_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        temperature=0.3,  # low temp for consistency
-    )
+    }
+    if reasoning_effort:
+        kwargs["reasoning_effort"] = reasoning_effort
+        # OpenAI doesn't allow custom temperature with reasoning_effort
+    else:
+        kwargs["temperature"] = 0.3
+
+    start = time.time()
+    response = client.chat.completions.create(**kwargs)
     latency_s = time.time() - start
 
     raw_response = response.choices[0].message.content or ""
