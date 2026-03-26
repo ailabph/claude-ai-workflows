@@ -321,11 +321,91 @@ Based on [research findings](planner-auto-proposal-v1-research.md), the reviewer
 
 | Approach | v1.0 | v1.1 |
 |----------|------|------|
-| Primary | OpenCode subprocess | **Codex MCP server** (proven by ARIS project) |
-| Fallback | _(none)_ | **Direct OpenAI API** (plan text passed as prompt content) |
-| Avoided | _(not considered)_ | OpenCode subprocess (known hanging issues) |
+| Primary | OpenCode subprocess | **Direct OpenAI API** (fastest to ship, plan text as prompt content) |
+| Full-capability | _(none)_ | **Codex MCP server** (if reviewer needs tool/repo access, proven by ARIS) |
+| Alternative | _(none)_ | **OpenCode HTTP server** (for teams already invested in OpenCode) |
+| Avoided | _(not considered)_ | OpenCode subprocess (known hanging issues — [#11891](https://github.com/anomalyco/opencode/issues/11891), [#17516](https://github.com/anomalyco/opencode/issues/17516)) |
+
+**Recommended rollout:** Ship with Direct API first to prove the review loop and validate the `ReviewerContract`. Upgrade to Codex MCP if reviewer tool access becomes a real requirement. The adapter interface makes this swap transparent.
 
 **Prior art:** [ARIS](https://github.com/wanshuiyin/Auto-claude-code-research-in-sleep) uses Codex MCP for Claude ↔ GPT cross-model review loops in ML research. Two papers accepted using this approach.
+
+---
+
+## Runtime Modes and Observability
+
+planner-auto runs headless by default (minimal output, suitable for scripting and unattended use). Optional flags enable richer output for debugging and monitoring.
+
+### Runtime Modes
+
+| Flag | Mode | Output Behavior |
+|------|------|----------------|
+| _(default)_ | Headless | Phase transitions and final result only. Suitable for piping, scripting, CI. |
+| `--verbose` | Verbose | Streams agent responses, logs DB writes, artifact exports, reviewer issue lists |
+| `--tui` | TUI | Rich terminal UI with panels for conversation, status, logs, reviewer rounds |
+| `--debug` | Debug | Full stack traces printed to stderr + verbose file logging |
+
+Flags are combinable: `--tui --debug` gives the TUI with debug-level log panel.
+
+### Session-Scoped Log Files
+
+A log file is **always written** for every session, regardless of runtime mode:
+
+```
+~/.planner-auto/logs/<session-id>.log
+```
+
+### What Gets Logged
+
+| Category | Logged Events | Verbosity |
+|----------|--------------|-----------|
+| Phase transitions | `setup → context → discussion → planning → review → complete` | Always |
+| DB operations | Session created, messages appended, plan_drafts stored, reviews parsed, context synthesized | `--verbose` and above |
+| Artifact exports | Which files written, paths, timestamps | `--verbose` and above |
+| Agent responses | Full planner agent output (streaming) | `--verbose` and above |
+| Reviewer invocation | Raw request prompt, raw response, parsed `ReviewerResponse`, invocation method (MCP/API) | `--verbose` and above |
+| Reviewer round summary | "Review 1: NO_GO — 1 critical, 2 major, 0 minor" | Always |
+| Errors | Error message + context | Always (stack traces only with `--debug`) |
+
+### Log Levels
+
+| Level | Written to log file | Printed to terminal |
+|-------|--------------------|--------------------|
+| ERROR | Always | Always (stderr) |
+| WARN | Always | Always (stderr) |
+| INFO | Always | `--verbose` / `--tui` / `--debug` |
+| DEBUG | `--debug` only | `--debug` only |
+
+### Debugging Reviewer Integration (Plan 2)
+
+The reviewer round is the most likely failure point. Logs capture the full round-trip:
+
+```
+[INFO]  reviewer.invoke: method=codex_mcp, plan_draft=3
+[DEBUG] reviewer.request: prompt="Assess if plan is go/no-go..."
+[DEBUG] reviewer.raw_response: "The plan has several issues..."
+[INFO]  reviewer.parsed: verdict=NO_GO, issues=3 (1 critical, 1 major, 1 minor)
+[INFO]  artifact.export: a-06-review.md → ~/.planner-auto/sessions/abc123/
+```
+
+If parsing fails:
+```
+[ERROR] reviewer.parse_failed: could not extract verdict from response
+[DEBUG] reviewer.raw_response: <full raw text>
+[WARN]  reviewer.fallback: treating as NO_GO with parse-failure issue
+```
+
+### Consistency with orchestrator-auto
+
+| Feature | orchestrator-auto | planner-auto |
+|---------|-------------------|--------------|
+| Debug flag | `--debug` | `--debug` |
+| TUI flag | `--tui` | `--tui` |
+| Log location | `~/.claude_orchestrator/logs/` | `~/.planner-auto/logs/` |
+| Log naming | `error_<session-id>_<timestamp>.log` | `<session-id>.log` |
+| Verbose streaming | Default (always streams) | `--verbose` (headless is quiet by default) |
+
+Note: planner-auto defaults to headless/quiet because it's designed to run as part of the `.kafra` pipeline where output noise is undesirable. orchestrator-auto defaults to streaming because it's typically run interactively.
 
 ---
 
@@ -378,6 +458,7 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Context tracking | Sub-agent after every response | Append-only logging + on-demand synthesis | Senior dev: defer optimization, reduce v1 fragility |
 | Reviewer contract | Implicit | Explicit schema with edge cases | Senior dev: unblock testing, define parsing target early |
 | .kafra handoff | Ambiguous (Plan 1 or future) | Explicitly Plan 2 | Senior dev: clarify "done" boundary |
-| Cross-model integration | OpenCode subprocess | Codex MCP (primary) + Direct API (fallback) | Research: subprocess has known bugs, ARIS proves MCP works |
+| Cross-model integration | OpenCode subprocess | Direct API (ship first) → Codex MCP (if tool access needed) → OpenCode HTTP (alternative) | Research: subprocess has known bugs, Direct API fastest to prove loop, Codex MCP for full capability |
 | Home directory | `~/.orchestrator-auto/` | `~/.planner-auto/` | Avoid collision with orchestrator-auto |
 | Artifact export timing | Not specified | Explicit table per event | Senior dev: audit model clarity |
+| Observability | Not specified | Headless default, `--verbose`, `--tui`, `--debug` flags, session-scoped log files | Gap: no logging or debug story in v1.0 |
