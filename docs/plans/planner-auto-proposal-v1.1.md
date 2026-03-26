@@ -69,8 +69,9 @@ v1.1 reframes the architecture as two layers with a clean interface between them
 │  │           ┌──────────────┼──────────────┐              │  │
 │  │           ▼              ▼              ▼              │  │
 │  │    ┌────────────┐ ┌────────────┐ ┌────────────┐       │  │
-│  │    │ Codex MCP  │ │ Direct API │ │ OpenCode   │       │  │
-│  │    │ (primary)  │ │ (fallback) │ │ (future)   │       │  │
+│  │    │ Direct API │ │ Codex MCP  │ │ OpenCode   │       │  │
+│  │    │ (ship      │ │ (full      │ │ HTTP       │       │  │
+│  │    │  first)    │ │  capability│ │ (alternative│       │  │
 │  │    └────────────┘ └────────────┘ └────────────┘       │  │
 │  │                          │                             │  │
 │  │                          ▼                             │  │
@@ -413,21 +414,87 @@ Note: planner-auto defaults to headless/quiet because it's designed to run as pa
 
 | Risk | Impact | Mitigation | Status |
 |------|--------|------------|--------|
-| OpenCode subprocess hangs | ~~Blocks Plan 2~~ | **Eliminated** — switched to Codex MCP | Resolved by research |
-| Codex MCP setup complexity | Adds onboarding friction | Direct API fallback if MCP unavailable | New in v1.1 |
+| OpenCode subprocess hangs | ~~Blocks Plan 2~~ | **Eliminated** — shipping Direct API first, subprocess avoided entirely | Resolved by research |
+| Codex MCP setup complexity | Adds onboarding friction for full-capability adapter | Direct API ships first; Codex MCP is an upgrade path, not a prerequisite | New in v1.1 |
 | GPT review output unpredictable | Complicates parsing | `ReviewerContract` schema + structured prompt + fallback to keyword matching | Strengthened in v1.1 |
 | Per-response sub-agent latency | Affects Plan 1 UX | **Deferred** to post-v1 optimization | Descoped in v1.1 |
 | File/DB state drift | Tool and artifacts disagree | **Eliminated** — DB is canonical, files are exports | Resolved in v1.1 |
 
 ## Pre-Implementation POCs (Revised)
 
-| POC | Unknown | What to Validate | Blocks |
-|-----|---------|-----------------|--------|
-| 1. Codex MCP invocation | Can Claude invoke GPT-5.4 through Codex MCP and capture structured output? | MCP setup, prompt passthrough, response capture | Plan 2 |
-| 2. Go/no-go parsing | Can reviewer output be reliably parsed into `ReviewerResponse` schema? | Structured prompt engineering, edge case handling | Plan 2 |
-| 3. _(removed)_ | ~~Sub-agent file updates~~ | Deferred to post-v1 | — |
+Standalone scripts to validate technical unknowns before committing to full implementation. Each POC tests one assumption in isolation. Results feed directly into Plan 1 and Plan 2 implementation decisions.
 
 **POC location:** `scripts/poc/planner-auto/`
+
+### POC Scripts
+
+#### Reviewer Invocation (compare all three adapters)
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 1a | `poc_reviewer_direct_api.py` | Call GPT-5.4 via OpenAI SDK, pass plan text as prompt, capture structured response. Measure latency, token cost, response consistency | Plan 2 |
+| 1b | `poc_reviewer_codex_mcp.py` | Set up Codex MCP, invoke GPT from within Claude agent loop, capture response. Measure latency, test if GPT can read repo files through MCP tools | Plan 2 |
+| 1c | `poc_reviewer_opencode_http.py` | Start `opencode serve`, create session via HTTP API, send review prompt, capture response. Measure latency, test session lifecycle | Plan 2 |
+| 1d | `poc_reviewer_comparison.py` | Run the same plan through all three adapters, compare: latency, response quality, structured output reliability, cost. Generates a comparison report | Plan 2 |
+
+#### Response Parsing
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 2a | `poc_parse_go_nogo.py` | Feed 10+ real and synthetic reviewer responses through the parser. Test GO, NO_GO, malformed, GO-with-notes, timeout edge cases. Validate `ReviewerResponse` schema extraction | Plan 2 |
+| 2b | `poc_structured_prompt.py` | Test different prompt templates that instruct the reviewer to output structured format. Compare free-form vs JSON-instructed vs XML-tagged output reliability | Plan 2 |
+
+#### SQLite Session Engine
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 3a | `poc_session_db.py` | Create session, append messages, store plan drafts, store reviews, query by session. Validates the DB schema (sessions, messages, context_entries, plan_drafts, reviews) | Plan 1 |
+| 3b | `poc_artifact_export.py` | Given a populated DB, export `chat.csv`, `context-summary.md`, numbered `a-NN-plan.md` / `a-NN-review.md` files. Validates the export-from-DB pattern | Plan 1 |
+
+#### Claude Agent SDK (Planner Side)
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 4a | `poc_planner_headless.py` | Run Claude via Agent SDK in headless mode with a system prompt. Feed it context files + a feature description. Confirm it produces a milestone plan following `CLAUDE_orch_v2.md` template | Plan 1 |
+| 4b | `poc_context_synthesis.py` | Load files into `context_entries`, simulate conversation in `messages`, run on-demand context synthesis. Validate synthesized output is useful for plan generation | Plan 1 |
+
+#### Failure Path and Session Recovery
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 5a | `poc_failure_paths.py` | Simulate reviewer timeout, malformed output, and parse failure. Verify session enters blocked/paused state correctly and resumes cleanly after human intervention. Validates contract edge cases against session model | Plan 1 + Plan 2 |
+
+#### End-to-End Mini Loop
+
+| POC | Script | What It Proves | Blocks |
+|-----|--------|---------------|--------|
+| 5b | `poc_review_loop_e2e.py` | Hardcoded plan → reviewer (Direct API) → parse response → if NO_GO, feed issues to Claude → revised plan → reviewer again. Run 2-3 rounds. Proves the full review loop before building the real engine | Plan 1 + Plan 2 |
+
+### Execution Order
+
+```
+Phase A (parallel, no dependencies):
+  1a  Direct API reviewer
+  2a  Response parsing
+  3a  SQLite session DB
+
+Phase B (depends on Phase A):
+  2b  Structured prompt testing    ← refine based on 2a results
+  3b  Artifact export              ← depends on 3a schema
+  4a  Planner headless
+
+Phase C (depends on Phase A):
+  1b  Codex MCP reviewer           ← compare against 1a
+  1c  OpenCode HTTP reviewer       ← compare against 1a
+  4b  Context synthesis            ← depends on 3a
+  5a  Failure paths                ← depends on 2a + 3a
+
+Phase D (depends on all above):
+  1d  Reviewer comparison report   ← needs 1a, 1b, 1c
+  5b  End-to-end mini loop         ← needs 4a (planner headless) + 1a + 2a + 3a
+```
+
+**Phase A can start immediately.** Total: 13 scripts, 4 phases.
 
 ---
 
