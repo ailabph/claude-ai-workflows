@@ -78,3 +78,35 @@ Tested the senior dev's suggestion: add a bounded self-review after each revisio
 - 3x cost increase not justified by the convergence benefit
 
 **Recommendation:** Don't use full 3-step self-review per round. Instead, apply a standalone wrap-up/compression pass (1 Claude call) to control plan bloat, and invest the convergence budget in severity-based thresholds (GO if no criticals) rather than additional Claude calls.
+
+### Resolution Guidance Experiment (A/B comparison)
+
+Tested the senior dev's follow-up suggestion: add `resolution_guidance` (1-3 sentences) and `target_section` fields to each reviewer issue, giving Claude concrete acceptance criteria.
+
+**A/B Results (3 rounds each, same feature):**
+
+| Metric | Baseline | Guidance | Delta |
+|--------|----------|----------|-------|
+| Issues R1/R2/R3 | 6/8/7 | 8/5/5 | Declining trend vs oscillating |
+| Issue trend | Oscillating | **Declining** | Better convergence trajectory |
+| Converged? | No | No | Same (3 rounds too few) |
+| Total cost | $0.261 | $0.305 | +17% (modest increase) |
+| Total time | 254s | 311s | +22% |
+| GPT cost | $0.030 | $0.044 | +47% (longer responses with guidance) |
+| Final plan size | 15.4 KB | 15.4 KB | Same |
+
+**What resolution guidance does well:**
+- **Issue count declines** (8→5→5) instead of oscillating (6→8→7) — GPT's feedback is more stable when it includes acceptance criteria
+- GPT stops reframing the same architectural concern in different ways because the guidance makes "resolved" explicit
+- Cost increase is modest (+17%) — mostly from GPT writing slightly longer responses
+
+**What it doesn't solve (yet):**
+- Still didn't converge in 3 rounds — likely needs 4-5 with a zero-critical threshold
+- Plan size is identical — guidance doesn't reduce bloat (wrap-up pass still needed separately)
+
+**Recommendation for v1:**
+1. Zero-critical threshold as acceptance condition
+2. Hard cap at 3-5 rounds
+3. Single wrap-up/compression pass per round
+4. Resolution guidance ON by default (declining issue trajectory worth +17% cost)
+5. Human fallback if criticals persist at cap

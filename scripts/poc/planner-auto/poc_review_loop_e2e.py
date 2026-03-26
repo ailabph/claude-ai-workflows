@@ -70,8 +70,12 @@ from poc_artifact_export import export_all
 # POC 4a -- planner headless (system prompt + prompt builder)
 from poc_planner_headless import PLANNER_SYSTEM_PROMPT, SAMPLE_FILES, build_user_prompt
 
-# POC 1a -- reviewer
-from poc_reviewer_direct_api import run_review, SYSTEM_PROMPT as REVIEWER_SYSTEM_PROMPT
+# POC 1a -- reviewer (both standard and guidance-enhanced prompts)
+from poc_reviewer_direct_api import (
+    run_review,
+    SYSTEM_PROMPT as REVIEWER_SYSTEM_PROMPT,
+    SYSTEM_PROMPT_WITH_GUIDANCE as REVIEWER_SYSTEM_PROMPT_GUIDED,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -138,30 +142,55 @@ async def generate_initial_plan(feature: str, planner_model: str) -> dict:
 # Plan revision
 # ---------------------------------------------------------------------------
 
-def format_issues_for_revision(parsed: ReviewerResponse) -> str:
+def format_issues_for_revision(parsed: ReviewerResponse, include_guidance: bool = False) -> str:
     """Format reviewer issues as a numbered list for the revision prompt.
 
-    Example output:
-        1. [critical] No error handling for API failures
-           Rationale: Production services must handle upstream failures gracefully
-        2. [major] Missing database migration step
-           Rationale: Schema changes require explicit migration scripts
+    If include_guidance=True, appends resolution_guidance and target_section
+    when available (used in the resolution-guidance A/B variant).
     """
     lines: list[str] = []
     for i, issue in enumerate(parsed.issues, 1):
-        lines.append(f"{i}. [{issue.severity.value}] {issue.description}")
+        target = f" (in {issue.target_section})" if issue.target_section else ""
+        lines.append(f"{i}. [{issue.severity.value}] {issue.description}{target}")
         if issue.rationale:
             lines.append(f"   Rationale: {issue.rationale}")
+        if include_guidance and issue.resolution_guidance:
+            lines.append(f"   To resolve: {issue.resolution_guidance}")
     return "\n".join(lines)
 
 
-async def revise_plan(current_plan: str, review_issues: ReviewerResponse, planner_model: str) -> dict:
+async def revise_plan(
+    current_plan: str,
+    review_issues: ReviewerResponse,
+    planner_model: str,
+    use_guidance: bool = False,
+) -> dict:
     """Revise a plan based on reviewer feedback via Claude.
+
+    If use_guidance=True, includes resolution_guidance from the reviewer in the
+    revision prompt, giving Claude concrete acceptance criteria per issue.
 
     Returns:
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
-    formatted_issues = format_issues_for_revision(review_issues)
+    formatted_issues = format_issues_for_revision(review_issues, include_guidance=use_guidance)
+
+    if use_guidance:
+        instructions = (
+            "## Instructions\n"
+            "Revise the plan to address each issue. Each issue includes a 'To resolve' "
+            "line that states what the reviewer needs to see — meet that criteria specifically.\n"
+            "Do not remove existing good content. Do not add scope beyond what's needed to "
+            "resolve the listed issues.\n"
+            "Return the complete revised plan."
+        )
+    else:
+        instructions = (
+            "## Instructions\n"
+            "Revise the plan to address each issue. Do not remove existing good content.\n"
+            "Add missing elements (tests, error handling, etc.) as needed.\n"
+            "Return the complete revised plan."
+        )
 
     revision_prompt = (
         "The following implementation plan was reviewed and received a NO_GO verdict.\n"
@@ -174,10 +203,7 @@ async def revise_plan(current_plan: str, review_issues: ReviewerResponse, planne
         "## Issues to Address\n"
         f"{formatted_issues}\n"
         "\n"
-        "## Instructions\n"
-        "Revise the plan to address each issue. Do not remove existing good content.\n"
-        "Add missing elements (tests, error handling, etc.) as needed.\n"
-        "Return the complete revised plan."
+        f"{instructions}"
     )
 
     result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, revision_prompt, planner_model)
@@ -491,11 +517,16 @@ async def run_e2e_loop(
     session_id: str,
     output_dir: Path,
     self_review: bool = False,
+    use_guidance: bool = False,
 ) -> dict:
     """Run the full plan -> review -> revise -> review -> GO loop.
 
     If self_review=True, adds a bounded self-review pipeline after each
     revision (self-check → repair → wrap-up) before sending to GPT.
+
+    If use_guidance=True, uses the enhanced reviewer prompt that requests
+    resolution_guidance and target_section per issue, and feeds that
+    guidance to Claude during revision.
 
     Returns a summary dict with round details, costs, artifacts, etc.
     """
@@ -539,7 +570,8 @@ async def run_e2e_loop(
         round_info: dict = {"round": round_num}
 
         # ── Review current plan via GPT ──
-        review_result = run_review(gpt_client, current_plan, reviewer_model)
+        reviewer_prompt = REVIEWER_SYSTEM_PROMPT_GUIDED if use_guidance else None
+        review_result = run_review(gpt_client, current_plan, reviewer_model, system_prompt=reviewer_prompt)
         parsed: ReviewerResponse = review_result["parsed"]
 
         review_latency_s = review_result["latency_s"]
@@ -592,7 +624,7 @@ async def run_e2e_loop(
             break
 
         # ── NO_GO: Revise plan via Claude ──
-        revision_result = await revise_plan(current_plan, parsed, planner_model)
+        revision_result = await revise_plan(current_plan, parsed, planner_model, use_guidance=use_guidance)
         current_plan = revision_result["plan_text"]
         revision_duration_ms = revision_result["duration_ms"]
         revision_cost = revision_result["cost_usd"] or 0.0
@@ -828,6 +860,12 @@ def main() -> None:
         default=False,
         help="Enable bounded self-review after each revision (self-check → repair → wrap-up)",
     )
+    parser.add_argument(
+        "--resolution-guidance",
+        action="store_true",
+        default=False,
+        help="Use enhanced reviewer prompt with resolution_guidance and target_section per issue",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -856,6 +894,7 @@ def main() -> None:
     print(f"Reviewer:   {args.reviewer_model}")
     print(f"Max rounds: {args.max_rounds}")
     print(f"Self-review: {'ON' if args.self_review else 'OFF'}")
+    print(f"Guidance:    {'ON' if args.resolution_guidance else 'OFF'}")
     print(f"Output:     {output_dir}")
     print(f"Session:    {session_id}")
     print(f"{'=' * 55}")
@@ -872,6 +911,7 @@ def main() -> None:
             session_id=session_id,
             output_dir=output_dir,
             self_review=args.self_review,
+            use_guidance=args.resolution_guidance,
         )
     )
 

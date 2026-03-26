@@ -124,23 +124,77 @@ GO/NO_GO assessment:
 {plan_text}
 ---"""
 
+# Enhanced prompt with resolution_guidance (for A/B testing)
+SYSTEM_PROMPT_WITH_GUIDANCE = """\
+You are a senior software engineering plan reviewer. Your job is to evaluate \
+implementation plans for readiness, completeness, and risk.
+
+Review the plan provided by the user and return a structured JSON response with \
+exactly this schema:
+
+{
+  "verdict": "GO" or "NO_GO",
+  "issues": [
+    {
+      "severity": "critical" | "major" | "minor",
+      "description": "Brief description of the issue",
+      "rationale": "Why this matters and what could go wrong",
+      "target_section": "Which milestone or section this applies to (e.g. 'Milestone 2')",
+      "resolution_guidance": "1-3 sentences: what specifically must change for this issue to be considered resolved. Be concrete — state the acceptance criteria, not just the problem."
+    }
+  ],
+  "summary": "One-paragraph summary of your overall assessment"
+}
+
+Severity guidelines:
+- critical: Blocks implementation. Missing error handling, security gaps, no tests \
+for core logic, architectural flaws that would require rework.
+- major: Should be fixed before starting. Missing migration steps, incomplete API \
+contracts, no rollback strategy, gaps in observability.
+- minor: Nice to have. Style inconsistencies, optional optimizations, documentation \
+improvements.
+
+Verdict guidelines:
+- GO: Plan is ready for implementation. May have minor issues but nothing blocking.
+- NO_GO: Plan has critical or multiple major issues that must be addressed first.
+
+Resolution guidance rules:
+- State what "resolved" looks like, not just what's wrong.
+- Be specific to the plan, not generic advice.
+- Keep to 1-3 sentences per issue.
+- Focus on plan/spec changes, not code-level edits.
+
+Be thorough but concise. Focus on practical engineering risks, not theoretical ones. \
+Return ONLY the JSON object, no additional text."""
+
 
 # ---------------------------------------------------------------------------
 # Core review function
 # ---------------------------------------------------------------------------
 
-def run_review(client: OpenAI, plan_text: str, model: str) -> dict:
+def run_review(
+    client: OpenAI,
+    plan_text: str,
+    model: str,
+    system_prompt: str | None = None,
+) -> dict:
     """Run a single plan review via the OpenAI API.
+
+    Args:
+        system_prompt: Optional override for the system prompt. If None, uses
+            the default SYSTEM_PROMPT. Pass SYSTEM_PROMPT_WITH_GUIDANCE for
+            the resolution-guidance variant.
 
     Returns a dict with raw response, parsed result, and metrics.
     """
     user_prompt = USER_PROMPT_TEMPLATE.format(plan_text=plan_text)
+    effective_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
 
     start = time.time()
     response = client.chat.completions.create(
         model=model,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": effective_prompt},
             {"role": "user", "content": user_prompt},
         ],
         temperature=0.3,  # low temp for consistency

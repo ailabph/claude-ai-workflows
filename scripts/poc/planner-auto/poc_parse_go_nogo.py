@@ -58,6 +58,8 @@ class ReviewIssue:
     severity: Severity
     description: str
     rationale: str
+    resolution_guidance: str = ""
+    target_section: str = ""
 
 
 @dataclass
@@ -119,6 +121,8 @@ def _issues_from_dicts(raw_issues: list[dict[str, Any]]) -> list[ReviewIssue]:
                 severity=_parse_severity(str(item.get("severity", "major"))),
                 description=str(item.get("description", "")),
                 rationale=str(item.get("rationale", "")),
+                resolution_guidance=str(item.get("resolution_guidance", "")),
+                target_section=str(item.get("target_section", item.get("target_milestone", ""))),
             )
         )
     return issues
