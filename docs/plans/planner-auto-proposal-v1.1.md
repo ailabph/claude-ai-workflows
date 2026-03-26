@@ -113,6 +113,7 @@ v1.1 reframes the architecture as two layers with a clean interface between them
 | `context_entries` | Loaded files, entities, decisions (replaces context-tracker-live.md as state) |
 | `plan_drafts` | Versioned plan content with draft number |
 | `reviews` | Reviewer responses with parsed verdict and issues |
+| `blockers` | Failure-triggered pause records with source, question, answer, and resolution status (validated by POC 5a) |
 
 ### Exported Artifacts
 
@@ -448,7 +449,7 @@ Standalone scripts to validate technical unknowns before committing to full impl
 
 | POC | Script | What It Proves | Blocks |
 |-----|--------|---------------|--------|
-| 3a | `poc_session_db.py` | Create session, append messages, store plan drafts, store reviews, query by session. Validates the DB schema (sessions, messages, context_entries, plan_drafts, reviews) | Plan 1 |
+| 3a | `poc_session_db.py` | Create session, append messages, store plan drafts, store reviews, query by session. Validates the DB schema (sessions, messages, context_entries, plan_drafts, reviews, blockers) | Plan 1 |
 | 3b | `poc_artifact_export.py` | Given a populated DB, export `chat.csv`, `context-summary.md`, numbered `a-NN-plan.md` / `a-NN-review.md` files. Validates the export-from-DB pattern | Plan 1 |
 
 #### Claude Agent SDK (Planner Side)
@@ -529,3 +530,4 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Home directory | `~/.orchestrator-auto/` | `~/.planner-auto/` | Avoid collision with orchestrator-auto |
 | Artifact export timing | Not specified | Explicit table per event | Senior dev: audit model clarity |
 | Observability | Not specified | Headless default, `--verbose`, `--tui`, `--debug` flags, session-scoped log files | Gap: no logging or debug story in v1.0 |
+| DB schema | 5 tables | 6 tables (added `blockers`) | POC 5a: pause/resume lifecycle requires persistent blocker records with source, question, answer, resolution status |
