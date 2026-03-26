@@ -206,7 +206,7 @@ The per-response sub-agent tracker remains a backlog item for post-v1 optimizati
 
 ### Phase 5: Cross-Model Review (Plan 2)
 
-15. Reviewer adapter invokes reviewer (Codex MCP primary, direct API fallback)
+15. Reviewer adapter invokes reviewer (Direct API by default in v1; Codex MCP when reviewer tool access is needed; OpenCode HTTP as an alternative adapter)
 16. Reviewer prompt: structured request referencing plan content
 17. Response parsed into `ReviewerResponse` schema
 18. Review stored in `reviews` table (review_number=1)
@@ -311,7 +311,7 @@ Plan 1 builds the session model, artifact versioning, and planner loop so that a
 
 | Aspect | Detail |
 |--------|--------|
-| **Owns** | `ReviewerAdapter` implementation (Codex MCP primary, direct API fallback), review-fix loop orchestration, .kafra handoff |
+| **Owns** | `ReviewerAdapter` implementation (Direct API ship-first, Codex MCP full-capability upgrade path, OpenCode HTTP alternative), review-fix loop orchestration, .kafra handoff |
 | **Delivers** | Full automated cross-model review loop bolted onto Plan 1 |
 | **"Done" means** | Plan passes go/no-go, `a-<N>-plan-final.md` exported and copied to `<repo>/.kafra/a-01-plans/` |
 | **Depends on** | Plan 1's session engine and `ReviewerContract` interface |
