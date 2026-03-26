@@ -52,3 +52,29 @@ Prove the full review loop works end-to-end: plan → reviewer → parse → if 
 - Claude revisions are substantive — each draft genuinely addresses the prior issues
 - Cost scales linearly per round (~$0.09/round), so capping at 3-5 rounds is important
 - Revision prompts may need to tell Claude to be more concise to avoid plan bloat
+
+### Self-Review Experiment (A/B comparison)
+
+Tested the senior dev's suggestion: add a bounded self-review after each revision (self-check → repair → wrap-up) before sending back to GPT.
+
+**A/B Results (3 rounds each, same feature):**
+
+| Metric | Baseline | Self-Review | Delta |
+|--------|----------|-------------|-------|
+| Issues R1/R2/R3 | 6/8/7 | 7/6/7 | No meaningful change |
+| Converged? | No | No | Same |
+| Total cost | $0.261 | $0.790 | 3x more expensive |
+| Total time | 254s | 700s | 2.8x slower |
+| Final plan size | 15.4 KB | 10.9 KB | 29% smaller |
+| Plan growth | 4→15 KB (3.7x) | 4→11 KB (2.5x) | Less bloat |
+
+**What self-review does well:**
+- Wrap-up pass reduces plan bloat (29% smaller final plan)
+- Self-check found problems every round — confirms Claude revisions consistently introduce new issues
+
+**What self-review doesn't help:**
+- GPT issue count unchanged (6-7 per round regardless)
+- GPT finds *different* issues than what self-check catches — they're complementary critics, not redundant
+- 3x cost increase not justified by the convergence benefit
+
+**Recommendation:** Don't use full 3-step self-review per round. Instead, apply a standalone wrap-up/compression pass (1 Claude call) to control plan bloat, and invest the convergence budget in severity-based thresholds (GO if no criticals) rather than additional Claude calls.

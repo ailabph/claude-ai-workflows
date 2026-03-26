@@ -3,37 +3,20 @@
 
 Full integration test: plan -> review -> revise -> review -> GO.
 
-Steps:
-  1. Initialize session DB (POC 3a schema)
-  2. Create session
-  3. Generate initial plan:
-     - Use Claude Agent SDK (headless) with a feature description
-     - Store as plan_drafts (draft_number=1)
-     - Export a-01-plan.md
-  4. Review loop (max 5 rounds):
-     a. Send current plan to GPT-5.4 via Direct API (POC 1a approach)
-     b. Parse response into ReviewerResponse (POC 2a parser)
-     c. Store review in DB, export a-<N>-review.md
-     d. If GO: break loop
-     e. If NO_GO:
-        - Feed issues to Claude with revision prompt
-        - Claude produces revised plan
-        - Store as plan_drafts (draft_number++), export a-<N>-plan.md
-        - Continue loop
-  5. On GO:
-     - Mark final plan, export a-<N>-plan-final.md
-     - Mark session complete
-  6. Print summary:
-     - Rounds taken
-     - Issues found and resolved per round
-     - Total latency, token usage, cost (Claude + GPT combined)
-     - List of all exported artifacts
-  7. Verify DB consistency: all drafts, reviews, messages present
+Supports two modes:
+  - Default: plan -> GPT review -> Claude revise -> GPT review -> ...
+  - --self-review: plan -> GPT review -> Claude revise -> Claude self-check
+    -> Claude repair (if needed) -> Claude wrap-up -> GPT review -> ...
+
+The self-review mode adds a bounded planner-side quality gate after each
+revision (max 3 extra Claude calls per round) to catch issues introduced
+by the revision before GPT sees them.
 
 Usage:
   export ANTHROPIC_API_KEY="your-key"
   export OPENAI_API_KEY="your-key"
   python scripts/poc/planner-auto/poc_review_loop_e2e.py
+  python scripts/poc/planner-auto/poc_review_loop_e2e.py --self-review
   python scripts/poc/planner-auto/poc_review_loop_e2e.py --feature "Add JWT authentication"
   python scripts/poc/planner-auto/poc_review_loop_e2e.py --max-rounds 3
   python scripts/poc/planner-auto/poc_review_loop_e2e.py --output-dir /tmp/poc_e2e
@@ -211,6 +194,175 @@ async def revise_plan(current_plan: str, review_issues: ReviewerResponse, planne
 
 
 # ---------------------------------------------------------------------------
+# Self-review steps (bounded: self-check → repair → wrap-up)
+# ---------------------------------------------------------------------------
+
+SELF_CHECK_PROMPT_TEMPLATE = """\
+You just revised an implementation plan to address reviewer feedback.
+Review your OWN revised draft below for problems introduced by the revision:
+
+- Drift from original requirements
+- Contradictions between milestones
+- Missing validation or error handling you forgot to add
+- Unnecessary scope or features that weren't requested
+- Duplicated content across milestones
+
+## Revised Plan
+{plan}
+
+## Instructions
+List any material problems you find. If the plan is clean, say "NO ISSUES FOUND."
+Be brief — just list problems, don't rewrite the plan."""
+
+REPAIR_PROMPT_TEMPLATE = """\
+Fix the following problems in this implementation plan. Do NOT add any new
+scope or features — only fix the listed problems.
+
+## Current Plan
+{plan}
+
+## Problems to Fix
+{problems}
+
+## Instructions
+Return the complete fixed plan. Keep the same milestone format.
+Do not add content beyond what's needed to fix the listed problems."""
+
+WRAPUP_PROMPT_TEMPLATE = """\
+Tighten this implementation plan for clarity and conciseness:
+
+- Remove duplicated content across milestones
+- Consolidate redundant task items
+- Preserve all accepted fixes and requirements
+- Do NOT add new scope, features, or milestones
+- Target the same number of milestones
+
+## Current Plan
+{plan}
+
+## Instructions
+Return the complete plan, tightened and consistent. Same milestone format."""
+
+
+async def self_check(plan_text: str, planner_model: str) -> dict:
+    """Run a focused self-check on a revised plan.
+
+    Returns:
+        {"has_problems": bool, "problems_text": str, "duration_ms": int, "cost_usd": float | None}
+    """
+    prompt = SELF_CHECK_PROMPT_TEMPLATE.format(plan=plan_text)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+
+    text = (result_msg.result or "") if result_msg else ""
+    duration_ms = result_msg.duration_ms if result_msg else 0
+    cost_usd = result_msg.total_cost_usd if result_msg else None
+
+    # Determine if problems were found
+    no_issues_markers = ["no issues found", "no material problems", "the plan is clean", "no problems"]
+    has_problems = not any(marker in text.lower() for marker in no_issues_markers)
+
+    return {
+        "has_problems": has_problems,
+        "problems_text": text,
+        "duration_ms": duration_ms,
+        "cost_usd": cost_usd,
+    }
+
+
+async def repair_plan(plan_text: str, problems: str, planner_model: str) -> dict:
+    """Fix problems found by self-check without adding new scope.
+
+    Returns:
+        {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
+    """
+    prompt = REPAIR_PROMPT_TEMPLATE.format(plan=plan_text, problems=problems)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+
+    plan_text = (result_msg.result or "") if result_msg else ""
+    duration_ms = result_msg.duration_ms if result_msg else 0
+    cost_usd = result_msg.total_cost_usd if result_msg else None
+
+    return {"plan_text": plan_text, "duration_ms": duration_ms, "cost_usd": cost_usd}
+
+
+async def wrapup_plan(plan_text: str, planner_model: str) -> dict:
+    """Tighten plan for conciseness and consistency.
+
+    Returns:
+        {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
+    """
+    prompt = WRAPUP_PROMPT_TEMPLATE.format(plan=plan_text)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, prompt, planner_model)
+
+    plan_text = (result_msg.result or "") if result_msg else ""
+    duration_ms = result_msg.duration_ms if result_msg else 0
+    cost_usd = result_msg.total_cost_usd if result_msg else None
+
+    return {"plan_text": plan_text, "duration_ms": duration_ms, "cost_usd": cost_usd}
+
+
+async def run_self_review(plan_text: str, planner_model: str) -> dict:
+    """Run the bounded self-review pipeline: self-check → repair → wrap-up.
+
+    Returns:
+        {
+            "plan_text": str,           # final plan after self-review
+            "self_check_found_problems": bool,
+            "total_duration_ms": int,
+            "total_cost_usd": float,
+            "steps_run": int,           # 1 (check only), 2 (check+repair), or 3 (check+repair+wrapup)
+        }
+    """
+    total_duration_ms = 0
+    total_cost = 0.0
+    current_plan = plan_text
+
+    # Step 1: Self-check
+    check_result = await self_check(current_plan, planner_model)
+    total_duration_ms += check_result["duration_ms"]
+    total_cost += check_result["cost_usd"] or 0.0
+    steps_run = 1
+
+    if not check_result["has_problems"]:
+        # Clean — still run wrap-up for conciseness
+        wrapup_result = await wrapup_plan(current_plan, planner_model)
+        current_plan = wrapup_result["plan_text"]
+        total_duration_ms += wrapup_result["duration_ms"]
+        total_cost += wrapup_result["cost_usd"] or 0.0
+        steps_run = 2  # check + wrapup (no repair needed)
+
+        return {
+            "plan_text": current_plan,
+            "self_check_found_problems": False,
+            "total_duration_ms": total_duration_ms,
+            "total_cost_usd": total_cost,
+            "steps_run": steps_run,
+        }
+
+    # Step 2: Repair
+    repair_result = await repair_plan(current_plan, check_result["problems_text"], planner_model)
+    current_plan = repair_result["plan_text"]
+    total_duration_ms += repair_result["duration_ms"]
+    total_cost += repair_result["cost_usd"] or 0.0
+    steps_run = 2
+
+    # Step 3: Wrap-up
+    wrapup_result = await wrapup_plan(current_plan, planner_model)
+    current_plan = wrapup_result["plan_text"]
+    total_duration_ms += wrapup_result["duration_ms"]
+    total_cost += wrapup_result["cost_usd"] or 0.0
+    steps_run = 3
+
+    return {
+        "plan_text": current_plan,
+        "self_check_found_problems": True,
+        "total_duration_ms": total_duration_ms,
+        "total_cost_usd": total_cost,
+        "steps_run": steps_run,
+    }
+
+
+# ---------------------------------------------------------------------------
 # DB verification
 # ---------------------------------------------------------------------------
 
@@ -338,8 +490,12 @@ async def run_e2e_loop(
     conn: sqlite3.Connection,
     session_id: str,
     output_dir: Path,
+    self_review: bool = False,
 ) -> dict:
     """Run the full plan -> review -> revise -> review -> GO loop.
+
+    If self_review=True, adds a bounded self-review pipeline after each
+    revision (self-check → repair → wrap-up) before sending to GPT.
 
     Returns a summary dict with round details, costs, artifacts, etc.
     """
@@ -445,7 +601,34 @@ async def run_e2e_loop(
         round_info["revision_duration_ms"] = revision_duration_ms
         round_info["revision_cost_usd"] = revision_cost
 
-        # Store revised plan in DB
+        # ── Self-review (if enabled) ──
+        self_review_cost = 0.0
+        self_review_duration_ms = 0
+        self_review_steps = 0
+        self_review_found_problems = False
+
+        if self_review:
+            sr_result = await run_self_review(current_plan, planner_model)
+            current_plan = sr_result["plan_text"]
+            self_review_cost = sr_result["total_cost_usd"]
+            self_review_duration_ms = sr_result["total_duration_ms"]
+            self_review_steps = sr_result["steps_run"]
+            self_review_found_problems = sr_result["self_check_found_problems"]
+            total_claude_cost += self_review_cost
+
+            add_message(
+                conn, session_id, "planner",
+                f"Self-review: {'found problems, repaired' if self_review_found_problems else 'clean'} "
+                f"({self_review_steps} steps, {self_review_duration_ms}ms, "
+                f"${self_review_cost:.4f}).",
+            )
+
+        round_info["self_review_cost_usd"] = self_review_cost
+        round_info["self_review_duration_ms"] = self_review_duration_ms
+        round_info["self_review_steps"] = self_review_steps
+        round_info["self_review_found_problems"] = self_review_found_problems
+
+        # Store revised plan in DB (after self-review if enabled)
         draft_num += 1
         add_plan_draft(conn, session_id, draft_num, current_plan)
         add_message(
@@ -534,16 +717,35 @@ def print_results(
 
         if rev_dur is not None:
             rev_dur_s = rev_dur / 1000.0
-            total_lat = review_lat + rev_dur_s
-            total_round_cost = review_cost + (rev_cost or 0.0)
-            print(
-                f"Latency:  {review_lat:.1f}s (review) + "
-                f"{rev_dur_s:.1f}s (revision) = {total_lat:.1f}s"
-            )
-            print(
-                f"Cost:     ${review_cost:.3f} (review) + "
-                f"${rev_cost or 0:.3f} (revision) = ${total_round_cost:.3f}"
-            )
+            sr_dur = rd.get("self_review_duration_ms", 0) or 0
+            sr_dur_s = sr_dur / 1000.0
+            sr_cost = rd.get("self_review_cost_usd", 0) or 0.0
+            total_lat = review_lat + rev_dur_s + sr_dur_s
+            total_round_cost = review_cost + (rev_cost or 0.0) + sr_cost
+
+            if sr_dur > 0:
+                sr_problems = rd.get("self_review_found_problems", False)
+                sr_steps = rd.get("self_review_steps", 0)
+                sr_label = f"self-review: {'repair+wrapup' if sr_problems else 'wrapup'} [{sr_steps} steps]"
+                print(
+                    f"Latency:  {review_lat:.1f}s (review) + "
+                    f"{rev_dur_s:.1f}s (revision) + "
+                    f"{sr_dur_s:.1f}s ({sr_label}) = {total_lat:.1f}s"
+                )
+                print(
+                    f"Cost:     ${review_cost:.3f} (review) + "
+                    f"${rev_cost or 0:.3f} (revision) + "
+                    f"${sr_cost:.3f} (self-review) = ${total_round_cost:.3f}"
+                )
+            else:
+                print(
+                    f"Latency:  {review_lat:.1f}s (review) + "
+                    f"{rev_dur_s:.1f}s (revision) = {total_lat:.1f}s"
+                )
+                print(
+                    f"Cost:     ${review_cost:.3f} (review) + "
+                    f"${rev_cost or 0:.3f} (revision) = ${total_round_cost:.3f}"
+                )
         else:
             print(f"Latency:  {review_lat:.1f}s (review)")
             print(f"Cost:     ${review_cost:.3f} (review)")
@@ -620,6 +822,12 @@ def main() -> None:
         default=None,
         help="Output directory for artifacts (default: temp directory)",
     )
+    parser.add_argument(
+        "--self-review",
+        action="store_true",
+        default=False,
+        help="Enable bounded self-review after each revision (self-check → repair → wrap-up)",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -647,6 +855,7 @@ def main() -> None:
     print(f"Planner:    {args.planner_model}")
     print(f"Reviewer:   {args.reviewer_model}")
     print(f"Max rounds: {args.max_rounds}")
+    print(f"Self-review: {'ON' if args.self_review else 'OFF'}")
     print(f"Output:     {output_dir}")
     print(f"Session:    {session_id}")
     print(f"{'=' * 55}")
@@ -662,6 +871,7 @@ def main() -> None:
             conn=conn,
             session_id=session_id,
             output_dir=output_dir,
+            self_review=args.self_review,
         )
     )
 
