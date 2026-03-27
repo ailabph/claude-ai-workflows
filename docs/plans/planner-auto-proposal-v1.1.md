@@ -549,11 +549,11 @@ Based on all seven experiments, the recommended v1 default:
 
 The winning config was tested on a second feature domain (webhook receiver with signature validation, event queue, retry logic) to prevent overfitting. Results:
 
-| Feature | Complexity | Rounds to 0 Criticals | GPT GO? | Cost | Plan Quality |
-|---------|-----------|----------------------|---------|------|-------------|
-| Registration | Standard | R5 (GO) | YES | $0.87 | Implementation-ready |
-| Webhook (6r) | High | R4 | No | $1.26 | Good — 0 criticals, 3 majors remain |
-| Webhook (10r) | High | R5 (oscillates 0→1) | No | $2.84 | Excellent — but criticals return |
+| Feature | Complexity | Config | Rounds | GPT GO? | Cost | Plan Quality |
+|---------|-----------|--------|--------|---------|------|-------------|
+| Registration | Standard | Winning config | R5 | YES | $0.87 | Implementation-ready |
+| Webhook | High | Same, no history | 10 (capped) | No | $2.84 | Excellent but oscillating |
+| **Webhook** | **High** | **Same + review history** | **R4** | **YES** | **$0.62** | **Implementation-ready** |
 
 **Key findings:**
 - Config is **not overfitted** — works across domains
@@ -562,6 +562,7 @@ The winning config was tested on a second feature domain (webhook receiver with 
 - **Zero-critical threshold is more reliable than waiting for GPT GO** — catches both features in a similar window
 - Deep review analysis: **44/46 issues were warranted** — GPT reviews are thorough and valid, not nitpicking
 - Complex features need a **pre-review domain checklist** — 50% of webhook issues could have been caught before round 1
+- **Review history is the single biggest improvement** — webhook feature converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without it
 
 ### Feature Complexity Detection
 
@@ -631,7 +632,7 @@ The converged plan (Experiment 7, registration) is 10 KB, 1,346 words, 5 milesto
 
 The non-converged plan (Experiment 9, webhook at R10) still reached excellent quality: fail-closed security, FOR UPDATE SKIP LOCKED concurrency, terminal dead-letter, injected clock for testing. The deep analysis confirmed 44/46 GPT issues were warranted — the process was working, it just needed more rounds and context continuity to converge.
 
-**The convergence problem is solved for standard features.** For complex features, the combination of review history, feedback validation, and a generous round cap should produce progressive improvement toward a high-quality plan — even if GPT never formally says GO.
+**The convergence problem is solved.** With review history enabled, both standard and complex features converge within 4-5 rounds. Review history was the single biggest improvement — it turned a non-converging 10-round run ($2.84) into a 4-round convergence ($0.62) by giving GPT context continuity across rounds.
 
 ---
 

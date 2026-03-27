@@ -339,6 +339,39 @@ Based on all 9 experiments across 2 features:
 - **Reset trigger:** If oscillating after 5 rounds with no progress, force plan redesign
 - **Expected:** Reaches implementation-ready at R4-6, ~$0.75-1.50
 
+### Experiment 10: CONVERGED — Webhook + Review History (20-round cap)
+
+| Config | Value |
+|--------|-------|
+| Feature | Webhook receiver (same as Exp 8 & 9) |
+| All settings | Same winning config |
+| New | `--review-history` ON |
+| Cap | 20 rounds |
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| **4** | **5→4→3→GO** | **$0.62** | **579s (10 min)** |
+
+**Result: CONVERGED at round 4.** The same feature that failed in 10 rounds without history ($2.84) converges in 4 with history ($0.62). Issue trend is strictly declining — no oscillation.
+
+**Review history is the single biggest improvement.** It turned a non-converging feature into a 4-round convergence at 78% less cost.
+
+---
+
+## Final v1 Default Configuration
+
+| Setting | Value |
+|---------|-------|
+| Planner | claude-opus-4-6, effort=medium, thinking=adaptive, max_turns=2 |
+| Reviewer | gpt-5.4, reasoning_effort=high |
+| Resolution guidance | ON |
+| Keep/trim | ON |
+| Validate feedback | ON |
+| Filter severity | critical,major |
+| **Review history** | **ON** |
+| Constrained prompt | ON |
+| Cap | 20 rounds |
+
 ### Feature complexity detection:
 Flag as "complex" if the feature involves any of:
 - Concurrent access / locking
