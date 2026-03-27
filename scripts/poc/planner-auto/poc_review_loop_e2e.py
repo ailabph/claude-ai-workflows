@@ -115,7 +115,6 @@ async def _call_claude(
         model=model,
         max_turns=turns,
         permission_mode="bypassPermissions",
-        allowed_tools=[],  # no tool access — text-only responses
         stderr=lambda s: None,
     )
     if effort:
