@@ -28,7 +28,7 @@ VALID_PHASE_TRANSITIONS: dict[Phase, set[Phase]] = {
     Phase.SETUP: {Phase.CONTEXT},
     Phase.CONTEXT: {Phase.DISCUSSION},
     Phase.DISCUSSION: {Phase.PLANNING},
-    Phase.PLANNING: {Phase.REVIEW},
+    Phase.PLANNING: {Phase.REVIEW, Phase.COMPLETE},
     Phase.REVIEW: {Phase.PLANNING, Phase.COMPLETE},
     Phase.COMPLETE: set(),
 }
@@ -40,7 +40,7 @@ PHASE_ALLOWED_COMMANDS: dict[Phase, set[str]] = {
     Phase.SETUP: {"start", "add-context", "status", "export"},
     Phase.CONTEXT: {"add-context", "status", "export"},
     Phase.DISCUSSION: {"discuss", "status", "export"},
-    Phase.PLANNING: {"generate", "status", "export"},
+    Phase.PLANNING: {"generate", "complete", "status", "export"},
     Phase.REVIEW: {"review", "status", "export"},
     Phase.COMPLETE: {"status", "export"},
 }

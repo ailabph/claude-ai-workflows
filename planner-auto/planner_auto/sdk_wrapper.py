@@ -70,7 +70,10 @@ async def query_claude(
     for rate_attempt in range(len(rate_limit_delays) + 1):
         try:
             start_time = time.monotonic()
-            response_text = await _execute_query(prompt, options, timeout_sec)
+            response_text = await asyncio.wait_for(
+                _execute_query(prompt, options, timeout_sec),
+                timeout=timeout_sec,
+            )
             elapsed = time.monotonic() - start_time
 
             logger.info(
@@ -97,6 +100,17 @@ async def query_claude(
                 await asyncio.sleep(delay)
                 continue
             raise
+
+        except asyncio.TimeoutError:
+            timeout_err = SDKTimeoutError(
+                f"Request timed out after {timeout_sec}s (enforced by wait_for)"
+            )
+            last_error = timeout_err
+            if rate_attempt == 0:
+                logger.warning("Timeout (wait_for), retrying once in 2s...")
+                await asyncio.sleep(2)
+                continue
+            raise timeout_err from None
 
         except SDKTimeoutError as e:
             last_error = e

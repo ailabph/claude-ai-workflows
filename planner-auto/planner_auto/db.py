@@ -10,6 +10,7 @@ All CRUD/query functions accept conn: sqlite3.Connection as their first paramete
 import os
 import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -122,6 +123,30 @@ def init_schema(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+@contextmanager
+def transaction(conn: sqlite3.Connection):
+    """Context manager for atomic multi-operation transactions.
+
+    Usage::
+
+        with transaction(conn):
+            add_message(conn, sid, "user", text)
+            add_message(conn, sid, "assistant", reply)
+        # both rows committed together, or both rolled back on error
+
+    Since CRUD functions no longer auto-commit, callers that perform a
+    single operation can simply call ``conn.commit()`` afterwards.  Use
+    this wrapper when two or more operations must succeed or fail as a unit.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 # ---------------------------------------------------------------------------
 # CRUD functions
 # ---------------------------------------------------------------------------
@@ -143,7 +168,6 @@ def create_session(conn: sqlite3.Connection, project: str) -> str:
         "VALUES (?, ?, 'SETUP', 'ACTIVE', ?, ?)",
         (session_id, project, now, now),
     )
-    conn.commit()
     return session_id
 
 
@@ -160,7 +184,6 @@ def update_session_phase(conn: sqlite3.Connection, session_id: str, phase: str) 
         "UPDATE sessions SET phase = ?, updated_at = ? WHERE id = ?",
         (phase, now, session_id),
     )
-    conn.commit()
 
 
 def update_session_status(conn: sqlite3.Connection, session_id: str, status: str) -> None:
@@ -176,7 +199,6 @@ def update_session_status(conn: sqlite3.Connection, session_id: str, status: str
         "UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?",
         (status, now, session_id),
     )
-    conn.commit()
 
 
 def add_message(conn: sqlite3.Connection, session_id: str, role: str, content: str) -> int:
@@ -195,7 +217,6 @@ def add_message(conn: sqlite3.Connection, session_id: str, role: str, content: s
         "INSERT INTO messages (session_id, role, content) VALUES (?, ?, ?)",
         (session_id, role, content),
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -225,7 +246,6 @@ def add_context_entry(
         "DO UPDATE SET content = excluded.content, created_at = CURRENT_TIMESTAMP",
         (session_id, key, entry_type, content),
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -260,7 +280,6 @@ def add_plan_draft(
         "VALUES (?, ?, ?, ?, ?)",
         (session_id, next_num, content, model, config_snapshot_id),
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -287,7 +306,6 @@ def add_review(
         "INSERT INTO reviews (session_id, draft_id, verdict, content) VALUES (?, ?, ?, ?)",
         (session_id, draft_id, verdict, content),
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -312,7 +330,6 @@ def create_blocker(
         "INSERT INTO blockers (session_id, source, question) VALUES (?, ?, ?)",
         (session_id, source, question),
     )
-    conn.commit()
     return cursor.lastrowid
 
 
@@ -329,7 +346,6 @@ def resolve_blocker(conn: sqlite3.Connection, blocker_id: int, answer: str) -> N
         "UPDATE blockers SET answer = ?, status = 'resolved', resolved_at = ? WHERE id = ?",
         (answer, now, blocker_id),
     )
-    conn.commit()
 
 
 def save_session_config(
@@ -351,7 +367,6 @@ def save_session_config(
         "INSERT INTO session_config (session_id, config_json) VALUES (?, ?)",
         (session_id, config_json),
     )
-    conn.commit()
     return cursor.lastrowid
 
 

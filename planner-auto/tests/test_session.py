@@ -29,6 +29,7 @@ class TestAdvancePhase:
 
     def test_valid_setup_to_context(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm.advance_phase(sid, Phase.CONTEXT.value)
         session = get_session(db_conn, sid)
         assert session["phase"] == "CONTEXT"
@@ -36,6 +37,7 @@ class TestAdvancePhase:
     def test_valid_context_to_discussion(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.CONTEXT.value)
+        db_conn.commit()
         sm.advance_phase(sid, Phase.DISCUSSION.value)
         session = get_session(db_conn, sid)
         assert session["phase"] == "DISCUSSION"
@@ -43,29 +45,34 @@ class TestAdvancePhase:
     def test_valid_discussion_to_planning(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.DISCUSSION.value)
+        db_conn.commit()
         sm.advance_phase(sid, Phase.PLANNING.value)
         assert get_session(db_conn, sid)["phase"] == "PLANNING"
 
     def test_valid_planning_to_review(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.PLANNING.value)
+        db_conn.commit()
         sm.advance_phase(sid, Phase.REVIEW.value)
         assert get_session(db_conn, sid)["phase"] == "REVIEW"
 
     def test_valid_review_to_complete(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.REVIEW.value)
+        db_conn.commit()
         sm.advance_phase(sid, Phase.COMPLETE.value)
         assert get_session(db_conn, sid)["phase"] == "COMPLETE"
 
     def test_valid_review_to_planning(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.REVIEW.value)
+        db_conn.commit()
         sm.advance_phase(sid, Phase.PLANNING.value)
         assert get_session(db_conn, sid)["phase"] == "PLANNING"
 
     def test_invalid_setup_to_planning(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         with pytest.raises(InvalidTransitionError) as exc_info:
             sm.advance_phase(sid, Phase.PLANNING.value)
         assert "SETUP" in str(exc_info.value)
@@ -74,6 +81,7 @@ class TestAdvancePhase:
     def test_invalid_complete_to_anything(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.COMPLETE.value)
+        db_conn.commit()
         with pytest.raises(InvalidTransitionError):
             sm.advance_phase(sid, Phase.SETUP.value)
 
@@ -87,51 +95,61 @@ class TestCheckCommand:
 
     def test_export_always_allowed(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         # export allowed in SETUP
         sm.check_command(sid, "export")
         # export allowed when PAUSED
         update_session_status(db_conn, sid, Status.PAUSED.value)
+        db_conn.commit()
         sm.check_command(sid, "export")
 
     def test_add_context_allowed_in_setup(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm.check_command(sid, "add-context")  # should not raise
 
     def test_add_context_allowed_in_context_phase(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.CONTEXT.value)
+        db_conn.commit()
         sm.check_command(sid, "add-context")  # should not raise
 
     def test_add_context_blocked_in_discussion(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.DISCUSSION.value)
+        db_conn.commit()
         with pytest.raises(CommandNotAllowedError):
             sm.check_command(sid, "add-context")
 
     def test_discuss_allowed_in_discussion(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.DISCUSSION.value)
+        db_conn.commit()
         sm.check_command(sid, "discuss")  # should not raise
 
     def test_discuss_blocked_in_setup(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         with pytest.raises(CommandNotAllowedError):
             sm.check_command(sid, "discuss")
 
     def test_generate_allowed_in_planning(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.PLANNING.value)
+        db_conn.commit()
         sm.check_command(sid, "generate")  # should not raise
 
     def test_generate_blocked_in_discussion(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_phase(db_conn, sid, Phase.DISCUSSION.value)
+        db_conn.commit()
         with pytest.raises(CommandNotAllowedError):
             sm.check_command(sid, "generate")
 
     def test_paused_only_allows_resume_status_export(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         update_session_status(db_conn, sid, Status.PAUSED.value)
+        db_conn.commit()
         # Allowed
         sm.check_command(sid, "resume")
         sm.check_command(sid, "status")
@@ -144,12 +162,14 @@ class TestCheckCommand:
     def test_complete_blocked_by_open_blockers(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
         create_blocker(db_conn, sid, "planner", "Which DB?")
+        db_conn.commit()
         with pytest.raises(CommandNotAllowedError) as exc_info:
             sm.check_command(sid, "complete")
         assert "open blocker" in str(exc_info.value)
 
     def test_complete_allowed_with_no_blockers(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm.check_command(sid, "complete")  # should not raise
 
     def test_nonexistent_session(self, sm):

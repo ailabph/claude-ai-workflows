@@ -64,6 +64,7 @@ def start(ctx, project, verbose, debug):
     # Save initial config snapshot
     config = {"project": project, "model_default": "claude-sonnet-4-6"}
     save_session_config(conn, session_id, json.dumps(config))
+    conn.commit()
 
     # Set up session logger (creates log file)
     setup_session_logger(session_id, verbose=verbose, debug=debug)
@@ -174,11 +175,13 @@ def resume(ctx, session_id):
             click.echo(f"\n  Blocker [{b['id']}] ({b['source']}): {b['question']}")
             answer = click.prompt("  Your answer")
             resolve_blocker(conn, b["id"], answer)
+            conn.commit()
             click.echo("  Resolved.")
 
     # Set status back to ACTIVE
     if current_status == "PAUSED":
         update_session_status(conn, session_id, "ACTIVE")
+        conn.commit()
 
     session = get_session(conn, session_id)
     click.echo(f"\nSession {session_id} resumed.")
@@ -263,6 +266,7 @@ def _add_file_context(ctx, conn, session_id, file_path):
 
     key = os.path.basename(file_path)
     add_context_entry(conn, session_id, key, "file", content)
+    conn.commit()
     click.echo(f"Context added: file '{key}' ({len(content)} chars)")
 
 
@@ -272,6 +276,7 @@ def _add_note_context(conn, session_id, note):
 
     key = f"note-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
     add_context_entry(conn, session_id, key, "note", note)
+    conn.commit()
     click.echo(f"Context added: note '{key}'")
 
 
@@ -279,8 +284,9 @@ def _add_note_context(conn, session_id, note):
 @click.argument("session_id")
 @click.argument("message", required=False, default=None)
 @click.option("--interactive", is_flag=True, default=False, help="Enter interactive discussion mode.")
+@click.option("--done", is_flag=True, default=False, help="Advance to PLANNING after this message.")
 @click.pass_context
-def discuss(ctx, session_id, message, interactive):
+def discuss(ctx, session_id, message, interactive, done):
     """Send a discussion message or enter interactive mode."""
     from planner_auto.agents import discuss as discuss_fn
 
@@ -303,6 +309,12 @@ def discuss(ctx, session_id, message, interactive):
         _discuss_interactive(ctx, conn, sm, session_id)
     elif message:
         _discuss_single(ctx, conn, session_id, message, discuss_fn)
+        if done:
+            try:
+                sm.advance_phase(session_id, Phase.PLANNING.value)
+                click.echo("Phase advanced to PLANNING.")
+            except Exception as e:
+                click.echo(f"Error advancing phase: {e}", err=True)
     else:
         click.echo("Error: Provide a message or use --interactive.", err=True)
         ctx.exit(1)
@@ -442,6 +454,15 @@ def complete(ctx, session_id):
         ctx.exit(1)
         return
 
+    # Check command is allowed in current phase/status (catches PAUSED)
+    sm = SessionManager(conn)
+    try:
+        sm.check_command(session_id, "complete")
+    except CommandNotAllowedError as e:
+        click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
+        return
+
     # Check for open blockers
     blockers = get_open_blockers(conn, session_id)
     if blockers:
@@ -452,7 +473,6 @@ def complete(ctx, session_id):
         return
 
     # Advance phase to COMPLETE
-    sm = SessionManager(conn)
     try:
         sm.advance_phase(session_id, Phase.COMPLETE.value)
     except Exception as e:
@@ -462,6 +482,7 @@ def complete(ctx, session_id):
 
     # Set status to COMPLETE
     update_session_status(conn, session_id, "COMPLETE")
+    conn.commit()
 
     # Auto-export
     paths = export_session(session_id, conn)

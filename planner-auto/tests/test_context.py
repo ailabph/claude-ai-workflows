@@ -163,6 +163,7 @@ class TestAddContextPhaseTransition:
         init_schema(conn)
         update_session_phase(conn, sid, "CONTEXT")
         update_session_phase(conn, sid, "DISCUSSION")
+        conn.commit()
         conn.close()
 
         test_file = tmp_path / "readme.txt"

@@ -25,6 +25,7 @@ def session_in_discussion(db_conn):
     sid = create_session(db_conn, "myapp")
     update_session_phase(db_conn, sid, "CONTEXT")
     update_session_phase(db_conn, sid, "DISCUSSION")
+    db_conn.commit()
     return sid
 
 
@@ -40,6 +41,7 @@ def session_in_planning(db_conn):
     add_context_entry(db_conn, sid, "note-1", "note", "Use PostgreSQL")
     add_message(db_conn, sid, "user", "Build a user auth system")
     add_message(db_conn, sid, "assistant", "Got it, I'll plan user auth.")
+    db_conn.commit()
     return sid
 
 
@@ -83,6 +85,7 @@ class TestDiscuss:
         # Add prior messages
         add_message(db_conn, sid, "user", "First message")
         add_message(db_conn, sid, "assistant", "First response")
+        db_conn.commit()
 
         await discuss(sid, "Second message", db_conn)
 

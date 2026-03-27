@@ -9,6 +9,7 @@ from planner_auto.db import (
     get_open_blockers,
     get_session,
     resolve_blocker,
+    transaction,
     update_session_phase,
     update_session_status,
 )
@@ -70,6 +71,7 @@ class SessionManager:
             raise InvalidTransitionError(current_phase, target_phase)
 
         update_session_phase(self.conn, session_id, target_phase)
+        self.conn.commit()
 
     def check_command(self, session_id: str, command_name: str) -> None:
         """Check if a command is allowed in the session's current phase/status.
@@ -149,8 +151,9 @@ class SessionManager:
             SessionNotFoundError: If session doesn't exist.
         """
         self._get_session_or_raise(session_id)
-        update_session_status(self.conn, session_id, Status.PAUSED.value)
-        blocker_id = create_blocker(self.conn, session_id, source, question)
+        with transaction(self.conn):
+            update_session_status(self.conn, session_id, Status.PAUSED.value)
+            blocker_id = create_blocker(self.conn, session_id, source, question)
         return blocker_id
 
     def resolve_and_resume(self, session_id: str, blocker_id: int, answer: str) -> None:
@@ -168,7 +171,8 @@ class SessionManager:
             SessionNotFoundError: If session doesn't exist.
         """
         self._get_session_or_raise(session_id)
-        resolve_blocker(self.conn, blocker_id, answer)
-        remaining = get_open_blockers(self.conn, session_id)
-        if not remaining:
-            update_session_status(self.conn, session_id, Status.ACTIVE.value)
+        with transaction(self.conn):
+            resolve_blocker(self.conn, blocker_id, answer)
+            remaining = get_open_blockers(self.conn, session_id)
+            if not remaining:
+                update_session_status(self.conn, session_id, Status.ACTIVE.value)

@@ -19,6 +19,7 @@ from planner_auto.db import (
     get_context_entries,
     get_messages,
     save_session_config,
+    transaction,
 )
 from planner_auto.errors import CommandNotAllowedError
 from planner_auto.prompts import (
@@ -82,9 +83,10 @@ async def discuss(
         model=DEFAULT_MODEL,
     )
 
-    # Commit both messages together on success
-    add_message(conn, session_id, "user", user_input)
-    add_message(conn, session_id, "assistant", response)
+    # Commit both messages together atomically on success
+    with transaction(conn):
+        add_message(conn, session_id, "user", user_input)
+        add_message(conn, session_id, "assistant", response)
 
     return response
 
@@ -144,6 +146,7 @@ async def synthesize_context(
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
     key = f"synthesis-{timestamp}"
     add_context_entry(conn, session_id, key, "synthesis", synthesis)
+    conn.commit()
 
     return synthesis
 
@@ -207,7 +210,8 @@ async def generate_plan(
         },
         "feature_description": feature_description,
     }
-    config_id = save_session_config(conn, session_id, json.dumps(config))
-    add_plan_draft(conn, session_id, plan_content, model, config_snapshot_id=config_id)
+    with transaction(conn):
+        config_id = save_session_config(conn, session_id, json.dumps(config))
+        add_plan_draft(conn, session_id, plan_content, model, config_snapshot_id=config_id)
 
     return plan_content

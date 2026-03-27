@@ -35,6 +35,7 @@ def populated_session(db_conn):
     add_context_entry(db_conn, sid, "synthesis-1", "synthesis", "Project needs auth with PG")
     add_plan_draft(db_conn, sid, "# Plan Draft 1\nContent here", "sonnet")
     add_plan_draft(db_conn, sid, "# Plan Draft 2\nRevised content", "opus")
+    db_conn.commit()
     return sid
 
 
@@ -116,6 +117,7 @@ class TestExportSession:
     def test_empty_session_export(self, db_conn, tmp_path):
         """Export a session with no messages, context, or drafts."""
         sid = create_session(db_conn, "empty")
+        db_conn.commit()
         output_dir = str(tmp_path / "export")
         paths = export_session(sid, db_conn, output_dir=output_dir)
 
@@ -131,6 +133,7 @@ class TestBlockerLifecycle:
 
     def test_pause_with_blocker(self, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm = SessionManager(db_conn)
 
         bid = sm.pause_with_blocker(sid, "planner", "Which DB?")
@@ -143,6 +146,7 @@ class TestBlockerLifecycle:
 
     def test_resolve_and_resume_with_single_blocker(self, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm = SessionManager(db_conn)
 
         bid = sm.pause_with_blocker(sid, "planner", "Which DB?")
@@ -155,11 +159,13 @@ class TestBlockerLifecycle:
     def test_resolve_and_resume_with_multiple_blockers(self, db_conn):
         """Resolving one blocker when others remain should keep PAUSED."""
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
         sm = SessionManager(db_conn)
 
         bid1 = sm.pause_with_blocker(sid, "planner", "Which DB?")
         # Add second blocker directly
         bid2 = create_blocker(db_conn, sid, "planner", "Which framework?")
+        db_conn.commit()
 
         sm.resolve_and_resume(sid, bid1, "PostgreSQL")
 
@@ -204,6 +210,7 @@ class TestCompleteCLI:
         update_session_phase(conn, sid, "PLANNING")
         update_session_phase(conn, sid, "REVIEW")
         create_blocker(conn, sid, "planner", "Need clarification")
+        conn.commit()
         conn.close()
 
         result = r.invoke(cli, [*base_args, "complete", sid])
@@ -222,6 +229,7 @@ class TestCompleteCLI:
         update_session_phase(conn, sid, "PLANNING")
         update_session_phase(conn, sid, "REVIEW")
         add_message(conn, sid, "user", "test msg")
+        conn.commit()
         conn.close()
 
         result = r.invoke(cli, [*base_args, "complete", sid])

@@ -130,6 +130,7 @@ class TestStatusCommand:
         add_context_entry(conn, sid, "readme", "file", "content")
         add_plan_draft(conn, sid, "Draft 1", "sonnet")
         create_blocker(conn, sid, "planner", "Which DB?")
+        conn.commit()
         conn.close()
 
         result = r.invoke(cli, [*base_args, "status", sid])
@@ -181,6 +182,7 @@ class TestResumeCommand:
         init_schema(conn)
         update_session_status(conn, sid, "PAUSED")
         create_blocker(conn, sid, "planner", "Which DB?")
+        conn.commit()
         conn.close()
 
         # Simulate user input for blocker answer
