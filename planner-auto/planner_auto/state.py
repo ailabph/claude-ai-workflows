@@ -41,7 +41,7 @@ PHASE_ALLOWED_COMMANDS: dict[Phase, set[str]] = {
     Phase.CONTEXT: {"add-context", "status", "export"},
     Phase.DISCUSSION: {"discuss", "status", "export"},
     Phase.PLANNING: {"generate", "complete", "status", "export"},
-    Phase.REVIEW: {"review", "status", "export"},
+    Phase.REVIEW: {"review", "complete", "status", "export"},
     Phase.COMPLETE: {"status", "export"},
 }
 

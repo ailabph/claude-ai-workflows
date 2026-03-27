@@ -62,7 +62,8 @@ async def query_claude(
 
     # Rate-limit retry: up to 3 attempts with exponential backoff (2s, 4s, 8s)
     rate_limit_delays = [2, 4, 8]
-    # Timeout/connection retry: 1 retry after 2s
+    # Timeout/connection retry: tracked independently (1 retry after 2s)
+    timeout_retries_used = 0
     max_timeout_retries = 1
 
     last_error = None
@@ -70,15 +71,17 @@ async def query_claude(
     for rate_attempt in range(len(rate_limit_delays) + 1):
         try:
             start_time = time.monotonic()
-            response_text = await asyncio.wait_for(
+            response_text, usage_info = await asyncio.wait_for(
                 _execute_query(prompt, options, timeout_sec),
                 timeout=timeout_sec,
             )
             elapsed = time.monotonic() - start_time
 
+            input_tokens = usage_info.get("input_tokens", 0) if usage_info else 0
+            output_tokens = usage_info.get("output_tokens", 0) if usage_info else 0
             logger.info(
-                "SDK call completed: model=%s, elapsed=%.2fs, response_len=%d",
-                model, elapsed, len(response_text),
+                "SDK call completed: model=%s, elapsed=%.2fs, tokens=%d+%d, response_len=%d",
+                model, elapsed, input_tokens, output_tokens, len(response_text),
             )
 
             if not response_text or not response_text.strip():
@@ -101,25 +104,22 @@ async def query_claude(
                 continue
             raise
 
-        except asyncio.TimeoutError:
-            timeout_err = SDKTimeoutError(
-                f"Request timed out after {timeout_sec}s (enforced by wait_for)"
-            )
-            last_error = timeout_err
-            if rate_attempt == 0:
-                logger.warning("Timeout (wait_for), retrying once in 2s...")
-                await asyncio.sleep(2)
-                continue
-            raise timeout_err from None
-
-        except SDKTimeoutError as e:
+        except (asyncio.TimeoutError, SDKTimeoutError) as e:
+            if isinstance(e, asyncio.TimeoutError):
+                e = SDKTimeoutError(
+                    f"Request timed out after {timeout_sec}s (enforced by wait_for)"
+                )
             last_error = e
-            # Single retry for timeout/connection errors
-            if rate_attempt == 0:
-                logger.warning("Timeout/connection error, retrying once in 2s...")
+            # Independent timeout retry counter (not coupled to rate-limit loop)
+            if timeout_retries_used < max_timeout_retries:
+                timeout_retries_used += 1
+                logger.warning(
+                    "Timeout/connection error (retry %d/%d), retrying in 2s...",
+                    timeout_retries_used, max_timeout_retries,
+                )
                 await asyncio.sleep(2)
                 continue
-            raise
+            raise e from None
 
     # Should not reach here, but just in case
     if last_error:
@@ -131,13 +131,17 @@ async def _execute_query(
     prompt: str,
     options: claude_agent_sdk.ClaudeAgentOptions,
     timeout_sec: int,
-) -> str:
+) -> tuple[str, dict]:
     """Execute a single SDK query call and collect the response.
+
+    Returns (response_text, usage_info) where usage_info is a dict with
+    token counts from the ResultMessage, or empty dict if unavailable.
 
     Maps SDK errors to our custom error types.
     """
     try:
         result_parts = []
+        usage_info: dict = {}
         async for message in claude_agent_sdk.query(
             prompt=prompt, options=options
         ):
@@ -146,13 +150,14 @@ async def _execute_query(
                     if isinstance(block, claude_agent_sdk.TextBlock):
                         result_parts.append(block.text)
             elif isinstance(message, claude_agent_sdk.ResultMessage):
-                for block in message.content:
-                    if isinstance(block, claude_agent_sdk.TextBlock):
-                        result_parts.append(block.text)
+                if message.result:
+                    result_parts.append(message.result)
+                if message.usage:
+                    usage_info = message.usage
             elif isinstance(message, claude_agent_sdk.RateLimitEvent):
                 raise SDKRateLimitError("Rate limited by API")
 
-        return "".join(result_parts)
+        return "".join(result_parts), usage_info
 
     except SDKRateLimitError:
         raise

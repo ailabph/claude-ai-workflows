@@ -308,25 +308,29 @@ def discuss(ctx, session_id, message, interactive, done):
     if interactive:
         _discuss_interactive(ctx, conn, sm, session_id)
     elif message:
-        _discuss_single(ctx, conn, session_id, message, discuss_fn)
-        if done:
+        success = _discuss_single(ctx, conn, session_id, message, discuss_fn)
+        if done and success:
             try:
                 sm.advance_phase(session_id, Phase.PLANNING.value)
                 click.echo("Phase advanced to PLANNING.")
             except Exception as e:
                 click.echo(f"Error advancing phase: {e}", err=True)
+        elif done and not success:
+            click.echo("Warning: --done ignored because the discussion call failed.", err=True)
     else:
         click.echo("Error: Provide a message or use --interactive.", err=True)
         ctx.exit(1)
 
 
 def _discuss_single(ctx, conn, session_id, message, discuss_fn):
-    """Send a single discussion message."""
+    """Send a single discussion message. Returns True on success, False on failure."""
     try:
         response = asyncio.run(discuss_fn(session_id, message, conn))
         click.echo(f"\nAssistant: {response}")
+        return True
     except SDKError as e:
         click.echo(f"Error: {e}", err=True)
+        return False
         click.echo("Hint: Check your API key and network connection.", err=True)
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)

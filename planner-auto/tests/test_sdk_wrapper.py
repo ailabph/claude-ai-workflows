@@ -43,7 +43,7 @@ class TestQueryClaude:
 
     @patch("planner_auto.sdk_wrapper._execute_query")
     async def test_successful_call(self, mock_exec):
-        mock_exec.return_value = "Hello from Claude"
+        mock_exec.return_value = ("Hello from Claude", {"input_tokens": 10, "output_tokens": 20})
         result = await query_claude(
             messages=[{"role": "user", "content": "Hi"}],
             system_prompt="You are helpful.",
@@ -100,7 +100,7 @@ class TestQueryClaude:
     @patch("planner_auto.sdk_wrapper._execute_query")
     async def test_empty_response_error(self, mock_exec):
         """Empty response should raise SDKResponseError."""
-        mock_exec.return_value = ""
+        mock_exec.return_value = ("", {})
         with pytest.raises(SDKResponseError, match="Empty response"):
             await query_claude(
                 messages=[{"role": "user", "content": "Hi"}],
@@ -111,7 +111,7 @@ class TestQueryClaude:
     @patch("planner_auto.sdk_wrapper._execute_query")
     async def test_whitespace_only_response_error(self, mock_exec):
         """Whitespace-only response should raise SDKResponseError."""
-        mock_exec.return_value = "   \n  "
+        mock_exec.return_value = ("   \n  ", {})
         with pytest.raises(SDKResponseError, match="Empty response"):
             await query_claude(
                 messages=[{"role": "user", "content": "Hi"}],

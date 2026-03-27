@@ -107,7 +107,7 @@ class SessionManager:
                 )
             return
 
-        # Rule 3: complete requires zero open blockers
+        # Rule 3: complete requires zero open blockers AND valid phase
         if command_name == "complete":
             blockers = get_open_blockers(self.conn, session_id)
             if blockers:
@@ -116,7 +116,7 @@ class SessionManager:
                     command_name, phase, status,
                     reason=f"Cannot complete with {len(blockers)} open blocker(s): {questions}",
                 )
-            return
+            # Fall through to phase check below (don't return early)
 
         # Rule 4: check phase-based permissions
         try:

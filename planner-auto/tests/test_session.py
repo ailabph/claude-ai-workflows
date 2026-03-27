@@ -161,16 +161,32 @@ class TestCheckCommand:
 
     def test_complete_blocked_by_open_blockers(self, sm, db_conn):
         sid = create_session(db_conn, "myapp")
+        db_conn.commit()
+        # Advance to PLANNING where complete is allowed
+        sm.advance_phase(sid, "CONTEXT")
+        sm.advance_phase(sid, "DISCUSSION")
+        sm.advance_phase(sid, "PLANNING")
         create_blocker(db_conn, sid, "planner", "Which DB?")
         db_conn.commit()
         with pytest.raises(CommandNotAllowedError) as exc_info:
             sm.check_command(sid, "complete")
         assert "open blocker" in str(exc_info.value)
 
-    def test_complete_allowed_with_no_blockers(self, sm, db_conn):
+    def test_complete_allowed_in_planning_with_no_blockers(self, sm, db_conn):
+        """complete is allowed from PLANNING phase (Plan 1 skips REVIEW)."""
         sid = create_session(db_conn, "myapp")
         db_conn.commit()
+        sm.advance_phase(sid, "CONTEXT")
+        sm.advance_phase(sid, "DISCUSSION")
+        sm.advance_phase(sid, "PLANNING")
         sm.check_command(sid, "complete")  # should not raise
+
+    def test_complete_blocked_from_setup_phase(self, sm, db_conn):
+        """complete is not allowed from SETUP — must be in PLANNING or REVIEW."""
+        sid = create_session(db_conn, "myapp")
+        db_conn.commit()
+        with pytest.raises(CommandNotAllowedError):
+            sm.check_command(sid, "complete")
 
     def test_nonexistent_session(self, sm):
         with pytest.raises(SessionNotFoundError):
