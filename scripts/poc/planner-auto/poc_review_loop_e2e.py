@@ -103,20 +103,30 @@ async def _call_claude(
     model: str,
     effort: str | None = None,
     thinking: bool = False,
+    max_turns: int | None = None,
 ) -> ResultMessage | None:
-    """Call Claude via the Agent SDK and return the ResultMessage."""
-    # Thinking mode needs multiple turns (think + respond). Longer prompts
-    # need more thinking turns. We allow up to 10 but disable tool access
-    # to prevent cost spiral from Read/Write/etc. Without thinking, 1 turn
-    # is enough for a focused text-only response.
-    turns = 10 if thinking else 1
+    """Call Claude via the Agent SDK and return the ResultMessage.
+
+    Args:
+        max_turns: Override max turns. If None, defaults to:
+            - thinking mode: no limit (let Claude think as long as needed)
+            - non-thinking: 1 (single text-only response)
+            Set to 0 for no limit.
+    """
+    if max_turns is not None:
+        turns = max_turns if max_turns > 0 else None  # 0 = no limit (None to SDK)
+    elif thinking:
+        turns = None  # no limit — let thinking complete naturally
+    else:
+        turns = 1  # single text-only response
     opts = ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=model,
-        max_turns=turns,
         permission_mode="bypassPermissions",
         stderr=lambda s: None,
     )
+    if turns is not None:
+        opts.max_turns = turns
     if effort:
         opts.effort = effort
     if thinking:
@@ -138,6 +148,7 @@ async def generate_initial_plan(
     planner_model: str,
     effort: str | None = None,
     thinking: bool = False,
+    max_turns: int | None = None,
 ) -> dict:
     """Generate the initial milestone plan via Claude.
 
@@ -145,7 +156,7 @@ async def generate_initial_plan(
         {"plan_text": str, "duration_ms": int, "cost_usd": float | None}
     """
     user_prompt = build_user_prompt(feature, SAMPLE_FILES)
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, user_prompt, planner_model, effort=effort, thinking=thinking)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, user_prompt, planner_model, effort=effort, thinking=thinking, max_turns=max_turns)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -186,6 +197,7 @@ async def revise_plan(
     use_guidance: bool = False,
     effort: str | None = None,
     thinking: bool = False,
+    max_turns: int | None = None,
     validate_feedback: bool = False,
     filter_severity: list[str] | None = None,
     keep_trim: bool = False,
@@ -274,7 +286,7 @@ async def revise_plan(
         f"{instructions}"
     )
 
-    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, revision_prompt, planner_model, effort=effort, thinking=thinking)
+    result_msg = await _call_claude(PLANNER_SYSTEM_PROMPT, revision_prompt, planner_model, effort=effort, thinking=thinking, max_turns=max_turns)
 
     plan_text = (result_msg.result or "") if result_msg else ""
     duration_ms = result_msg.duration_ms if result_msg else 0
@@ -618,6 +630,7 @@ async def run_e2e_loop(
     use_guidance: bool = False,
     planner_effort: str | None = None,
     planner_thinking: bool = False,
+    planner_max_turns: int | None = None,
     reviewer_reasoning_effort: str | None = None,
     validate_feedback: bool = False,
     filter_severity: list[str] | None = None,
@@ -648,7 +661,7 @@ async def run_e2e_loop(
     # ── Step 1: Generate initial plan via Claude ──
     update_session_phase(conn, session_id, "planning")
 
-    plan_result = await generate_initial_plan(feature, planner_model, effort=planner_effort, thinking=planner_thinking)
+    plan_result = await generate_initial_plan(feature, planner_model, effort=planner_effort, thinking=planner_thinking, max_turns=planner_max_turns)
     current_plan = plan_result["plan_text"]
     initial_plan_duration_ms = plan_result["duration_ms"]
     initial_plan_cost = plan_result["cost_usd"] or 0.0
@@ -761,6 +774,7 @@ async def run_e2e_loop(
         revision_result = await revise_plan(
             current_plan, parsed, planner_model,
             use_guidance=use_guidance, effort=planner_effort, thinking=planner_thinking,
+            max_turns=planner_max_turns,
             validate_feedback=validate_feedback, filter_severity=filter_severity,
             keep_trim=keep_trim,
         )
@@ -1059,6 +1073,12 @@ def main() -> None:
         dest="review_history",
         help="Disable review history context",
     )
+    parser.add_argument(
+        "--planner-max-turns",
+        type=int,
+        default=None,
+        help="Max turns for Claude SDK calls (default: unlimited with thinking, 1 without). Set 0 for no limit.",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -1090,6 +1110,7 @@ def main() -> None:
     print(f"Guidance:    {'ON' if args.resolution_guidance else 'OFF'}")
     print(f"P. effort:   {args.planner_effort or 'default'}")
     print(f"P. thinking: {'ON' if args.planner_thinking else 'OFF'}")
+    print(f"P. max_turns: {args.planner_max_turns if args.planner_max_turns is not None else 'auto'}")
     print(f"R. reasoning: {args.reviewer_reasoning or 'default (temp=0.3)'}")
     severity_filter = args.filter_severity.split(",") if args.filter_severity else None
     print(f"Validate FB: {'ON' if args.validate_feedback else 'OFF'}")
@@ -1115,6 +1136,7 @@ def main() -> None:
             use_guidance=args.resolution_guidance,
             planner_effort=args.planner_effort,
             planner_thinking=args.planner_thinking,
+            planner_max_turns=args.planner_max_turns,
             reviewer_reasoning_effort=args.reviewer_reasoning,
             validate_feedback=args.validate_feedback,
             filter_severity=severity_filter,
