@@ -308,6 +308,18 @@ planner-auto's only interaction with `.kafra/` is copying the final plan to `a-0
 
 Plan 1 builds the session model, artifact versioning, and planner loop so that a reviewer can plug in later behind a clean interface. The `ReviewerContract` is defined here (schema + edge case behavior) but not implemented.
 
+#### Config Versioning (Plan 1 Scope)
+
+Every session captures the exact configuration it ran with, enabling reproducibility and audit:
+
+| Table/Field | Purpose |
+|-------------|---------|
+| `session_config` table | JSON snapshot of all settings at session start (model, effort, thinking, max_turns, severity filter, flags) |
+| `prompt_version_hash` | SHA-256 of the constrained planner prompt template; detects prompt drift between sessions |
+| Per-review round metadata | Round number, timestamps, token counts, cost, elapsed time stored per review |
+| `previous_review_id` | Foreign key linking each review to its predecessor; enables review history chain traversal |
+| `resolution_actions` | Per issue: ACCEPT, DEFER, or REJECT with rationale; stored alongside the revised plan draft |
+
 ### Plan 2: Reviewer Adapter
 
 | Aspect | Detail |
@@ -420,7 +432,7 @@ Note: planner-auto defaults to headless/quiet because it's designed to run as pa
 | GPT review output unpredictable | Complicates parsing | `ReviewerContract` schema + structured prompt + fallback to keyword matching | Strengthened in v1.1 |
 | Per-response sub-agent latency | Affects Plan 1 UX | **Deferred** to post-v1 optimization | Descoped in v1.1 |
 | File/DB state drift | Tool and artifacts disagree | **Eliminated** — DB is canonical, files are exports | Resolved in v1.1 |
-| Review loop non-convergence | Loop runs indefinitely, cost escalates | Convergence strategy required (see below) | **New — discovered by POC 5b** |
+| Review loop non-convergence | Loop runs indefinitely, cost escalates | Review history (key mechanism) + 6 supporting factors; complexity-aware caps; cap hit with criticals = human pause | **Solved — POC 5b, 7 experiments** |
 
 ---
 
@@ -513,10 +525,11 @@ Three approaches were tested in A/B experiments:
 
 ### What Made It Converge (Experiment 7)
 
-Six factors combined, all required:
+Seven factors combined (the first being the key mechanism):
 
 | Factor | What | Impact |
 |--------|------|--------|
+| **Review history (key)** | GPT sees previous plan + previous review each round | Prevents re-raising resolved issues. Turned non-converging 10-round webhook ($2.84) into 4-round convergence ($0.62). |
 | **Constrained planner prompt** | Max 8 tasks/milestone, 1-2 sentences per task, under 3000 words, "implement ONLY what was requested" | Plan stayed 10 KB (vs 30 KB unconstrained). Prevented scope creep. |
 | **Validate feedback** | Claude assesses each issue: ACCEPT (fix), DEFER (out of scope), REJECT (not valid) | Claude deferred migration strategy and partial-accepted Redis requirement. Stopped blindly adding complexity. |
 | **Filter severity** | Only critical + major issues passed to Claude | Removed minor noise. GPT still reports minors in review but Claude doesn't act on them. |
@@ -526,24 +539,51 @@ Six factors combined, all required:
 
 ### Convergence Strategy for v1 (Final)
 
-Based on all seven experiments, the recommended v1 default:
+Based on all experiments, **review history is the key convergence mechanism**. Without it, GPT reviews each plan in isolation, re-raises resolved issues, and the loop oscillates indefinitely. With it, GPT tracks progress across rounds, credits resolved work, and converges reliably. The remaining 6 factors support this by constraining plan size, filtering noise, and giving both models concrete targets.
+
+Recommended v1 defaults (full 7-factor config):
 
 | Component | Setting | Why |
 |-----------|---------|-----|
+| **Review history** | **ON (key mechanism)** | GPT sees previous plan + previous review per round; prevents re-raising resolved issues; turned a non-converging 10-round run into a 4-round convergence |
+| **Constrained planner prompt** | ON | Size + scope limits on plan output; prevents bloat that creates new critique surface |
+| **Validate feedback** | ON | Claude filters invalid/out-of-scope feedback (ACCEPT/DEFER/REJECT per issue) |
+| **Severity filter** | `critical,major` | Ignore minor noise |
+| **Keep/trim** | ON | Preserve good content, flag bloat |
+| **Resolution guidance** | ON | Acceptance criteria per issue |
+| **max_turns** | `2` | Enough for think + respond; prevents tool-use cost creep |
 | **Planner model** | `claude-opus-4-6` | Opus resolves issues faster than Sonnet (fewer rounds = lower total cost) |
 | **Planner effort** | `medium` | High effort + max_turns=10 caused $3.83 blowout; medium is sufficient |
 | **Planner thinking** | `adaptive` | Enables deeper reasoning; combined with max_turns=2 stays tight |
-| **max_turns** | `2` | Enough for think + respond; prevents tool-use cost creep |
 | **Reviewer model** | `gpt-5.4` | Consistent, thorough reviewer |
 | **Reviewer reasoning** | `high` | More structured, stable reviews |
-| **Resolution guidance** | ON | Acceptance criteria per issue |
-| **Keep/trim** | ON | Preserve good content, flag bloat |
-| **Validate feedback** | ON | Claude filters invalid/out-of-scope feedback |
-| **Severity filter** | `critical,major` | Ignore minor noise |
-| **Constrained prompt** | ON | Size + scope limits on plan output |
-| **Review history** | ON | GPT sees previous plan + previous review per round; prevents re-raising resolved issues |
-| **Hard cap** | 5-6 standard, 20 complex | Safety net; standard converges at R5, complex may need 10-20 |
+| **Complexity-aware caps** | Standard: 8, Complex: 12, Emergency: 20 | Safety net proportional to feature complexity |
+| **Cap hit with criticals open** | Pause for human review | Explicit, not silent — unresolved criticals require human decision |
 | **Human fallback** | If criticals persist at cap | Last resort |
+
+### Fast Mode (Opt-In)
+
+For quick iterations where depth is acceptable to trade for speed, `--fast` provides a streamlined config:
+
+| Component | Fast Mode Setting |
+|-----------|-------------------|
+| Review history | OFF |
+| Hard cap | 4 rounds |
+| Validate feedback | OFF |
+| Keep/trim | OFF |
+| All other settings | Same as default |
+
+Fast-mode sessions are explicitly marked as **lower-depth** in output artifacts and session metadata. This ensures downstream consumers (orchestrator-auto, human reviewers) know the plan received abbreviated review.
+
+### Complexity Detection
+
+Complexity classification should **log the detected level and reason** so decisions are auditable:
+
+```
+[INFO] complexity.detect: level=complex, reason="cryptographic operations (signature validation), retry/backoff logic, state machine transitions"
+```
+
+Manual override is supported: `--complexity standard` or `--complexity complex` to force a classification regardless of auto-detection.
 
 ### Cross-Feature Validation
 
@@ -558,12 +598,12 @@ The winning config was tested on a second feature domain (webhook receiver with 
 
 **Key findings:**
 - Config is **not overfitted** — works across domains
-- Standard features converge to GPT GO in 5 rounds
-- Complex features reach zero criticals in 4-5 rounds but GPT never says GO (majors persist)
-- **Zero-critical threshold is more reliable than waiting for GPT GO** — catches both features in a similar window
+- Standard features converge to GPT GO in 5-8 rounds with history enabled
+- Complex features converge in 4-8 rounds with history (vs never without it)
+- **Review history is the key convergence mechanism** — webhook converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without. Registration gets deeper vetting (R8, $1.52 vs R5, $0.87) — GPT pushes on migration safety and collision handling that the faster run skipped
 - Deep review analysis: **44/46 issues were warranted** — GPT reviews are thorough and valid, not nitpicking
 - Complex features need a **pre-review domain checklist** — 50% of webhook issues could have been caught before round 1
-- **Review history is the single biggest improvement** — webhook converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without. Registration gets deeper vetting (R8, $1.52 vs R5, $0.87) — GPT pushes on migration safety and collision handling that the faster run skipped
+- Zero-critical threshold is a useful secondary signal but review history is what actually drives convergence — without it, GPT re-raises resolved issues and the loop oscillates indefinitely
 
 ### Feature Complexity Detection
 
@@ -577,10 +617,11 @@ Flag a feature as "complex" if it involves any of:
 
 ### Complexity-Aware Strategy
 
-| Feature Type | Threshold | Cap | Pre-Review | Expected |
-|-------------|-----------|-----|------------|----------|
-| **Standard** (CRUD, validation, endpoints) | Zero criticals | 5-6 rounds | None | Converges R3-5, ~$0.50-0.90 |
-| **Complex** (concurrency, retry, security) | Zero criticals × 2 consecutive | up to 20 rounds | Domain checklist | Progressive improvement, high-quality plan |
+| Feature Type | Cap | Pre-Review | Expected (with history) |
+|-------------|-----|------------|----------|
+| **Standard** (CRUD, validation, endpoints) | 8 rounds | None | Converges R5-8, $0.87-1.52, 13-21 min |
+| **Complex** (concurrency, retry, security) | 12 rounds | Domain checklist | Converges R4-8, $0.62-1.50, 10-20 min |
+| **Emergency** (manual override) | 20 rounds | Domain checklist | For edge cases where 12 is insufficient |
 
 ### Pre-Review Domain Checklist (for complex features)
 
@@ -591,9 +632,9 @@ Before round 1, Claude answers domain-specific questions to catch structural iss
 4. **Security defaults** — Fail-open or fail-closed? Environment restrictions?
 5. **Time control** — How are time-dependent features tested? Injectable clock?
 
-### Review History (Context Continuity)
+### Review History (Key Convergence Mechanism)
 
-Without review history, GPT reviews each plan in isolation — no memory of what it flagged before or why the plan changed. This causes:
+Review history is the single most impactful factor for convergence. Without it, GPT reviews each plan in isolation — no memory of what it flagged before or why the plan changed. This causes:
 - **Oscillating criticals** — GPT re-raises resolved issues in different framing
 - **No credit for resolved work** — Claude defers something with good reasoning, GPT flags it again next round
 - **Wasted rounds** — both models spend tokens re-discovering what was already discussed
@@ -603,7 +644,7 @@ With `--review-history` enabled, each review round includes the previous plan an
 2. Flag only genuinely NEW issues introduced by the revision
 3. Not re-raise issues that were validly deferred or resolved
 
-This addresses the oscillation problem at the source — GPT can track progress across rounds instead of reviewing from scratch each time. Experiment 10 (pending) tests this on the webhook feature with a 20-round cap.
+This addresses the oscillation problem at the source — GPT can track progress across rounds instead of reviewing from scratch each time. Cross-feature validation confirmed: webhook converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without.
 
 ### Design Philosophy: Plan Quality Over Speed
 
@@ -614,18 +655,19 @@ The planning phase is an investment. A thorough plan that costs $2-5 and takes 3
 
 planner-auto should optimize for **progressive improvement** — each round makes the plan strictly better — not for minimizing rounds. The process should never go backwards (re-raising resolved issues, adding scope that was already deferred).
 
-The review history feature ensures this progression is visible and maintained across rounds.
+Review history is the mechanism that enforces this progression. By giving GPT visibility into previous rounds, it can credit resolved work, track deferred decisions, and flag only genuinely new issues. Without it, the loop oscillates; with it, the loop converges.
 
-### Cost Projection (Updated)
+### Cost Projection (History-Enabled Defaults)
+
+These projections reflect the v1 default config with review history enabled:
 
 | Configuration | Feature | Rounds | Cost | Time |
 |---------------|---------|--------|------|------|
-| No tuning (Sonnet baseline) | Standard | 6+ (never) | $0.80+ | 13+ min |
-| Sonnet + guidance + 3r cap | Standard | 3 | ~$0.39 | ~6 min |
-| **v1 default (Opus + all features)** | **Standard** | **5 (converges)** | **~$0.87** | **~13 min** |
-| v1 default + zero-critical stop | Standard | 3-5 | ~$0.50-0.87 | ~6-13 min |
-| v1 default + zero-critical stop | Complex | 4-8 | ~$0.75-2.00 | ~10-25 min |
-| v1 default + 20r cap + history | Complex | 10-20 | ~$2-5 | ~30-60 min |
+| **v1 default (history ON)** | **Standard** | **5-8** | **$0.87-1.52** | **13-21 min** |
+| **v1 default (history ON)** | **Complex** | **4-8** | **$0.62-1.50** | **10-20 min** |
+| v1 fast mode (history OFF) | Standard | 3-4 (capped) | ~$0.30-0.50 | ~5-8 min |
+
+_Pre-history projections (experiments 1-6) are superseded. See experiment table above for historical data._
 
 ### Note on Final Output Quality
 
@@ -633,7 +675,7 @@ The converged plan (Experiment 7, registration) is 10 KB, 1,346 words, 5 milesto
 
 The non-converged plan (Experiment 9, webhook at R10) still reached excellent quality: fail-closed security, FOR UPDATE SKIP LOCKED concurrency, terminal dead-letter, injected clock for testing. The deep analysis confirmed 44/46 GPT issues were warranted — the process was working, it just needed more rounds and context continuity to converge.
 
-**The convergence problem is solved.** With review history enabled, both standard and complex features converge within 4-5 rounds. Review history was the single biggest improvement — it turned a non-converging 10-round run ($2.84) into a 4-round convergence ($0.62) by giving GPT context continuity across rounds.
+**The convergence problem is solved.** Review history is the key convergence mechanism — it turned a non-converging 10-round run ($2.84) into a 4-round convergence ($0.62) by giving GPT context continuity across rounds. With the full 7-factor config (review history, constrained prompt, validate feedback, filter severity, keep/trim, resolution guidance, max_turns=2), both standard and complex features converge reliably.
 
 ---
 
@@ -747,9 +789,14 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Artifact export timing | Not specified | Explicit table per event | Senior dev: audit model clarity |
 | Observability | Not specified | Headless default, `--verbose`, `--tui`, `--debug` flags, session-scoped log files | Gap: no logging or debug story in v1.0 |
 | DB schema | 5 tables | 6 tables (added `blockers`) | POC 5a: pause/resume lifecycle requires persistent blocker records with source, question, answer, resolution status |
-| Convergence strategy | Not addressed | 6-factor combination: constrained prompt, validate feedback, filter severity, keep/trim, resolution guidance, max_turns=2 | POC 5b: 7 experiments, convergence achieved at round 5 ($0.87, 10 KB plan). Solved. |
+| Convergence strategy | Not addressed | 7-factor config: review history (key mechanism), constrained prompt, validate feedback, filter severity, keep/trim, resolution guidance, max_turns=2 | POC 5b: 7 experiments, convergence achieved. Review history is the key mechanism. |
 | Planner prompt | Unconstrained | Max 8 tasks/milestone, 1-2 sentences, under 3000 words, scope-locked | POC 5b: unconstrained prompt caused 7.5x plan bloat and scope creep (registration → JWT+login+auth) |
 | Reviewer schema | verdict + issues + summary | Added resolution_guidance, target_section, keep[], trim[] | Senior dev suggestion + POC 5b: guidance gives Claude concrete targets; keep/trim prevents bloat |
 | Feedback validation | Not addressed | Claude ACCEPT/DEFER/REJECT per issue | POC 5b: mirrors manual workflow where user assesses feedback validity before fixing |
-| Review history | Not addressed | GPT sees previous plan + previous review per round | POC 5b Exp 8-9: oscillating criticals caused by GPT reviewing in isolation; history provides continuity |
+| Review history | Not addressed | GPT sees previous plan + previous review per round (key convergence mechanism) | Turned non-converging 10-round run ($2.84) into 4-round convergence ($0.62) |
 | Design philosophy | Minimize rounds | Optimize for progressive plan quality; cost/time is acceptable if plan improves each round | Flawed plans create backlog work downstream; investment in planning prevents rework |
+| Complexity-aware caps | Not addressed | Standard: 8, Complex: 12, Emergency: 20 | Senior dev: proportional caps instead of one-size-fits-all |
+| Fast mode | Not addressed | `--fast`: history OFF, cap 4, validate OFF, keep/trim OFF; sessions marked lower-depth | Senior dev: opt-in speed for quick iterations |
+| Complexity detection | Not addressed | Auto-detect with log (level + reason), manual override (`--complexity`) | Senior dev: auditable classification, user control |
+| Cap behavior | Not addressed | Cap hit with criticals open = pause for human review (explicit, not silent) | Senior dev: unresolved criticals must not be silently accepted |
+| Config versioning | Not addressed | `session_config` table, prompt version hashes, per-round metadata, `previous_review_id`, `resolution_actions` per issue | Senior dev: reproducibility and audit trail for every session |
