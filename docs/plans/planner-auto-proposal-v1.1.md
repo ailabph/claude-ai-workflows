@@ -541,7 +541,8 @@ Based on all seven experiments, the recommended v1 default:
 | **Validate feedback** | ON | Claude filters invalid/out-of-scope feedback |
 | **Severity filter** | `critical,major` | Ignore minor noise |
 | **Constrained prompt** | ON | Size + scope limits on plan output |
-| **Hard cap** | 5-6 rounds | Safety net; Experiment 7 converged at round 5 |
+| **Review history** | ON | GPT sees previous plan + previous review per round; prevents re-raising resolved issues |
+| **Hard cap** | 5-6 standard, 20 complex | Safety net; standard converges at R5, complex may need 10-20 |
 | **Human fallback** | If criticals persist at cap | Last resort |
 
 ### Cross-Feature Validation
@@ -577,7 +578,7 @@ Flag a feature as "complex" if it involves any of:
 | Feature Type | Threshold | Cap | Pre-Review | Expected |
 |-------------|-----------|-----|------------|----------|
 | **Standard** (CRUD, validation, endpoints) | Zero criticals | 5-6 rounds | None | Converges R3-5, ~$0.50-0.90 |
-| **Complex** (concurrency, retry, security) | Zero criticals × 2 consecutive | 8-10 rounds | Domain checklist | Reaches impl-ready R4-6, ~$0.75-1.50 |
+| **Complex** (concurrency, retry, security) | Zero criticals × 2 consecutive | up to 20 rounds | Domain checklist | Progressive improvement, high-quality plan |
 
 ### Pre-Review Domain Checklist (for complex features)
 
@@ -588,6 +589,31 @@ Before round 1, Claude answers domain-specific questions to catch structural iss
 4. **Security defaults** — Fail-open or fail-closed? Environment restrictions?
 5. **Time control** — How are time-dependent features tested? Injectable clock?
 
+### Review History (Context Continuity)
+
+Without review history, GPT reviews each plan in isolation — no memory of what it flagged before or why the plan changed. This causes:
+- **Oscillating criticals** — GPT re-raises resolved issues in different framing
+- **No credit for resolved work** — Claude defers something with good reasoning, GPT flags it again next round
+- **Wasted rounds** — both models spend tokens re-discovering what was already discussed
+
+With `--review-history` enabled, each review round includes the previous plan and previous review as context. GPT is instructed to:
+1. Check whether previously raised issues were adequately resolved
+2. Flag only genuinely NEW issues introduced by the revision
+3. Not re-raise issues that were validly deferred or resolved
+
+This addresses the oscillation problem at the source — GPT can track progress across rounds instead of reviewing from scratch each time. Experiment 10 (pending) tests this on the webhook feature with a 20-round cap.
+
+### Design Philosophy: Plan Quality Over Speed
+
+The planning phase is an investment. A thorough plan that costs $2-5 and takes 30-60 minutes pays for itself by preventing implementation rework. Flawed plans create backlog work downstream:
+- Missing error handling → post-launch bug fixes
+- Underspecified concurrency → race conditions discovered in staging
+- No migration strategy → deployment blocked at release time
+
+planner-auto should optimize for **progressive improvement** — each round makes the plan strictly better — not for minimizing rounds. The process should never go backwards (re-raising resolved issues, adding scope that was already deferred).
+
+The review history feature ensures this progression is visible and maintained across rounds.
+
 ### Cost Projection (Updated)
 
 | Configuration | Feature | Rounds | Cost | Time |
@@ -596,16 +622,16 @@ Before round 1, Claude answers domain-specific questions to catch structural iss
 | Sonnet + guidance + 3r cap | Standard | 3 | ~$0.39 | ~6 min |
 | **v1 default (Opus + all features)** | **Standard** | **5 (converges)** | **~$0.87** | **~13 min** |
 | v1 default + zero-critical stop | Standard | 3-5 | ~$0.50-0.87 | ~6-13 min |
-| v1 default + zero-critical stop | Complex | 4-6 | ~$0.75-1.50 | ~10-20 min |
-| v1 default + 10r cap | Complex | 10 (never GO) | ~$2.84 | ~35 min |
+| v1 default + zero-critical stop | Complex | 4-8 | ~$0.75-2.00 | ~10-25 min |
+| v1 default + 20r cap + history | Complex | 10-20 | ~$2-5 | ~30-60 min |
 
 ### Note on Final Output Quality
 
 The converged plan (Experiment 7, registration) is 10 KB, 1,346 words, 5 milestones — well within the 3,000-word constraint. GPT's GO review praised the architectural refactor, request parsing sequence, IntegrityError rollback handling, input normalization strategy, and rate limiting scope tradeoff.
 
-The non-converged plan (Experiment 9, webhook at R10) still reached excellent quality: fail-closed security, FOR UPDATE SKIP LOCKED concurrency, terminal dead-letter, injected clock for testing. Despite never getting GO, the plan at R4 (zero criticals) was already implementation-ready.
+The non-converged plan (Experiment 9, webhook at R10) still reached excellent quality: fail-closed security, FOR UPDATE SKIP LOCKED concurrency, terminal dead-letter, injected clock for testing. The deep analysis confirmed 44/46 GPT issues were warranted — the process was working, it just needed more rounds and context continuity to converge.
 
-**The convergence problem is solved for standard features.** For complex features, the zero-critical threshold provides a reliable stop condition even though GPT never says GO.
+**The convergence problem is solved for standard features.** For complex features, the combination of review history, feedback validation, and a generous round cap should produce progressive improvement toward a high-quality plan — even if GPT never formally says GO.
 
 ---
 
@@ -723,3 +749,5 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 | Planner prompt | Unconstrained | Max 8 tasks/milestone, 1-2 sentences, under 3000 words, scope-locked | POC 5b: unconstrained prompt caused 7.5x plan bloat and scope creep (registration → JWT+login+auth) |
 | Reviewer schema | verdict + issues + summary | Added resolution_guidance, target_section, keep[], trim[] | Senior dev suggestion + POC 5b: guidance gives Claude concrete targets; keep/trim prevents bloat |
 | Feedback validation | Not addressed | Claude ACCEPT/DEFER/REJECT per issue | POC 5b: mirrors manual workflow where user assesses feedback validity before fixing |
+| Review history | Not addressed | GPT sees previous plan + previous review per round | POC 5b Exp 8-9: oscillating criticals caused by GPT reviewing in isolation; history provides continuity |
+| Design philosophy | Minimize rounds | Optimize for progressive plan quality; cost/time is acceptable if plan improves each round | Flawed plans create backlog work downstream; investment in planning prevents rework |
