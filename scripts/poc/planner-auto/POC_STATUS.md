@@ -339,7 +339,13 @@ Based on all 9 experiments across 2 features:
 - **Reset trigger:** If oscillating after 5 rounds with no progress, force plan redesign
 - **Expected:** Reaches implementation-ready at R4-6, ~$0.75-1.50
 
-### Experiment 10: CONVERGED — Webhook + Review History (20-round cap)
+### Experiment 10: CONVERGED — Webhook + Review History
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| **4** | **5→4→3→GO** | **$0.62** | **579s (10 min)** |
+
+### Experiment 11: Registration + Review History
 
 | Config | Value |
 |--------|-------|
@@ -355,6 +361,23 @@ Based on all 9 experiments across 2 features:
 **Result: CONVERGED at round 4.** The same feature that failed in 10 rounds without history ($2.84) converges in 4 with history ($0.62). Issue trend is strictly declining — no oscillation.
 
 **Review history is the single biggest improvement.** It turned a non-converging feature into a 4-round convergence at 78% less cost.
+
+### Experiment 11: Registration + Review History
+
+| Rounds | Issues | Cost | Time |
+|--------|--------|------|------|
+| **8** | **5→3→2→3→3→3→2→GO** | **$1.52** | **1276s (21 min)** |
+
+**Result: CONVERGED at round 8.** More rounds than Exp 7 (R5) but deeper plan — GPT pushed on migration safety, collision handling, and legacy DB verification that Exp 7 never addressed.
+
+**Review history tradeoff by complexity:**
+
+| Feature | Without History | With History |
+|---------|----------------|-------------|
+| Registration (standard) | R5, $0.87 (surface-level GO) | R8, $1.52 (deep-vetted GO) |
+| Webhook (complex) | 10+ (never), $2.84 | R4, $0.62 |
+
+History makes standard features slightly more expensive but higher quality. Makes complex features dramatically cheaper and convergent.
 
 ---
 

@@ -551,9 +551,10 @@ The winning config was tested on a second feature domain (webhook receiver with 
 
 | Feature | Complexity | Config | Rounds | GPT GO? | Cost | Plan Quality |
 |---------|-----------|--------|--------|---------|------|-------------|
-| Registration | Standard | Winning config | R5 | YES | $0.87 | Implementation-ready |
+| Registration | Standard | Winning config, no history | R5 | YES | $0.87 | Implementation-ready (surface-level) |
 | Webhook | High | Same, no history | 10 (capped) | No | $2.84 | Excellent but oscillating |
-| **Webhook** | **High** | **Same + review history** | **R4** | **YES** | **$0.62** | **Implementation-ready** |
+| **Webhook** | **High** | **Same + review history** | **R4** | **YES** | **$0.62** | **Implementation-ready (thorough)** |
+| **Registration** | **Standard** | **Same + review history** | **R8** | **YES** | **$1.52** | **Implementation-ready (deep-vetted)** |
 
 **Key findings:**
 - Config is **not overfitted** — works across domains
@@ -562,7 +563,7 @@ The winning config was tested on a second feature domain (webhook receiver with 
 - **Zero-critical threshold is more reliable than waiting for GPT GO** — catches both features in a similar window
 - Deep review analysis: **44/46 issues were warranted** — GPT reviews are thorough and valid, not nitpicking
 - Complex features need a **pre-review domain checklist** — 50% of webhook issues could have been caught before round 1
-- **Review history is the single biggest improvement** — webhook feature converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without it
+- **Review history is the single biggest improvement** — webhook converged in 4 rounds ($0.62) with history vs never in 10 rounds ($2.84) without. Registration gets deeper vetting (R8, $1.52 vs R5, $0.87) — GPT pushes on migration safety and collision handling that the faster run skipped
 
 ### Feature Complexity Detection
 

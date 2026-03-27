@@ -452,6 +452,60 @@ This would have caught 50% of the webhook issues before round 1, potentially hal
 | 9 | Same as 7 | Webhook | 6→5→...→4 | No | $2.84 | 35m |
 | **10** | **Same as 7 + history** | **Webhook** | **5→4→3→GO** | **YES (R4)** | **$0.62** | **10m** |
 
+### Experiment 11: Registration + Review History (20-round cap)
+
+Ran the registration feature with the same full config as Experiment 10 to compare review history's effect on a standard feature.
+
+| Round | Issues | Criticals | Majors | Cost |
+|-------|--------|-----------|--------|------|
+| 1 | 5 | 1 | 4 | $0.314 |
+| 2 | 3 | 0 | 3 | $0.128 |
+| 3 | 2 | 1 | 1 | $0.143 |
+| 4 | 3 | 0 | 3 | $0.242 |
+| 5 | 3 | 0 | 3 | $0.151 |
+| 6 | 3 | 0 | 3 | $0.250 |
+| 7 | 2 | 0 | 2 | $0.165 |
+| **8** | **GO** (3 notes) | 0 | 0 | $0.056 |
+
+**Total: $1.52, 1276s (21 min), CONVERGED at round 8.**
+
+**Comparison — review history impact by feature complexity:**
+
+| Feature | Without History | With History | Delta |
+|---------|----------------|-------------|-------|
+| Registration (standard) | R5, $0.87 | R8, $1.52 | +3 rounds, +$0.65 |
+| Webhook (complex) | 10+ (never), $2.84 | R4, $0.62 | -6+ rounds, -$2.22 |
+
+**Key insight: review history has opposite effects based on complexity.**
+
+- **Standard features take more rounds** — GPT with history is a tougher reviewer. It remembers what's been resolved and pushes deeper on remaining gaps (migration safety, collision handling, legacy DB verification) instead of approving after surface-level fixes. The result is a higher quality plan.
+- **Complex features take far fewer rounds** — GPT without history keeps re-raising resolved issues in new framing, causing oscillation. With history it tracks progress, gives credit for resolved work, and focuses on genuinely new concerns.
+
+**Both outcomes are desirable.** Standard features get deeper vetting (measure twice, cut once). Complex features stop wasting rounds on already-resolved issues. The net effect: every plan that gets GO has been more thoroughly vetted.
+
+**GPT's R8 GO review praised:**
+- Pre-flight duplicate detection before any writes or DDL (migration safety — not in Exp 7 plan)
+- Migration rehearsal with abort/retry verification (not in Exp 7 plan)
+- bcrypt 72-byte password limit enforcement (not in Exp 7 plan)
+- IntegrityError rollback + session recovery test
+- Rate limiting scoped to registration only with configurable storage
+
+### Complete Experiment Summary (All 11)
+
+| # | Config | Feature | Issues | Conv? | Cost | Time |
+|---|--------|---------|--------|-------|------|------|
+| 1 | Sonnet baseline | Registration | 6→8→7 | No | $0.26 | 4m |
+| 2 | Sonnet + self-review | Registration | 7→6→7 | No | $0.79 | 12m |
+| 3 | Sonnet + guidance | Registration | 8→5→5 | No | $0.31 | 5m |
+| 4 | Opus high mt=1 | Registration | 4→1→...→5 | No | $1.15 | 10m |
+| 5 | Opus high mt=10 | Registration | 5→4→...→3 | No | $3.83 | 49m |
+| 6 | Opus med mt=5 old prompt | Registration | 5→6→4→4→4→4 | No | $1.67 | 21m |
+| **7** | **Opus med constrained** | **Registration** | **5→4→4→4→GO** | **YES (R5)** | **$0.87** | **13m** |
+| 8 | Same as 7 | Webhook | 8→5→6→5→4→4 | No | $1.26 | 17m |
+| 9 | Same as 7 | Webhook | 6→5→...→4 | No | $2.84 | 35m |
+| **10** | **Same + history** | **Webhook** | **5→4→3→GO** | **YES (R4)** | **$0.62** | **10m** |
+| **11** | **Same + history** | **Registration** | **5→3→2→3→3→3→2→GO** | **YES (R8)** | **$1.52** | **21m** |
+
 ### Final v1 Default Configuration
 
 | Setting | Value |
@@ -464,4 +518,6 @@ This would have caught 50% of the webhook issues before round 1, potentially hal
 | Filter severity | critical,major |
 | **Review history** | **ON** |
 | Constrained prompt | ON (max 8 tasks/milestone, under 3000 words, scope-locked) |
-| Cap | 20 rounds (standard features converge in 4-5, complex in 4-8) |
+| Cap | 20 rounds |
+
+**Expected convergence:** 4-8 rounds depending on complexity. $0.60-1.50. Plans are thoroughly vetted and implementation-ready.

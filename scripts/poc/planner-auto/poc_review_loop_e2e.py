@@ -1049,8 +1049,14 @@ def main() -> None:
     parser.add_argument(
         "--review-history",
         action="store_true",
-        default=False,
-        help="Include previous plan + previous review as context for GPT (prevents re-raising resolved issues)",
+        default=True,
+        help="Include previous plan + previous review as context for GPT (default: ON, prevents re-raising resolved issues)",
+    )
+    parser.add_argument(
+        "--no-review-history",
+        action="store_false",
+        dest="review_history",
+        help="Disable review history context",
     )
     args = parser.parse_args()
 
