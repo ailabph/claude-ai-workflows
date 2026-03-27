@@ -105,15 +105,17 @@ async def _call_claude(
     thinking: bool = False,
 ) -> ResultMessage | None:
     """Call Claude via the Agent SDK and return the ResultMessage."""
-    # max_turns=1 produces tighter, more focused plans.
-    # With thinking enabled, Claude sometimes needs 2 turns (think + respond).
-    # Higher values let Claude use tools but increase cost and cause scope creep.
-    turns = 2 if thinking else 1
+    # Thinking mode needs multiple turns (think + respond). Longer prompts
+    # need more thinking turns. We allow up to 10 but disable tool access
+    # to prevent cost spiral from Read/Write/etc. Without thinking, 1 turn
+    # is enough for a focused text-only response.
+    turns = 10 if thinking else 1
     opts = ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=model,
         max_turns=turns,
         permission_mode="bypassPermissions",
+        allowed_tools=[],  # no tool access — text-only responses
         stderr=lambda s: None,
     )
     if effort:
