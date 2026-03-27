@@ -1,0 +1,2 @@
+[console_scripts]
+planner-auto = planner_auto.cli:cli

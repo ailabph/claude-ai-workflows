@@ -1,0 +1,192 @@
+"""
+SDK wrapper for Claude Agent SDK with robust error handling.
+
+Wraps claude_agent_sdk.query() with:
+- Authentication error mapping
+- Rate-limit retries with exponential backoff
+- Timeout/connection retries
+- Empty/malformed response detection
+- Logging of model, token count, and latency
+"""
+
+import asyncio
+import logging
+import time
+from typing import Optional
+
+import claude_agent_sdk
+
+from planner_auto.errors import (
+    SDKAuthError,
+    SDKRateLimitError,
+    SDKResponseError,
+    SDKTimeoutError,
+)
+
+logger = logging.getLogger("planner-auto.sdk")
+
+
+async def query_claude(
+    messages: list[dict],
+    system_prompt: str,
+    model: str,
+    timeout_sec: int = 120,
+) -> str:
+    """Query Claude via the Agent SDK with retry logic and error handling.
+
+    Args:
+        messages: List of message dicts with 'role' and 'content' keys.
+            Used to build the prompt for the SDK.
+        system_prompt: System prompt to set agent behavior.
+        model: Model identifier (e.g. 'claude-sonnet-4-6').
+        timeout_sec: Timeout in seconds for the SDK call.
+
+    Returns:
+        The assistant's text response.
+
+    Raises:
+        SDKAuthError: On authentication failures.
+        SDKRateLimitError: After exhausting rate-limit retries.
+        SDKTimeoutError: After exhausting timeout/connection retries.
+        SDKResponseError: On empty or malformed responses.
+    """
+    # Build prompt from messages — last user message is the prompt,
+    # prior messages provide conversation context
+    prompt = _build_prompt(messages)
+
+    options = claude_agent_sdk.ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        model=model,
+        max_turns=1,
+    )
+
+    # Rate-limit retry: up to 3 attempts with exponential backoff (2s, 4s, 8s)
+    rate_limit_delays = [2, 4, 8]
+    # Timeout/connection retry: 1 retry after 2s
+    max_timeout_retries = 1
+
+    last_error = None
+
+    for rate_attempt in range(len(rate_limit_delays) + 1):
+        try:
+            start_time = time.monotonic()
+            response_text = await _execute_query(prompt, options, timeout_sec)
+            elapsed = time.monotonic() - start_time
+
+            logger.info(
+                "SDK call completed: model=%s, elapsed=%.2fs, response_len=%d",
+                model, elapsed, len(response_text),
+            )
+
+            if not response_text or not response_text.strip():
+                raise SDKResponseError("Empty response from Claude SDK")
+
+            return response_text
+
+        except SDKAuthError:
+            raise  # Don't retry auth errors
+
+        except SDKRateLimitError as e:
+            last_error = e
+            if rate_attempt < len(rate_limit_delays):
+                delay = rate_limit_delays[rate_attempt]
+                logger.warning(
+                    "Rate limited (attempt %d/%d), retrying in %ds...",
+                    rate_attempt + 1, len(rate_limit_delays) + 1, delay,
+                )
+                await asyncio.sleep(delay)
+                continue
+            raise
+
+        except SDKTimeoutError as e:
+            last_error = e
+            # Single retry for timeout/connection errors
+            if rate_attempt == 0:
+                logger.warning("Timeout/connection error, retrying once in 2s...")
+                await asyncio.sleep(2)
+                continue
+            raise
+
+    # Should not reach here, but just in case
+    if last_error:
+        raise last_error
+    raise SDKResponseError("Unexpected error in query_claude")
+
+
+async def _execute_query(
+    prompt: str,
+    options: claude_agent_sdk.ClaudeAgentOptions,
+    timeout_sec: int,
+) -> str:
+    """Execute a single SDK query call and collect the response.
+
+    Maps SDK errors to our custom error types.
+    """
+    try:
+        result_parts = []
+        async for message in claude_agent_sdk.query(
+            prompt=prompt, options=options
+        ):
+            if isinstance(message, claude_agent_sdk.AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, claude_agent_sdk.TextBlock):
+                        result_parts.append(block.text)
+            elif isinstance(message, claude_agent_sdk.ResultMessage):
+                for block in message.content:
+                    if isinstance(block, claude_agent_sdk.TextBlock):
+                        result_parts.append(block.text)
+            elif isinstance(message, claude_agent_sdk.RateLimitEvent):
+                raise SDKRateLimitError("Rate limited by API")
+
+        return "".join(result_parts)
+
+    except SDKRateLimitError:
+        raise
+    except SDKAuthError:
+        raise
+    except SDKTimeoutError:
+        raise
+    except claude_agent_sdk.CLIConnectionError as e:
+        raise SDKTimeoutError(f"Connection error: {e}") from e
+    except claude_agent_sdk.ProcessError as e:
+        error_str = str(e).lower()
+        if "auth" in error_str or "api key" in error_str or "unauthorized" in error_str:
+            raise SDKAuthError(
+                "Invalid API key \u2014 set ANTHROPIC_API_KEY"
+            ) from e
+        if "rate" in error_str and "limit" in error_str:
+            raise SDKRateLimitError(f"Rate limited: {e}") from e
+        if "timeout" in error_str or "timed out" in error_str:
+            raise SDKTimeoutError(f"Request timed out: {e}") from e
+        raise SDKResponseError(f"SDK process error: {e}") from e
+    except asyncio.TimeoutError as e:
+        raise SDKTimeoutError(f"Request timed out after {timeout_sec}s") from e
+    except claude_agent_sdk.ClaudeSDKError as e:
+        raise SDKResponseError(f"SDK error: {e}") from e
+    except Exception as e:
+        raise SDKResponseError(f"Unexpected error: {e}") from e
+
+
+def _build_prompt(messages: list[dict]) -> str:
+    """Build a single prompt string from message history.
+
+    The SDK expects a single prompt string. We format conversation
+    history as context, with the last user message as the main prompt.
+    """
+    if not messages:
+        return ""
+
+    if len(messages) == 1:
+        return messages[0].get("content", "")
+
+    # Format prior messages as context, last message as prompt
+    context_parts = []
+    for msg in messages[:-1]:
+        role = msg.get("role", "user").capitalize()
+        content = msg.get("content", "")
+        context_parts.append(f"[{role}]: {content}")
+
+    context = "\n\n".join(context_parts)
+    last_content = messages[-1].get("content", "")
+
+    return f"Previous conversation:\n{context}\n\nCurrent message:\n{last_content}"

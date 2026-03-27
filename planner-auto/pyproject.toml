@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "planner-auto"
+version = "0.1.0"
+description = "Interactive planning session manager with SQLite persistence and artifact export"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "claude-agent-sdk>=0.1.50,<0.2.0",
+    "prompt_toolkit>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+
+[project.scripts]
+planner-auto = "planner_auto.cli:cli"
+
+[tool.setuptools.packages.find]
+include = ["planner_auto*"]
+exclude = ["tests*"]
