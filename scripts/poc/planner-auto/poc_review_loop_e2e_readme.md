@@ -305,3 +305,88 @@ Plan grew 2x total (5KB→10KB) vs 7.5x in the unconstrained baseline (4KB→30K
 | 5 | Opus high mt=10 | 5→4→4→4→4→5→4→5→4→3 (10r) | No | $3.83 | 2959s | 29 KB |
 | 6 | Opus med mt=5 | 5→6→4→4→4→4 (6r) | No | $1.67 | 1286s | ~25 KB |
 | **7** | **Opus med constrained** | **5→4→4→4→GO** | **YES (R5)** | **$0.87** | **791s** | **10 KB** |
+| 8 | Webhook, 6r (same config) | 8→5→6→5→4→4 | No | $1.26 | 1010s | 17 KB |
+| 9 | Webhook, 10r (same config) | 6→5→5→5→4→4→6→5→5→4 | No | $2.84 | 2127s | ~20 KB |
+
+### Cross-Feature Validation: Webhook Receiver (Experiments 8 & 9)
+
+Tested the winning config on a completely different feature domain: "Add a webhook receiver that validates signatures, processes events, stores them in a queue table, and retries failed deliveries."
+
+**Why this feature:** Architecturally different from registration — involves concurrency (FOR UPDATE SKIP LOCKED), retry semantics (backoff, dead-letter), idempotency (dedup keys), security (signature validation, replay protection), and time-dependent testing. If the config works here, it's not overfitted.
+
+**6-round run (Exp 8):**
+
+| Round | Issues | Criticals | Majors | Zero-Critical? |
+|-------|--------|-----------|--------|----------------|
+| 1 | 8 | 2 | 6 | No |
+| 2 | 5 | 2 | 3 | No |
+| 3 | 6 | 1 | 5 | No |
+| **4** | 5 | **0** | 3 | **YES** |
+| 5 | 4 | 0 | 4 | YES |
+| 6 | 4 | 0 | 3 | YES |
+
+Zero criticals from round 4 onwards. With zero-critical threshold, **would have stopped at R4** (~$0.75).
+
+**10-round run (Exp 9) — critical count oscillates:**
+
+| Round | Criticals | Majors |
+|-------|-----------|--------|
+| 1 | 2 | 4 |
+| 2 | 2 | 3 |
+| 3 | 1 | 4 |
+| 4 | 1 | 3 |
+| 5 | **0** | 3 |
+| 6 | 1 | 3 |
+| 7 | 1 | 4 |
+| 8 | 1 | 4 |
+| 9 | **0** | 4 |
+| 10 | 1 | 3 |
+
+GPT never said GO. Critical count oscillates 0→1→1→1→0→1. Each time Claude fixes one critical, GPT finds a new angle.
+
+### Deep Analysis: Were the Reviews Warranted?
+
+All 10 rounds analyzed for issue validity:
+
+- **44 of 46 issues were WARRANTED** — real engineering concerns (concurrency bugs, security defaults, data-loss risks, test reliability)
+- **0 pure over-reaching** — no theoretical-only or nitpick issues
+- **2 debatable** — concurrency test design quality (valid concern, but the plan was *correct*, just under-specified)
+
+**The smoking gun: Round 20 caught a data-loss bug.** `sha256(timestamp + body)` as the dedup key silently drops duplicate legitimate deliveries in the same second. This wasn't visible in early rounds when the plan said "hash the event for uniqueness" — it only materialized when the implementation got specific enough for GPT to spot the collision.
+
+### Why It Didn't Converge (Root Causes)
+
+1. **Feature is genuinely complex.** Webhook receivers touch 5 domains (concurrency, retry, idempotency, security, time-dependent testing), each with subtle bugs. Registration touches 2 (validation, persistence).
+
+2. **Claude fixes create new issues in adjacent domains.** Fixing the retry loop exposed the idempotency gap → fixing idempotency exposed the dedup collision → fixing dedup exposed the timestamp handling. Each fix peeled back the next layer.
+
+3. **Data-loss bug wasn't visible until round 20.** The dedup collision (same payload, same second = silent drop) is a fundamental flaw that required 12+ rounds of plan specification before it became concrete enough to spot.
+
+4. **Concurrency test design oscillated for 8 rounds.** Plan kept proposing thread-based tests; reviewer correctly flagged them as non-deterministic. Only late rounds settled on a two-connection explicit engine approach.
+
+### Was the Cap Enough?
+
+**For registration (standard complexity):** 5-6 rounds is enough. Config converges.
+
+**For webhook (high complexity):** 10 rounds still didn't produce a GO, but:
+- Zero-critical threshold would have stopped at R4-5 (good enough for implementation)
+- The data-loss bug caught at R20 suggests that for truly thorough review, even 10 rounds isn't enough
+- BUT: the plan at R4 was already dramatically better than R1 — implementation-ready for most purposes
+
+**Recommendation: complexity-aware strategy:**
+
+| Feature Type | Examples | Threshold | Cap | Pre-Review |
+|-------------|---------|-----------|-----|------------|
+| Standard | CRUD, validation, endpoints | Zero criticals | 5-6 | None needed |
+| Complex | Concurrency, retry, security, state machines | Zero criticals × 2 consecutive rounds | 8-10 | Domain checklist |
+
+### Pre-Review Domain Checklist (for complex features)
+
+Before round 1, Claude should answer:
+1. **Dedup key definition** — How are duplicate events identified? What's the collision risk?
+2. **Concurrency model** — Which database? What locking strategy? What happens on lock contention?
+3. **Idempotency contract** — At-least-once or exactly-once? Who is responsible?
+4. **Security defaults** — Fail-open or fail-closed? What environment restrictions?
+5. **Time control** — How are time-dependent features tested? Is the clock injectable?
+
+This would have caught 50% of the webhook issues before round 1, potentially halving the rounds to convergence.

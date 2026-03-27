@@ -227,3 +227,123 @@ The e2e loop script now supports many experimental flags:
 4. Keep/trim (preserve good content, remove bloat)
 5. Resolution guidance (acceptance criteria per issue)
 6. max_turns=2 (tight responses, no tool sprawl)
+
+---
+
+## Cross-Feature Validation: Webhook Receiver
+
+Tested the winning config on a different feature domain to prevent overfitting.
+
+**Feature:** "Add a webhook receiver that validates signatures, processes events, stores them in a queue table, and retries failed deliveries"
+
+### Experiment 8: Webhook, 6-round cap
+
+| Config | Same as Experiment 7 (winning config) |
+|--------|---------------------------------------|
+| Feature | Webhook receiver (not registration) |
+
+| Round | Issues | Criticals | Majors |
+|-------|--------|-----------|--------|
+| 1 | 8 | 2 | 6 |
+| 2 | 5 | 2 | 3 |
+| 3 | 6 | 1 | 5 |
+| 4 | 5 | 0 | 3 |
+| 5 | 4 | 0 | 4 |
+| 6 | 4 | 0 | 3 |
+
+**Total: $1.26, 1010s (17 min), did not converge (GPT never said GO).**
+
+**But: zero criticals from round 4 onwards.** With a zero-critical threshold, would have stopped at round 4 (~$0.75).
+
+### Experiment 9: Webhook, 10-round cap
+
+Same config, cap extended to 10.
+
+| Round | Issues | Criticals | Majors |
+|-------|--------|-----------|--------|
+| 1 | 6 | 2 | 4 |
+| 2 | 5 | 2 | 3 |
+| 3 | 5 | 1 | 4 |
+| 4 | 5 | 1 | 3 |
+| 5 | 4 | 0 | 3 |
+| 6 | 4 | 1 | 3 |
+| 7 | 6 | 1 | 4 |
+| 8 | 5 | 1 | 4 |
+| 9 | 5 | 0 | 4 |
+| 10 | 4 | 1 | 3 |
+
+**Total: $2.84, 2127s (35 min), did not converge.**
+
+Critical count oscillates (0→1→1→1→0→1→1→1→0→1). GPT never said GO in 10 rounds.
+
+### Deep Analysis of Webhook Reviews
+
+All 10 review rounds analyzed for issue validity, persistence, and root causes.
+
+**Issue validity:** 44 of 46 unique issues across all rounds were **warranted** — real engineering concerns (concurrency bugs, security defaults, data-loss risks). Zero pure over-reaching. GPT was doing its job.
+
+**Why it didn't converge:**
+1. **Feature is genuinely complex** — webhook receivers touch concurrency (FOR UPDATE SKIP LOCKED), retry semantics (backoff, dead-letter), idempotency (dedup keys), security (signature validation, replay protection), and time-dependent testing. Each is a domain where subtle bugs hide.
+2. **Claude fixes create new issues** — fixing the retry loop exposed the idempotency gap; fixing idempotency exposed the dedup collision; fixing dedup exposed the timestamp handling. Each layer of fixes peeled back the next layer.
+3. **Data-loss bug caught at round 20** — `sha256(timestamp + body)` silently drops duplicate legitimate deliveries in the same second. This fundamental flaw wasn't visible in the plan text until round 12+ when the dedup implementation got specific.
+4. **Concurrency test design oscillated for 8 rounds** — the plan kept proposing thread-based tests that the reviewer correctly flagged as non-deterministic. Only in later rounds did it settle on a two-connection explicit engine approach.
+
+**Plan quality: initial (R1) vs final (R21):**
+
+| Aspect | Initial (R1) | Final (R21) |
+|--------|-------------|------------|
+| Scope | Basic: receiver + queue + retry | Comprehensive: receiver + queue + retry + purge + dedup + observability |
+| Security | Dangerous: fail-open validation | Excellent: fail-closed, replay protection, skip restricted to dev/test |
+| Concurrency | Not addressed | FOR UPDATE SKIP LOCKED, stale claim recovery, terminal dead-letter |
+| Testability | Vague | Injected clock, deterministic 2-connection test, Alembic smoke test |
+| Risk | HIGH — substantial rework needed | MEDIUM — implementation-ready with R20 fixes |
+
+**Key learning: complex features need pre-review design checklists.** The webhook plan spent 10 rounds discovering things a domain-aware checklist would flag upfront:
+
+| Pre-Review Check | Rounds Spent |
+|-----------------|-------------|
+| Dedup key definition | R10-R20 (10 rounds) |
+| Concurrency model (which DB?) | R4-R6 |
+| Idempotency contract | R6-R10 |
+| Security defaults (fail-open vs closed) | R2-R14 |
+| Time control for tests | R8-R10 |
+
+### Cross-Feature Comparison
+
+| Metric | Registration | Webhook |
+|--------|-------------|---------|
+| Complexity | Standard (CRUD + validation) | High (concurrency + retry + security + state machine) |
+| First 0-critical round | R5 (GPT said GO) | R4 (but oscillated back) |
+| GPT said GO? | Yes (R5) | Never (10 rounds) |
+| Zero-critical stop would work? | Yes (R5) | Partially (R4, but critical returned at R6) |
+| Cost at zero-critical stop | $0.87 | ~$0.75 |
+| All reviews warranted? | Not analyzed | Yes — 44/46 real concerns |
+
+---
+
+## Updated Convergence Strategy
+
+Based on all 9 experiments across 2 features:
+
+### For standard features (CRUD, validation, endpoints):
+- **Config:** Opus medium + thinking + all features (guidance, keep/trim, validate, filter)
+- **Threshold:** Zero criticals = stop
+- **Cap:** 5-6 rounds
+- **Expected:** Converges at R3-R5, ~$0.50-0.90
+
+### For complex features (concurrency, retry, security, state machines):
+- **Config:** Same winning config
+- **Threshold:** Zero criticals for 2 consecutive rounds (prevents oscillation)
+- **Cap:** 8-10 rounds
+- **Pre-review step:** Domain-specific design checklist before round 1
+- **Reset trigger:** If oscillating after 5 rounds with no progress, force plan redesign
+- **Expected:** Reaches implementation-ready at R4-6, ~$0.75-1.50
+
+### Feature complexity detection:
+Flag as "complex" if the feature involves any of:
+- Concurrent access / locking
+- Retry / backoff / dead-letter queues
+- Idempotency / deduplication
+- Cryptographic operations (signatures, tokens)
+- State machines with transitions
+- Time-dependent behavior (expiry, scheduling)

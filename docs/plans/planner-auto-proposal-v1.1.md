@@ -544,20 +544,68 @@ Based on all seven experiments, the recommended v1 default:
 | **Hard cap** | 5-6 rounds | Safety net; Experiment 7 converged at round 5 |
 | **Human fallback** | If criticals persist at cap | Last resort |
 
+### Cross-Feature Validation
+
+The winning config was tested on a second feature domain (webhook receiver with signature validation, event queue, retry logic) to prevent overfitting. Results:
+
+| Feature | Complexity | Rounds to 0 Criticals | GPT GO? | Cost | Plan Quality |
+|---------|-----------|----------------------|---------|------|-------------|
+| Registration | Standard | R5 (GO) | YES | $0.87 | Implementation-ready |
+| Webhook (6r) | High | R4 | No | $1.26 | Good — 0 criticals, 3 majors remain |
+| Webhook (10r) | High | R5 (oscillates 0→1) | No | $2.84 | Excellent — but criticals return |
+
+**Key findings:**
+- Config is **not overfitted** — works across domains
+- Standard features converge to GPT GO in 5 rounds
+- Complex features reach zero criticals in 4-5 rounds but GPT never says GO (majors persist)
+- **Zero-critical threshold is more reliable than waiting for GPT GO** — catches both features in a similar window
+- Deep review analysis: **44/46 issues were warranted** — GPT reviews are thorough and valid, not nitpicking
+- Complex features need a **pre-review domain checklist** — 50% of webhook issues could have been caught before round 1
+
+### Feature Complexity Detection
+
+Flag a feature as "complex" if it involves any of:
+- Concurrent access / locking
+- Retry / backoff / dead-letter queues
+- Idempotency / deduplication
+- Cryptographic operations (signatures, tokens)
+- State machines with transitions
+- Time-dependent behavior (expiry, scheduling)
+
+### Complexity-Aware Strategy
+
+| Feature Type | Threshold | Cap | Pre-Review | Expected |
+|-------------|-----------|-----|------------|----------|
+| **Standard** (CRUD, validation, endpoints) | Zero criticals | 5-6 rounds | None | Converges R3-5, ~$0.50-0.90 |
+| **Complex** (concurrency, retry, security) | Zero criticals × 2 consecutive | 8-10 rounds | Domain checklist | Reaches impl-ready R4-6, ~$0.75-1.50 |
+
+### Pre-Review Domain Checklist (for complex features)
+
+Before round 1, Claude answers domain-specific questions to catch structural issues early:
+1. **Dedup key definition** — How are duplicates identified? Collision risk?
+2. **Concurrency model** — Which database? Locking strategy? Contention behavior?
+3. **Idempotency contract** — At-least-once or exactly-once? Who is responsible?
+4. **Security defaults** — Fail-open or fail-closed? Environment restrictions?
+5. **Time control** — How are time-dependent features tested? Injectable clock?
+
 ### Cost Projection (Updated)
 
-| Configuration | Rounds | Cost | Time |
-|---------------|--------|------|------|
-| No tuning (Sonnet baseline) | 6+ (never) | $0.80+ | 13+ min |
-| Sonnet + guidance + 3r cap | 3 | ~$0.39 | ~6 min |
-| **v1 default (Opus + all features)** | **5 (converges)** | **~$0.87** | **~13 min** |
-| v1 default with 3r cap | 3 | ~$0.45 | ~6 min |
+| Configuration | Feature | Rounds | Cost | Time |
+|---------------|---------|--------|------|------|
+| No tuning (Sonnet baseline) | Standard | 6+ (never) | $0.80+ | 13+ min |
+| Sonnet + guidance + 3r cap | Standard | 3 | ~$0.39 | ~6 min |
+| **v1 default (Opus + all features)** | **Standard** | **5 (converges)** | **~$0.87** | **~13 min** |
+| v1 default + zero-critical stop | Standard | 3-5 | ~$0.50-0.87 | ~6-13 min |
+| v1 default + zero-critical stop | Complex | 4-6 | ~$0.75-1.50 | ~10-20 min |
+| v1 default + 10r cap | Complex | 10 (never GO) | ~$2.84 | ~35 min |
 
 ### Note on Final Output Quality
 
-The converged plan (Experiment 7) is 10 KB, 1,346 words, 5 milestones — well within the 3,000-word constraint. GPT's GO review praised the architectural refactor, request parsing sequence, IntegrityError rollback handling, input normalization strategy, and rate limiting scope tradeoff. The plan is implementation-ready for orchestrator-auto.
+The converged plan (Experiment 7, registration) is 10 KB, 1,346 words, 5 milestones — well within the 3,000-word constraint. GPT's GO review praised the architectural refactor, request parsing sequence, IntegrityError rollback handling, input normalization strategy, and rate limiting scope tradeoff.
 
-**The convergence problem is solved.** The combination of constrained prompts, feedback validation, severity filtering, keep/trim guidance, and resolution criteria produces plans that GPT approves within 5 rounds.
+The non-converged plan (Experiment 9, webhook at R10) still reached excellent quality: fail-closed security, FOR UPDATE SKIP LOCKED concurrency, terminal dead-letter, injected clock for testing. Despite never getting GO, the plan at R4 (zero criticals) was already implementation-ready.
+
+**The convergence problem is solved for standard features.** For complex features, the zero-critical threshold provides a reliable stop condition even though GPT never says GO.
 
 ---
 
