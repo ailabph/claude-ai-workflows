@@ -235,6 +235,7 @@ def run_review(
     model: str,
     system_prompt: str | None = None,
     reasoning_effort: str | None = None,
+    previous_context: str | None = None,
 ) -> dict:
     """Run a single plan review via the OpenAI API.
 
@@ -244,10 +245,15 @@ def run_review(
             the resolution-guidance variant.
         reasoning_effort: Optional reasoning effort level ("low", "medium", "high").
             When set, temperature is omitted (OpenAI requires default temp with reasoning).
+        previous_context: Optional context from the previous review round. When provided,
+            prepended to the user prompt so GPT knows what it flagged before and how
+            the plan changed. Helps prevent re-raising resolved issues and oscillation.
 
     Returns a dict with raw response, parsed result, and metrics.
     """
     user_prompt = USER_PROMPT_TEMPLATE.format(plan_text=plan_text)
+    if previous_context:
+        user_prompt = previous_context + "\n\n---\n\n" + user_prompt
     effective_prompt = system_prompt if system_prompt is not None else SYSTEM_PROMPT
 
     kwargs: dict = {

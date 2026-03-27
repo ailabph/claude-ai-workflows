@@ -621,6 +621,7 @@ async def run_e2e_loop(
     validate_feedback: bool = False,
     filter_severity: list[str] | None = None,
     keep_trim: bool = False,
+    review_history: bool = False,
 ) -> dict:
     """Run the full plan -> review -> revise -> review -> GO loop.
 
@@ -668,9 +669,28 @@ async def run_e2e_loop(
     # ── Step 2: Review loop ──
     update_session_phase(conn, session_id, "review")
     converged = False
+    previous_plan: str | None = None
+    previous_review_raw: str | None = None
 
     for round_num in range(1, max_rounds + 1):
         round_info: dict = {"round": round_num}
+
+        # ── Build previous context for reviewer (if enabled and not first round) ──
+        prev_context: str | None = None
+        if review_history and round_num > 1 and previous_plan and previous_review_raw:
+            prev_context = (
+                "## Previous Review Context\n\n"
+                "Below is the previous version of the plan and your previous review. "
+                "The current plan (below the separator) is a revision that attempted "
+                "to address your feedback. Focus your review on:\n"
+                "1. Whether previously raised issues were adequately resolved\n"
+                "2. Any NEW issues introduced by the revision\n"
+                "3. Do NOT re-raise issues that were validly deferred or resolved\n\n"
+                "### Previous Plan (before revision)\n"
+                f"```\n{previous_plan[:5000]}\n```\n\n"
+                "### Your Previous Review\n"
+                f"```\n{previous_review_raw[:3000]}\n```"
+            )
 
         # ── Review current plan via GPT ──
         if keep_trim:
@@ -683,6 +703,7 @@ async def run_e2e_loop(
             gpt_client, current_plan, reviewer_model,
             system_prompt=reviewer_prompt,
             reasoning_effort=reviewer_reasoning_effort,
+            previous_context=prev_context,
         )
         parsed: ReviewerResponse = review_result["parsed"]
 
@@ -790,6 +811,10 @@ async def run_e2e_loop(
         plan_artifact_num = 2 * draft_num - 1
         plan_path = _export_plan(current_plan, plan_artifact_num, output_dir)
         artifacts.append(plan_path.name)
+
+        # Save context for next round's review history
+        previous_plan = current_plan
+        previous_review_raw = review_result.get("raw_response", "")
 
         round_details.append(round_info)
 
@@ -1021,6 +1046,12 @@ def main() -> None:
         default=False,
         help="GPT reviewer includes 'what to keep' and 'what to trim' sections to guide revision",
     )
+    parser.add_argument(
+        "--review-history",
+        action="store_true",
+        default=False,
+        help="Include previous plan + previous review as context for GPT (prevents re-raising resolved issues)",
+    )
     args = parser.parse_args()
 
     # Load .env from repo root for API keys
@@ -1056,6 +1087,7 @@ def main() -> None:
     severity_filter = args.filter_severity.split(",") if args.filter_severity else None
     print(f"Validate FB: {'ON' if args.validate_feedback else 'OFF'}")
     print(f"Keep/trim:   {'ON' if args.keep_trim else 'OFF'}")
+    print(f"Rev history: {'ON' if args.review_history else 'OFF'}")
     print(f"Sev. filter: {','.join(severity_filter) if severity_filter else 'all'}")
     print(f"Output:     {output_dir}")
     print(f"Session:    {session_id}")
@@ -1080,6 +1112,7 @@ def main() -> None:
             validate_feedback=args.validate_feedback,
             filter_severity=severity_filter,
             keep_trim=args.keep_trim,
+            review_history=args.review_history,
         )
     )
 
