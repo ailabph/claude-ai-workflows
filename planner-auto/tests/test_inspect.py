@@ -255,34 +255,41 @@ class TestFormatRawResponse:
 # ---------------------------------------------------------------------------
 
 class TestDumpSessionJson:
-    def test_includes_security_warning(self, session_with_reviews):
+    def test_returns_pure_json(self, session_with_reviews):
+        """dump_session_json returns pure JSON (no warning prefix)."""
         session_id, conn = session_with_reviews
         output = dump_session_json(conn, session_id)
-        assert "⚠" in output
-        assert "redaction" in output or "Do not share" in output
+        # Should be parseable as-is without stripping a warning line
+        data = json.loads(output)
+        assert "session" in data
 
     def test_contains_session_metadata(self, session_with_reviews):
         session_id, conn = session_with_reviews
         output = dump_session_json(conn, session_id)
-        # Strip the warning line to parse JSON
-        json_part = output.split("\n\n", 1)[1] if "\n\n" in output else output
-        data = json.loads(json_part)
+        data = json.loads(output)
         assert data["session"]["id"] == session_id
         assert data["session"]["project"] == "test-project"
 
     def test_contains_reviews(self, session_with_reviews):
         session_id, conn = session_with_reviews
         output = dump_session_json(conn, session_id)
-        json_part = output.split("\n\n", 1)[1]
-        data = json.loads(json_part)
+        data = json.loads(output)
         assert len(data["reviews"]) == 2
 
     def test_contains_dispositions(self, session_with_reviews):
         session_id, conn = session_with_reviews
         output = dump_session_json(conn, session_id)
-        json_part = output.split("\n\n", 1)[1]
-        data = json.loads(json_part)
+        data = json.loads(output)
         assert len(data["dispositions"]) == 2
+
+    def test_contains_blockers(self, session_with_reviews):
+        """dump_session_json includes a blockers key with open and resolved."""
+        session_id, conn = session_with_reviews
+        output = dump_session_json(conn, session_id)
+        data = json.loads(output)
+        assert "blockers" in data
+        assert "open" in data["blockers"]
+        assert "resolved" in data["blockers"]
 
     def test_nonexistent_session_returns_error_json(self, conn):
         output = dump_session_json(conn, "nonexistent")

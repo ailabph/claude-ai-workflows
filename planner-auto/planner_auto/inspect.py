@@ -18,6 +18,7 @@ from planner_auto.db import (
     get_context_entries,
     get_dispositions,
     get_messages,
+    get_open_blockers,
     get_review_by_round,
     get_schema_version,
     get_session,
@@ -213,9 +214,10 @@ def dump_session_json(conn, session_id: str) -> str:
     """Return a full JSON dump of all session data across all tables.
 
     Includes: session metadata, messages, context entries, plan drafts,
-    reviews, dispositions, config, and schema version.
+    reviews, dispositions, blockers, config, and schema version.
 
-    Prepends the security warning since this may contain repository content.
+    The security warning is printed to stderr by the caller; the return
+    value is pure JSON so it can be piped to ``jq`` or similar tools.
     """
     session = get_session(conn, session_id)
     if session is None:
@@ -232,6 +234,14 @@ def dump_session_json(conn, session_id: str) -> str:
         (session_id,),
     ).fetchall()
 
+    # Blockers: open + resolved
+    open_blockers = get_open_blockers(conn, session_id)
+    resolved_blockers = conn.execute(
+        "SELECT * FROM blockers WHERE session_id = ? AND status = 'resolved' "
+        "ORDER BY resolved_at ASC",
+        (session_id,),
+    ).fetchall()
+
     schema_ver = get_schema_version(conn)
 
     data = {
@@ -243,8 +253,10 @@ def dump_session_json(conn, session_id: str) -> str:
         "plan_drafts": [dict(d) for d in drafts],
         "reviews": [dict(r) for r in reviews],
         "dispositions": all_disps,
+        "blockers": {
+            "open": [dict(b) for b in open_blockers],
+            "resolved": [dict(b) for b in resolved_blockers],
+        },
     }
 
-    warning_line = _SECURITY_WARNING
-    json_body = json.dumps(data, indent=2, default=str)
-    return f"{warning_line}\n\n{json_body}"
+    return json.dumps(data, indent=2, default=str)

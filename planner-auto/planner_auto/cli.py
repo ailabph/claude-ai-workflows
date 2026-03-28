@@ -245,12 +245,14 @@ MAX_FILE_SIZE = 500 * 1024  # 500 KB
 @click.argument("session_id")
 @click.option("--file", "file_path", type=click.Path(), default=None, help="Path to a file to add as context.")
 @click.option("--note", default=None, help="Text note to add as context.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
 @click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def add_context(ctx, session_id, file_path, note, debug):
+def add_context(ctx, session_id, file_path, note, verbose, debug):
     """Add a context entry (file or note) to a session."""
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -486,6 +488,9 @@ def generate(ctx, session_id, model, verbose, debug):
         sm.check_command(session_id, "generate")
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            traceback.print_exc()
         ctx.exit(1)
         return
 
@@ -565,6 +570,9 @@ def complete(ctx, session_id, verbose, debug):
         sm.check_command(session_id, "complete")
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            traceback.print_exc()
         ctx.exit(1)
         return
 
@@ -651,6 +659,9 @@ def review(
         sm.check_command(session_id, "review")
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            traceback.print_exc()
         ctx.exit(1)
         return
 
@@ -891,6 +902,11 @@ def inspect_dump(ctx, session_id):
     Do not share without redaction.
     """
     conn = _get_conn(ctx)
+    click.echo(
+        "⚠ Output may contain repository content and API responses. "
+        "Do not share without redaction.",
+        err=True,
+    )
     click.echo(dump_session_json(conn, session_id))
 
 
@@ -949,22 +965,37 @@ def check(ctx, probe):
         "yes" if openai_importable else "not installed (pip install openai)",
     ))
 
+    try:
+        import claude_agent_sdk as _cas
+        _cas_ver = getattr(_cas, "__version__", "unknown")
+        results.append(("claude_agent_sdk importable", True, f"v{_cas_ver}"))
+    except ImportError:
+        results.append(("claude_agent_sdk importable", False, "not installed"))
+
     # ---- DB path writable --------------------------------------------------
     db_path = ctx.obj.get("db_path") or DEFAULT_DB_PATH
     db_dir = os.path.dirname(db_path)
+    db_ver = None
     try:
         os.makedirs(db_dir, exist_ok=True)
-        # Test write by opening the DB (creates it if missing)
         test_conn = open_db(db_path)
-        db_ver = get_schema_version(test_conn)
-        test_conn.close()
+        # Verify write access with a probe table
+        test_conn.execute("CREATE TABLE IF NOT EXISTS _probe_test (id INTEGER)")
+        test_conn.execute("DROP TABLE _probe_test")
         results.append(("DB path writable", True, db_path))
+        try:
+            db_ver = get_schema_version(test_conn)
+        except Exception:
+            # Fresh/empty DB with no schema tables yet — that's fine
+            db_ver = "uninitialized"
+        test_conn.close()
     except Exception as exc:
-        db_ver = None
         results.append(("DB path writable", False, f"{exc}"))
 
     # ---- Schema version ----------------------------------------------------
-    if db_ver is not None:
+    if db_ver == "uninitialized":
+        results.append(("Schema version", True, "uninitialized (will be created on first use)"))
+    elif db_ver is not None:
         schema_current = db_ver == CURRENT_SCHEMA_VERSION
         results.append((
             "Schema version",
@@ -983,7 +1014,12 @@ def check(ctx, probe):
             _t0 = time.monotonic()
 
             async def _probe_claude():
-                return await query_claude("Say OK", model="claude-haiku-4-5-20251001")
+                return await query_claude(
+                    messages=[{"role": "user", "content": "Say OK"}],
+                    system_prompt="Respond with OK.",
+                    model="claude-haiku-4-5-20251001",
+                    timeout_sec=15,
+                )
 
             _asyncio.run(_probe_claude())
             _ms = int((time.monotonic() - _t0) * 1000)
