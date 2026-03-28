@@ -137,7 +137,30 @@ Replaced Claude CLI subprocess with direct Anthropic API calls as default backen
 | Issues resolved | H1 (empty results), H2 (rate limit), H3 (anyio noise), M1 (session conflicts) |
 | **Tests** | **401 passing** (was 368) |
 
-**Stress test:** Confirmed direct API works alongside active Claude Code session. `planner-auto discuss` + `--done` succeeded where SDK backend was rate-limited.
+**Stress test results:**
+- Confirmed direct API works alongside active Claude Code session
+- `discuss` + `--done` succeeded where SDK backend was rate-limited
+- First full end-to-end success: start → add-context → discuss → generate → review → complete
+- Session `765ac72b` (stress-test-3): 4-milestone plan for "--json flag on status command"
+- Review loop: **converged in 3 rounds, $0.12, GPT said GO**
+- Issue trend: 2→1→GO (strictly declining, review history working)
+- 7 artifacts exported, .kafra handoff successful
+- Observability: verbose output showed round metrics, dispositions, draft size, history context
+
+### First Successful End-to-End Stress Test (2026-03-28)
+
+```
+planner-auto start --project stress-test-3          → direct backend, repo root detected
+planner-auto add-context 765ac72b --file cli.py     → 44K chars stored, absolute path
+planner-auto add-context 765ac72b --note "..."      → note stored
+planner-auto discuss 765ac72b "..." --done          → Claude asked questions, phase → PLANNING
+planner-auto generate 765ac72b                      → 4-milestone plan, format validated
+planner-auto review 765ac72b --verbose              → 3 rounds, GO, $0.12
+  Round 1: NO_GO (2 issues, both ACCEPT) → revised
+  Round 2: NO_GO (1 issue, ACCEPT) → revised
+  Round 3: GO (0 issues)
+  Final plan: .kafra/a-01-plans/stress-test-3.md
+```
 
 ---
 

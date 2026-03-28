@@ -21,7 +21,8 @@ _(none currently — H1, H2, H3 resolved by direct API backend)_
 ### M2: Stress testing proposal uses fake file paths
 **Found:** Stress test (2026-03-28)
 **Symptom:** `proposal-stress-testing.md` references `src/app.py` which doesn't exist in this repo.
-**Fix needed:** Update proposal to use real repo paths (`planner-auto/planner_auto/cli.py`, etc.).
+**Status:** Partially mitigated — real stress test ran successfully with `planner-auto/planner_auto/cli.py`. Proposal doc still has fake paths.
+**Fix needed:** Update proposal to use real repo paths.
 
 ---
 

@@ -313,7 +313,7 @@ If you need to use the SDK backend (e.g., OAuth-only auth), be aware:
 - [x] **Plan 1: Session Core** — CLI, DB, lifecycle, context, plan generation, export
 - [x] **Plan 2: Reviewer Adapter** — GPT review loop, convergence, .kafra handoff
 - [x] **Direct API backend** — Bypass SDK subprocess, works alongside Claude Code sessions
-- [ ] **Stress testing** — Full Level 2 + 3 validation with real API calls
+- [x] **Stress testing (Level 2)** — First end-to-end success: 3-round convergence, $0.12, GPT GO
 - [ ] **TUI mode** — Rich terminal UI (like orchestrator-auto's TUI)
 - [ ] **Telegram notifications** — Notify on plan approval or blocker
 - [ ] **Homebrew formula** — `brew install planner-auto`
