@@ -75,11 +75,14 @@ SETUP → CONTEXT → DISCUSSION → PLANNING → REVIEW → COMPLETE
 ### SDK Calls
 
 - **All Claude calls through `sdk_wrapper.py: query_claude()`** — handles retry, timeout, error mapping.
-- Accepts `effort`, `thinking`, `max_turns` params.
-- `max_turns=0` or `None` with thinking = unlimited turns.
-- `asyncio.wait_for()` enforces timeout.
-- Rate limit: 3 retries with 2/4/8s backoff (independent counter).
-- Timeout: 1 retry after 2s (independent counter).
+- Two backends: `"direct"` (Anthropic API via `anthropic` package, default) and `"sdk"` (Claude CLI subprocess).
+- Callers pass `backend=` (resolved from session config by CLI). Default `None` → auth-aware: `ANTHROPIC_API_KEY` → direct, OAuth only → sdk.
+- Accepts `effort`, `thinking`, `max_turns`, `backend` params.
+- `effort` maps to thinking budgets on direct backend: medium=10K, high=20K, max=50K tokens.
+- `asyncio.wait_for()` enforces timeout on both backends.
+- Rate limit: 3 retries with 2/4/8s backoff. Timeout: 1 retry after 2s.
+- All anthropic exceptions mapped to existing `SDKError` hierarchy — callers don't know which backend ran.
+- `.env` auto-loaded at CLI startup via `python-dotenv`.
 
 ### Reviewer Calls
 
@@ -186,8 +189,8 @@ Every session stores its config in `session_config` for reproducibility:
 
 ## Known Issues
 
-- **Opus + thinking + SDK subprocess**: Can return empty results or crash on large prompts. Use `max_turns=0` with thinking. See `planner-auto/README.md` Known Issues section.
-- **Multiple Claude sessions**: SDK subprocess may conflict with other active Claude instances.
+- **SDK backend (`--claude-backend sdk`)**: Shares rate-limit quota with active Claude Code sessions. Use default `direct` backend with `ANTHROPIC_API_KEY` whenever possible.
+- **Direct backend thinking**: Extended thinking may require beta access. If unavailable, falls back to non-thinking mode with a warning.
 
 ## Related Documentation
 

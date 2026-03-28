@@ -1,6 +1,6 @@
 # Planner-Auto Progress Tracker
 
-## Project Status: v0.3.0 — Plan 1 + Plan 2 + Observability Complete
+## Project Status: v0.4.0 — Plan 1 + Plan 2 + Observability + Direct API Backend
 
 ---
 
@@ -123,6 +123,24 @@
 
 ---
 
+### Direct API Backend (v0.4.0) — COMPLETE
+
+Replaced Claude CLI subprocess with direct Anthropic API calls as default backend. Resolves the #1 production blocker (unusable alongside active Claude Code sessions).
+
+| Change | Detail |
+|--------|--------|
+| `sdk_wrapper.py` | Dual backend: `_execute_direct()` (anthropic pkg) + `_execute_sdk()` (CLI subprocess) |
+| Auth-aware default | `ANTHROPIC_API_KEY` → direct, OAuth only → sdk |
+| `.env` auto-load | `python-dotenv` loads API keys at CLI startup |
+| Error contract | Anthropic exceptions mapped to existing SDKError hierarchy |
+| `--claude-backend` | On `start` command, persisted in session config |
+| Issues resolved | H1 (empty results), H2 (rate limit), H3 (anyio noise), M1 (session conflicts) |
+| **Tests** | **401 passing** (was 368) |
+
+**Stress test:** Confirmed direct API works alongside active Claude Code session. `planner-auto discuss` + `--done` succeeded where SDK backend was rate-limited.
+
+---
+
 ## Key Documents
 
 | Document | Location | Purpose |
@@ -134,6 +152,8 @@
 | Plan 2 plan | `docs/planner-auto/plans/plan-phase2.1.md` | Implementation plan (manual, reviewed) |
 | Observability plan | `docs/planner-auto/plans/plan-observability.md` | Logging, inspect, check, output tiers |
 | Stress testing | `docs/planner-auto/plans/proposal-stress-testing.md` | 3-level testing strategy |
+| Direct API proposal | `docs/planner-auto/plans/proposal-direct-api-fallback.md` | Direct Anthropic API backend (v5) |
+| Direct API plan | `docs/planner-auto/plans/plan-direct-api-fallback.md` | Implementation plan (3 milestones) |
 | Brew installer | `docs/planner-auto/plans/brew-installer-plan.md` | Homebrew formula plan |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
 | POC 5b readme | `scripts/poc/planner-auto/poc_review_loop_e2e_readme.md` | 11 experiment analysis |

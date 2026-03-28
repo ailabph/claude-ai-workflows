@@ -5,6 +5,37 @@ All notable changes to planner-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-03-28
+
+### Added
+
+- **Direct Anthropic API backend** — `sdk_wrapper.py` now dispatches Claude calls to either `_execute_direct()` (Anthropic API via `anthropic` package) or `_execute_sdk()` (Claude CLI subprocess). Direct is the default when `ANTHROPIC_API_KEY` is available. Resolves H1, H2, H3, M1 from ISSUES.md.
+- **Auth-aware backend defaulting** — `resolve_default_backend()` picks `"direct"` when `ANTHROPIC_API_KEY` is set, `"sdk"` when only `CLAUDE_CODE_OAUTH_TOKEN` is present. Both → direct. Warning printed if user forces `--claude-backend direct` with OAuth only.
+- **`--claude-backend` flag** — On `start` command. Choices: `direct`, `sdk`. Auto-detected from auth if not provided. Persisted in session config. Later commands read from session config.
+- **Effort-to-thinking mapping** — Direct backend maps `effort` levels to Anthropic API thinking budgets: medium=10K, high=20K, max=50K tokens.
+- **Thinking fallback** — If extended thinking is unavailable (beta not enabled), retries without thinking and logs warning.
+- **Error contract preserved** — All anthropic exceptions mapped to existing `SDKError` hierarchy: `AuthenticationError` → `SDKAuthError`, `RateLimitError` → `SDKRateLimitError`, `APITimeoutError` → `SDKTimeoutError`, etc. Callers and CLI error handling unchanged.
+- **Auto-load `.env`** — CLI startup loads `.env` via `python-dotenv` so API keys are available without manual shell exports.
+- **`python-dotenv`** — Added to `pyproject.toml` dependencies.
+- **`anthropic`** — Added to `pyproject.toml` dependencies (`>=0.40.0`).
+- **Backend-aware `check` command** — Validates both backends when installed. Default backend readiness = pass/fail. Optional backend = informational. `--session <id>` validates against session's backend. Unknown sessions rejected.
+- **API key checker script** — `scripts/check_api_keys.py` validates Claude and OpenAI keys with hidden input and minimal API calls.
+
+### Changed
+
+- **`agents.py`** — `discuss()`, `synthesize_context()`, `generate_plan()` gain `backend=` parameter (default `None` = auth-aware). `generate_plan()` preserves existing session config when writing snapshots.
+- **`loop/engine.py`** — Revision calls pass `claude_backend` from engine config.
+- **`loop/feedback.py`** — `validate_feedback()` gains `backend=` parameter, honoring session backend.
+
+### Fixed
+
+- **Session config persistence** — `generate_plan()` no longer overwrites `claude_backend` in session config. Merges preserved fields with new config.
+- **Feedback validation backend** — No longer ignores session backend; uses configured backend consistently.
+- **Agent defaults** — Changed from hardcoded `"direct"` to `None` (auth-aware via wrapper). Programmatic callers with OAuth get correct SDK backend.
+- **Check --session** — Now validates against session's backend (not default). Rejects unknown sessions.
+
+---
+
 ## [0.3.0] - 2026-03-28
 
 ### Added

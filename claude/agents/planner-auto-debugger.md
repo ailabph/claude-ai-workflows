@@ -223,7 +223,24 @@ Loop stops when ANY condition met (checked in order):
 
 Caps: standard=8, complex=12, fast=4, emergency=20 (--max-rounds override).
 
+## Backend Architecture (v0.4.0+)
+
+`query_claude()` dispatches to two backends:
+- `"direct"` (default): Uses `anthropic` package directly. No subprocess. Works alongside active Claude Code sessions.
+- `"sdk"` (opt-in): Uses `claude-agent-sdk` subprocess. Shares rate-limit quota with Claude Code.
+
+Auth-aware defaulting: `ANTHROPIC_API_KEY` → direct, OAuth only → sdk.
+
+Backend is stored in `session_config["claude_backend"]` and read by all session-aware commands.
+
+```bash
+# Check which backend a session uses
+planner-auto inspect config <session-id>
+# or
+sqlite3 ~/.planner-auto/planner.db "SELECT config_json FROM session_config WHERE session_id='<id>'"
+```
+
 ## Known Issues
 
-- **Opus + thinking + large prompts**: SDK subprocess can crash or return empty. Workaround: `max_turns=0` (unlimited) or fall back to Sonnet.
-- **Multiple active Claude sessions**: SDK subprocess may conflict with other running Claude instances. Close other sessions if experiencing intermittent crashes.
+- **SDK backend rate limits**: When using `--claude-backend sdk`, the CLI subprocess shares quota with active Claude Code sessions. Use default `direct` backend whenever possible.
+- **Direct backend thinking**: Extended thinking may require beta access on the Anthropic API. Falls back to non-thinking mode with a warning if unavailable.
