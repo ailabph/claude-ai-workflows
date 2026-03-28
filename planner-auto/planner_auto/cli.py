@@ -781,8 +781,7 @@ def review(
         ctx.exit(1)
         return
 
-    # Final summary line — always printed (headless-safe)
-    click.echo(f"{result.stop_reason.replace('_', ' ').title()} after {result.rounds} round(s). ${result.total_cost:.2f} total.")
+    # Engine owns the final summary line via _emit_final(). No CLI duplicate.
 
     if result.converged:
         # Advance REVIEW → COMPLETE.
