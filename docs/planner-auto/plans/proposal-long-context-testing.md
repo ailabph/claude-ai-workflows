@@ -2,58 +2,74 @@
 
 ## Purpose
 
-Validate that planner-auto handles large context inputs end-to-end. Opus 4.6 supports 1M tokens (~4M chars), so the planning stage itself should never be the bottleneck. The potential bottlenecks are:
+Validate that planner-auto handles large context inputs. Opus 4.6 supports 1M tokens (~4M chars), so the planning stage itself should never be the bottleneck. The potential bottlenecks are:
 
-1. **File loading** — `add-context` has a 500KB per-file limit. Is this sufficient? Should it be configurable?
-2. **Context synthesis** — Haiku synthesizes context before plan generation. Does it choke on large inputs? Does it produce useful synthesis from 100KB+ of context?
-3. **Direct API payload size** — Does the `anthropic` package handle large message payloads without timeout or error?
-4. **GPT reviewer** — GPT-5.4 reviews the generated plan. The plan itself should stay under 3K words (constrained prompt), but does GPT handle large review history context from prior rounds?
-5. **Review loop total context** — By round 3+, the prompt includes: current plan + previous plan (5K chars) + previous review (3K chars) + cumulative defers. Does this stay within limits?
-6. **Cost** — Large context = more input tokens = higher cost per call. What's the cost curve?
+1. **File loading** — `add-context` has a 500KB per-file limit. Is this sufficient?
+2. **Context synthesis** — Haiku synthesizes before plan generation. Does it produce useful output from 100KB+?
+3. **Direct API payload size** — Does the `anthropic` package handle large payloads without timeout?
+4. **Review loop history growth** — By round 3+, history context accumulates. Does it stay within limits?
+5. **Cost** — Large context = more input tokens. What's the cost curve?
+
+## Test Structure
+
+Each level runs **two passes** to isolate failures:
+
+**Pass A (plan-only):** `start` → `add-context` → `discuss --done` → `generate`. Tests context loading, synthesis, and plan generation without the review loop.
+
+**Pass B (full-loop):** Same session, continue with `review --verbose`. Tests the review loop, history accumulation, and convergence on top of the already-generated plan.
+
+If Pass A fails, the issue is in context handling or plan generation. If Pass A succeeds but Pass B fails, the issue is in the review loop under large-context conditions.
+
+---
 
 ## Test Levels
 
-### Level 1: Moderate Context (~50-80KB total)
+### Level 1: Moderate Context (~93KB total)
 
-Real documentation files from this repo.
+4 real files from this repo.
 
+**Pass A (plan-only):**
 ```bash
 planner-auto start --project ctx-test-moderate
 
-# ~44KB
-planner-auto add-context <id> --file planner-auto/planner_auto/cli.py
+planner-auto add-context <id> --file planner-auto/planner_auto/cli.py            # ~44KB
+planner-auto add-context <id> --file planner-auto/planner_auto/loop/engine.py     # ~25KB
+planner-auto add-context <id> --file planner-auto/README.md                       # ~13KB
+planner-auto add-context <id> --file planner-auto/AGENTS.md                       # ~8KB
 
-# ~28KB
-planner-auto add-context <id> --file planner-auto/planner_auto/loop/engine.py
+# Verify: context_count = 4
+planner-auto status <id>
 
-# ~13KB
-planner-auto add-context <id> --file planner-auto/README.md
+planner-auto discuss <id> "Refactor the review loop engine to support pluggable reviewer backends — currently only DirectAPIAdapter exists, but the architecture should make it easy to add new adapters without modifying engine.py" --done
 
-# ~8KB
-planner-auto add-context <id> --file planner-auto/AGENTS.md
-
-# Total: ~93KB across 4 files
-planner-auto status <id>  # verify context_count = 4
+planner-auto generate <id>
 ```
 
-**Feature:** "Refactor the review loop engine to support pluggable reviewer backends — currently only DirectAPIAdapter exists, but the architecture should make it easy to add Codex MCP or OpenCode HTTP adapters without modifying engine.py"
-
-**Verify:**
+**Verify Pass A:**
 - [ ] All 4 files loaded without error
-- [ ] `discuss` works with this context size
-- [ ] Context synthesis produces useful summary (not truncated or garbled)
-- [ ] Plan generation references specific files and functions from context
+- [ ] `discuss` responds (synthesis happens internally)
+- [ ] `generate` produces a plan that references specific files/functions from context
+- [ ] Plan stays under 3K words
+
+**Pass B (full-loop):**
+```bash
+planner-auto review <id> --verbose
+```
+
+**Verify Pass B:**
 - [ ] Review loop converges (3-5 rounds expected)
-- [ ] Total cost is reasonable (estimate: $0.20-0.50)
+- [ ] No timeout errors
+- [ ] Total cost < $0.50
 
-### Level 2: Heavy Context (~200-300KB total)
+### Level 2: Heavy Context (~224KB total)
 
-Push the limits with large files and documentation.
+15 source files + documentation. Feature stays within this repo's domain (no external dependencies like TUI).
 
+**Pass A (plan-only):**
 ```bash
 planner-auto start --project ctx-test-heavy
 
-# Load the largest source files
+# Source files (~161KB)
 planner-auto add-context <id> --file planner-auto/planner_auto/cli.py                    # ~44KB
 planner-auto add-context <id> --file planner-auto/planner_auto/db.py                     # ~28KB
 planner-auto add-context <id> --file planner-auto/planner_auto/loop/engine.py             # ~25KB
@@ -65,105 +81,135 @@ planner-auto add-context <id> --file planner-auto/planner_auto/loop/history.py  
 planner-auto add-context <id> --file planner-auto/planner_auto/loop/convergence.py         # ~5KB
 planner-auto add-context <id> --file planner-auto/planner_auto/export.py                   # ~12KB
 
-# Load documentation
+# Documentation (~63KB)
 planner-auto add-context <id> --file planner-auto/README.md                                # ~13KB
 planner-auto add-context <id> --file planner-auto/AGENTS.md                                # ~8KB
 planner-auto add-context <id> --file planner-auto/CHANGELOG.md                             # ~5KB
 planner-auto add-context <id> --file docs/planner-auto/progress.md                         # ~7KB
 planner-auto add-context <id> --file docs/plans/planner-auto-proposal-v1.1.md              # ~30KB
 
-# Add notes for additional context
-planner-auto add-context <id> --note "This is a planning tool that uses Claude (planner) and GPT-5.4 (reviewer) in a multi-round review loop. Direct Anthropic API is the default backend. Review history with cumulative DEFER tracking is the key convergence mechanism."
+planner-auto add-context <id> --note "Direct Anthropic API is the default backend. Review history with cumulative DEFER tracking is the key convergence mechanism."
 
-# Total: ~224KB across 15 files + 1 note
-planner-auto status <id>
+planner-auto status <id>   # verify context_count = 16
+
+planner-auto discuss <id> "Add a session comparison command: planner-auto compare <id1> <id2> that shows a side-by-side diff of two sessions — milestones, issue counts per round, disposition patterns, convergence speed, and total cost. Output as a formatted table or with --json. This helps users understand which session configuration produced better results." --done
+
+planner-auto generate <id>
 ```
 
-**Feature:** "Add a TUI mode (--tui flag) for the review command that shows a live dashboard with: current round number, verdict, issue count with severity breakdown, disposition decisions (ACCEPT/DEFER/REJECT) as they happen, revision progress, total cost, and a scrollable log panel. Use the Textual library (already used by orchestrator-auto). The TUI should work alongside the existing headless/verbose/debug output tiers."
+**Verify Pass A:**
+- [ ] All 16 entries loaded without error
+- [ ] Context synthesis completes (may take 10-20s)
+- [ ] Synthesis captures architecture, not just file names
+- [ ] Plan references specific modules and patterns from loaded context
+- [ ] Plan stays under 3K words despite 224KB context
 
-**Verify:**
-- [ ] All 15 files + note loaded without error
-- [ ] Context synthesis completes (may take 10-20s with this much input)
-- [ ] Synthesis is useful — not just listing filenames but capturing architecture
-- [ ] Plan generation references specific modules and patterns from context
-- [ ] Plan stays under 3K words despite large context (constrained prompt working)
-- [ ] Review loop completes (may take more rounds due to complexity — TUI is complex)
-- [ ] No API timeout errors on large payloads
-- [ ] Total cost tracked correctly
+**Pass B (full-loop):**
+```bash
+planner-auto review <id> --verbose
+```
+
+**Verify Pass B:**
+- [ ] Review loop completes
+- [ ] History context size stays bounded across rounds
+- [ ] No API timeout errors
+- [ ] Total cost < $2.00
 
 ### Level 3: Near-Limit Context (~450KB)
 
-Test the 500KB per-file limit and total context near the practical ceiling.
+All source + test + doc files. Boundary test.
 
+**Pass A (plan-only):**
 ```bash
 planner-auto start --project ctx-test-limit
 
 # Load ALL source files
-find planner-auto/planner_auto -name "*.py" -not -path "*__pycache__*" | while read f; do
+for f in $(find planner-auto/planner_auto -name "*.py" -not -path "*__pycache__*"); do
   planner-auto add-context <id> --file "$f"
 done
 
 # Load ALL test files
-find planner-auto/tests -name "*.py" -not -path "*__pycache__*" | while read f; do
+for f in $(find planner-auto/tests -name "*.py" -not -path "*__pycache__*"); do
   planner-auto add-context <id> --file "$f"
 done
 
-# Load ALL documentation
+# Documentation
 planner-auto add-context <id> --file planner-auto/README.md
 planner-auto add-context <id> --file planner-auto/AGENTS.md
 planner-auto add-context <id> --file planner-auto/CHANGELOG.md
 
-planner-auto status <id>  # total context entry count + chars
+# Verify entry count
+planner-auto status <id>
+
+planner-auto discuss <id> "Perform a comprehensive security audit of the planner-auto codebase. Identify: API key handling vulnerabilities, SQL injection risks, path traversal in file loading, secrets that could leak through logs or artifacts, and any unsafe subprocess invocations." --done
+
+planner-auto generate <id>
 ```
 
-**Feature:** "Perform a comprehensive security audit of the planner-auto codebase. Identify: API key handling vulnerabilities, SQL injection risks, path traversal in file loading, secrets that could leak through logs or artifacts, and any unsafe subprocess invocations. Produce a milestone plan where each milestone addresses one security domain."
+**Verify Pass A:**
+- [ ] All files loaded (record count and any rejections)
+- [ ] Context synthesis handles input or fails gracefully
+- [ ] Plan generation works or produces clear error
 
-**Verify:**
-- [ ] All files loaded (how many? what total size?)
-- [ ] Context synthesis handles 400KB+ input (may need to chunk)
-- [ ] Plan generation works or fails gracefully with clear error
+**Pass B (full-loop) — only if Pass A succeeds:**
+```bash
+planner-auto review <id> --verbose
+```
+
+**Verify Pass B:**
+- [ ] Review loop handles large history context or caps it
 - [ ] If API rejects payload as too large, error message is actionable
-- [ ] Cost for this context size
+- [ ] Cost recorded
+
+---
 
 ## What to Measure
 
-For each test level, record:
+For each test level, record per pass:
 
-| Metric | Level 1 | Level 2 | Level 3 |
-|--------|---------|---------|---------|
-| Files loaded | | | |
-| Total context size (KB) | | | |
-| Context synthesis time (s) | | | |
-| Synthesis output quality | | | |
-| Plan generation time (s) | | | |
-| Plan word count | | | |
-| Plan references context? | | | |
-| Review rounds to converge | | | |
-| Total cost ($) | | | |
-| Any errors? | | | |
-| Any timeouts? | | | |
+| Metric | L1 Pass A | L1 Pass B | L2 Pass A | L2 Pass B | L3 Pass A | L3 Pass B |
+|--------|-----------|-----------|-----------|-----------|-----------|-----------|
+| Files loaded | | | | | | |
+| Total context size (KB) | | | | | | |
+| Context synthesis time (s) | | | | | | |
+| Synthesis input size (KB) | | | | | | |
+| Synthesis output quality | | | | | | |
+| Plan generation time (s) | | | | n/a | | n/a |
+| Plan word count | | | | n/a | | n/a |
+| Plan references context? | | | | n/a | | n/a |
+| Review rounds to converge | n/a | | n/a | | n/a | |
+| History context size (chars) per round | n/a | | n/a | | n/a | |
+| Total cost ($) | | | | | | |
+| Errors / timeouts | | | | | | |
+
+---
 
 ## Potential Issues to Watch
 
 | Issue | Symptom | Likely Cause | Fix |
 |-------|---------|-------------|-----|
-| Synthesis too long | > 60s for synthesis | Haiku overwhelmed by 200KB+ | Chunk context, or use Sonnet for synthesis |
-| Plan ignores context | Generic plan, no file references | Context too large for model to process meaningfully | Better synthesis prompt, summarize per-file |
+| Synthesis too long | > 60s | Haiku overwhelmed by 200KB+ | Chunk context, or use Sonnet for synthesis |
+| Plan ignores context | Generic plan, no file references | Context too large for meaningful processing | Better synthesis prompt, per-file summaries |
 | API timeout on generate | 120s timeout hit | Large prompt + thinking = slow | Increase timeout_sec or reduce context |
-| Review context overflow | GPT review fails on later rounds | Plan + history + review context exceeds GPT limit | Cap history context size more aggressively |
-| Cost spike | > $2 per session | Large input tokens on every call | Monitor, warn user, consider context pruning |
-| 500KB limit too small | User has files > 500KB | Hardcoded limit in add-context | Make configurable with `--max-file-size` |
+| Review history overflow | GPT review fails on later rounds | Plan + history exceeds GPT limit | Cap history context size more aggressively |
+| Cost spike | > $2 per session | Large input tokens every call | Monitor, warn user, consider context pruning |
+| 500KB limit too small | User has files > 500KB | Hardcoded in add-context | Make configurable with `--max-file-size` |
+
+---
 
 ## Success Criteria
 
-| Level | Criteria |
-|-------|---------|
-| Level 1 | Full pipeline completes, plan references loaded files, cost < $0.50 |
-| Level 2 | Full pipeline completes, synthesis is useful, plan stays under 3K words, cost < $2.00 |
-| Level 3 | Either completes or fails with a clear, actionable error message (not a hang or crash) |
+| Level | Pass A (plan-only) | Pass B (full-loop) |
+|-------|-------------------|-------------------|
+| Level 1 | Plan generated, references context files | Converges, cost < $0.50 |
+| Level 2 | Plan generated despite 224KB, stays under 3K words | Converges, history stays bounded, cost < $2.00 |
+| Level 3 | Completes or fails with clear actionable error | Completes or fails with clear actionable error |
+
+---
 
 ## When to Run
 
-- **Level 1:** Now — quick validation (~5 min)
-- **Level 2:** After Level 1 passes — thorough validation (~15 min)
-- **Level 3:** Optional — boundary testing, mainly to document limits
+- **Level 1 Pass A:** Now — quick (~3 min)
+- **Level 1 Pass B:** After Pass A — adds ~5 min
+- **Level 2:** After Level 1 — ~15 min total
+- **Level 3:** Optional boundary test — time depends on context size
