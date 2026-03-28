@@ -223,6 +223,11 @@ class DirectAPIAdapter(ReviewerContract):
         # Parse into structured response.
         reviewer_response = parse_reviewer_response(raw_text)
 
+        # Attach metadata so the engine can persist it.
+        reviewer_response.reviewer_model = self.model
+        reviewer_response.input_tokens = input_tokens
+        reviewer_response.output_tokens = output_tokens
+
         logger.info(
             "Reviewer call: model=%s, elapsed=%.2fs, tokens=%d+%d, "
             "verdict=%s, issues=%d",

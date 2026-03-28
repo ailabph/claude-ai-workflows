@@ -161,7 +161,16 @@ class ReviewLoopEngine:
         final_draft_number = self._latest_draft_number()
         prev_plan_text: Optional[str] = None  # plan reviewed in the previous round
 
-        for round_num in range(1, max_rounds + 1):
+        # Determine the starting round: if resuming after a cap-hit pause,
+        # skip already-stored rounds to avoid UNIQUE constraint violations.
+        existing_max = self.conn.execute(
+            "SELECT MAX(round_number) as max_round FROM reviews "
+            "WHERE session_id = ? AND round_number IS NOT NULL",
+            (self.session_id,),
+        ).fetchone()
+        start_round = ((existing_max["max_round"] or 0) + 1) if existing_max else 1
+
+        for round_num in range(start_round, start_round + max_rounds):
             logger.info(
                 "Session %s — starting review round %d/%d",
                 self.session_id, round_num, max_rounds,
@@ -197,10 +206,10 @@ class ReviewLoopEngine:
                 issues_json=issues_json,
                 summary=review_response.summary,
                 raw_response=review_response.to_json(),
-                reviewer_model=None,
-                cost=None,
-                input_tokens=None,
-                output_tokens=None,
+                reviewer_model=getattr(review_response, "reviewer_model", None),
+                cost=getattr(review_response, "cost", None),
+                input_tokens=getattr(review_response, "input_tokens", None),
+                output_tokens=getattr(review_response, "output_tokens", None),
             )
             self.conn.commit()
 
@@ -221,7 +230,7 @@ class ReviewLoopEngine:
                 round_details.append(round_detail)
                 break
 
-            if round_num == max_rounds:
+            if round_num == start_round + max_rounds - 1:
                 has_criticals = any(
                     i.severity == Severity.CRITICAL for i in review_response.issues
                 )
@@ -231,29 +240,26 @@ class ReviewLoopEngine:
                 round_details.append(round_detail)
                 break
 
-            # --- Step 7: filter issues by severity -------------------------
-            filtered_issues = filter_issues(
-                review_response.issues,
-                self.config.get("filter_severity", ["critical", "major"]),
-            )
-
-            # --- Step 8: optional feedback validation ----------------------
+            # --- Step 7: optional feedback validation ----------------------
+            # Validate on the FULL issue list first so disposition indices
+            # match the stored issues_json (see history.py:137).
+            issues_for_revision = review_response.issues
             if self.config.get("validate_feedback", False):
                 validated = await validate_feedback(
                     current_plan,
-                    ReviewerResponse(
-                        verdict=review_response.verdict,
-                        issues=filtered_issues,  # validate only filtered issues
-                        summary=review_response.summary,
-                        keep=review_response.keep,
-                        trim=review_response.trim,
-                    ),
+                    review_response,  # full issue list — indices match DB
                     self.planner_model,
                     self.conn,
                     review_id,
                 )
                 self.conn.commit()
-                filtered_issues = validated.issues  # only ACCEPT issues
+                issues_for_revision = validated.issues  # only ACCEPT issues
+
+            # --- Step 8: filter issues by severity -------------------------
+            filtered_issues = filter_issues(
+                issues_for_revision,
+                self.config.get("filter_severity", ["critical", "major"]),
+            )
 
             # --- Step 9: build revision prompt -----------------------------
             revision_prompt = _build_revision_user_prompt(

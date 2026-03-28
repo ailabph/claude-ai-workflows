@@ -589,8 +589,8 @@ def review(
     if max_rounds is None:
         max_rounds = get_max_rounds(complexity, fast=fast)
 
-    # Fast mode overrides.
-    prompt_mode = "basic"
+    # Prompt mode: fast uses "basic", normal uses "keep_trim" (POC-proven default).
+    prompt_mode = "basic" if fast else "keep_trim"
     review_history_enabled = not no_review_history
     validate_fb = True
 
@@ -636,12 +636,17 @@ def review(
         prompt_mode=prompt_mode,
     )
 
-    planner_model = base_config.get("model_default", "claude-sonnet-4-6")
+    # agents.py stores the key as "model"; start command stores as "model_default".
+    # Try both, preferring "model" (from generate_plan config).
+    planner_model = base_config.get("model") or base_config.get("model_default", "claude-sonnet-4-6")
 
     engine_config: dict = {
         "validate_feedback": validate_fb,
         "filter_severity": ["critical", "major"],
         "review_history": review_history_enabled,
+        "effort": "medium",       # POC-proven default for planner revision calls
+        "thinking": True,         # POC-proven default for planner revision calls
+        "max_turns": 0,           # unlimited for thinking mode
     }
 
     engine = ReviewLoopEngine(

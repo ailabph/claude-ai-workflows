@@ -135,7 +135,8 @@ class TestExportReviewArtifactsFinalPlan:
 
         export_review_artifacts(sid, conn, output_dir=str(tmp_path))
 
-        assert (tmp_path / "plan-final.md").exists()
+        # With 2 review rounds, final artifact number = 2*2+1 = 5 → a-05-plan-final.md
+        assert (tmp_path / "a-05-plan-final.md").exists()
 
     def test_plan_final_contains_latest_draft_content(self, tmp_path):
         conn = _make_conn()
@@ -144,7 +145,7 @@ class TestExportReviewArtifactsFinalPlan:
 
         export_review_artifacts(sid, conn, output_dir=str(tmp_path))
 
-        content = (tmp_path / "plan-final.md").read_text()
+        content = (tmp_path / "a-05-plan-final.md").read_text()
         # Latest draft is "revised plan after round 1"
         assert "revised plan after round 1" in content
 
@@ -155,7 +156,7 @@ class TestExportReviewArtifactsFinalPlan:
 
         export_review_artifacts(sid, conn, output_dir=str(tmp_path), fast_mode=True)
 
-        for fname in ["a-01-plan.md", "a-02-review.md", "plan-final.md"]:
+        for fname in ["a-01-plan.md", "a-02-review.md", "a-05-plan-final.md"]:
             path = tmp_path / fname
             if path.exists():
                 content = path.read_text()

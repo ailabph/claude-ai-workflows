@@ -84,12 +84,21 @@ class ReviewerResponse:
         summary: Human-readable summary of the review.
         keep: Sections/aspects of the plan that should be preserved.
         trim: Sections/aspects that add unnecessary scope and should be cut.
+        reviewer_model: Model identifier used for the review (metadata).
+        cost: Estimated API cost in USD (metadata).
+        input_tokens: Input token count (metadata).
+        output_tokens: Output token count (metadata).
     """
     verdict: Verdict
     issues: list[ReviewIssue] = field(default_factory=list)
     summary: str = ""
     keep: list[str] = field(default_factory=list)
     trim: list[str] = field(default_factory=list)
+    # Optional metadata populated by the reviewer adapter.
+    reviewer_model: Optional[str] = None
+    cost: Optional[float] = None
+    input_tokens: Optional[int] = None
+    output_tokens: Optional[int] = None
 
     @property
     def critical_issues(self) -> list[ReviewIssue]:

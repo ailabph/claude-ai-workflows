@@ -205,9 +205,17 @@ def export_review_artifacts(
                 f.write(fast_header + drafts[round_num]["content"])
             paths.append(plan_path)
 
-    # Final plan (latest draft).
+    # Final plan (latest draft) — use interleaved numbering.
     if drafts:
-        final_path = os.path.join(output_dir, "plan-final.md")
+        # Artifact number: if reviews exist, final plan follows the last
+        # review's interleaved slot; otherwise it's the initial plan (01).
+        if reviews:
+            last_round = reviews[-1]["round_number"]
+            final_artifact_num = 2 * last_round + 1
+        else:
+            final_artifact_num = 1
+        final_filename = f"a-{final_artifact_num:02d}-plan-final.md"
+        final_path = os.path.join(output_dir, final_filename)
         with open(final_path, "w", encoding="utf-8") as f:
             f.write(fast_header + drafts[-1]["content"])
         paths.append(final_path)
@@ -309,6 +317,20 @@ def _format_review_export(review_row) -> str:
                     if target:
                         lines.append(f"**Section:** {target}")
                     lines.append("")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Extract keep/trim from raw_response (stores ReviewerResponse.to_json()).
+    raw_response = review_row["raw_response"]
+    if raw_response:
+        try:
+            raw_data = json.loads(raw_response)
+            keep_items = raw_data.get("keep", [])
+            trim_items = raw_data.get("trim", [])
+            if keep_items:
+                lines += ["## Keep", ""] + [f"- {k}" for k in keep_items] + [""]
+            if trim_items:
+                lines += ["## Trim", ""] + [f"- {t}" for t in trim_items] + [""]
         except (json.JSONDecodeError, TypeError):
             pass
 
