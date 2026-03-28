@@ -9,6 +9,14 @@ import sqlite3
 
 import click
 
+# Load .env from cwd (or parent dirs) so ANTHROPIC_API_KEY / OPENAI_API_KEY
+# are available without manual shell exports.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv is optional — env vars must be exported manually
+
 logger = logging.getLogger(__name__)
 
 from planner_auto.db import (
