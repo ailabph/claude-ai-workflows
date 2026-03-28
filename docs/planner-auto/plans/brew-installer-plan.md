@@ -11,11 +11,11 @@ From `planner-auto/pyproject.toml`:
 | Field | Value |
 |-------|-------|
 | Name | `planner-auto` |
-| Version | `0.1.0` (Plan 1 only) |
+| Version | `0.3.0` (Plan 1 + Plan 2 + Observability) |
 | Python requirement | `>=3.10` |
 | Entry point | `planner-auto = "planner_auto.cli:cli"` |
-| Core deps | `claude-agent-sdk>=0.1.50,<0.2.0`, `click>=8.0`, `prompt_toolkit>=3.0` |
-| Optional deps | None yet (Plan 2 will add `openai` for GPT reviewer) |
+| Core deps | `claude-agent-sdk>=0.1.50,<0.2.0`, `click>=8.0`, `prompt_toolkit>=3.0`, `openai>=2.0` |
+| Optional deps | None |
 
 ---
 

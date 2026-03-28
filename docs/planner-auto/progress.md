@@ -1,6 +1,6 @@
 # Planner-Auto Progress Tracker
 
-## Project Status: Plan 1 Implemented + Reviewed
+## Project Status: v0.3.0 — Plan 1 + Plan 2 + Observability Complete
 
 ---
 
@@ -104,6 +104,23 @@
 - Round 1: 5 issues (resume bug, disposition indexing, CLI config, metadata, export naming) → all fixed
 - Round 2: 3 issues (cost/raw_text incomplete, round lookup, fast headers) → all fixed
 
+### Observability & Debug (v0.3.0) — COMPLETE
+
+| Module | Status |
+|--------|--------|
+| `logging.py` | Rewritten — shared root logger + SessionFilter |
+| `inspect.py` | New — 6 DB inspection commands |
+| `cli.py` (check) | New — environment validation, --probe for API |
+| `loop/engine.py` (output tiers) | Updated — quiet/verbose/debug |
+| All modules (structured logging) | Updated — 49+ log calls at key decisions |
+| All commands (--verbose/--debug) | Updated — per-command flags + session logging |
+| **Tests** | **368 passing** (was 283) |
+
+**Review rounds:**
+- Round 1: 7 issues (probe signature, fresh DB, output tiers, add-context, tracebacks, dump JSON, claude_agent_sdk check) → all fixed
+- Round 2: 1 issue (duplicate CLI summary line violating quiet contract) → fixed
+- Round 3: 4 medium issues (add-context log, inspect --round flags, dump --output, status wiring) → fixed
+
 ---
 
 ## Key Documents
@@ -115,8 +132,14 @@
 | Research | `docs/plans/planner-auto-proposal-v1-research.md` | Kagi research findings |
 | Plan 1 plan | `docs/planner-auto/plans/plan-phase1.1.md` | Implementation plan (dogfooded) |
 | Plan 2 plan | `docs/planner-auto/plans/plan-phase2.1.md` | Implementation plan (manual, reviewed) |
+| Observability plan | `docs/planner-auto/plans/plan-observability.md` | Logging, inspect, check, output tiers |
+| Stress testing | `docs/planner-auto/plans/proposal-stress-testing.md` | 3-level testing strategy |
+| Brew installer | `docs/planner-auto/plans/brew-installer-plan.md` | Homebrew formula plan |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
 | POC 5b readme | `scripts/poc/planner-auto/poc_review_loop_e2e_readme.md` | 11 experiment analysis |
+| AGENTS.md | `planner-auto/AGENTS.md` | Developer context |
+| CHANGELOG.md | `planner-auto/CHANGELOG.md` | Version history |
+| Debugger agent | `claude/agents/planner-auto-debugger.md` | Debugging agent definition |
 
 ## Final v1 Configuration (Proven)
 

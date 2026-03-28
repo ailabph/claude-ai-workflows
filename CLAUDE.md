@@ -294,13 +294,26 @@ orchestrator start -f "Feature" --telegram
 
 | Directory | Purpose |
 |-----------|---------|
-| `orchestrator-auto/` | Primary Python CLI package (SQLite-backed orchestrator) |
+| `orchestrator-auto/` | Primary Python CLI package (SQLite-backed orchestrator for implementation) |
+| `planner-auto/` | Plan generation CLI with GPT review loop (feeds plans to orchestrator-auto) |
 | `workflows/` | Workflow documentation and templates (`CLAUDE_*.md`, `CLAUDE_*.py`) |
 | `docs/` | Generated plan documents and session artifacts |
 | `backend-system/` | Backend documentation templates (API patterns, auth, DB) |
 | `design-system/` | Frontend design documentation templates |
 | `claude/` | Portable Claude Code configuration (copy to `~/.claude`) |
 | `opencode/` | Claude Code read-only plugins |
+
+### planner-auto (`planner-auto/`)
+Automated plan generation with cross-model review (Claude planner + GPT reviewer). See `planner-auto/AGENTS.md` for developer context and `planner-auto/README.md` for CLI reference.
+
+```bash
+cd planner-auto/
+pip install -e ".[dev]"
+planner-auto start --project my-feature
+planner-auto review <session-id>           # Run GPT review loop
+planner-auto inspect reviews <session-id>  # Debug session state
+pytest tests/ -v                           # 368 tests
+```
 
 ### Claude Code Configuration (`claude/`)
 Install with `cp -r claude ~/.claude` or `ln -s $(pwd)/claude ~/.claude`:
