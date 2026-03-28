@@ -38,15 +38,16 @@ agents.py / engine.py
 ### Proposed (works alongside Claude Code)
 
 ```
-agents.py / engine.py
-    → sdk_wrapper.query_claude()       # returns str (UNCHANGED)
-        → backend = config["claude_backend"]
-        ├── "direct" (default):
-        │   → anthropic.AsyncAnthropic().messages.create()
-        │   → extract text → return str
-        └── "sdk" (opt-in):
-            → claude-agent-sdk.query()
-            → extract ResultMessage.result → return str
+CLI command (discuss, generate, review)
+    → reads session_config["claude_backend"] from DB
+    → passes backend= to agents.py / engine.py
+        → sdk_wrapper.query_claude(..., backend="direct")    # returns str
+            ├── "direct" (default):
+            │   → anthropic.AsyncAnthropic().messages.create()
+            │   → extract text → return str
+            └── "sdk" (opt-in):
+                → claude-agent-sdk.query()
+                → extract ResultMessage.result → return str
 ```
 
 ### Return Contract (unchanged)
@@ -60,12 +61,25 @@ async def query_claude(
     effort: str | None = None,
     thinking: bool = False,
     max_turns: int | None = None,
-    backend: str | None = None,      # NEW: "direct" or "sdk", defaults to module-level setting
+    backend: str | None = None,      # NEW: "direct" or "sdk", defaults to DEFAULT_BACKEND
 ) -> str:
-    """Returns response text. Callers do not change."""
+    """Returns response text. Return type unchanged."""
 ```
 
-The only addition is the optional `backend` parameter. All existing callers continue to work without modification.
+### Caller Wiring (small, explicit changes)
+
+`query_claude()` has no access to `conn` or session config. Callers must resolve the backend from session config and pass it explicitly. This follows the same pattern as `model`, `effort`, and `thinking` — all resolved by callers, passed as params.
+
+**Changes required in callers:**
+
+| File | Call site | Change |
+|------|-----------|--------|
+| `agents.py: discuss()` | `query_claude(messages, ...)` | Add `backend=backend` param (passed from CLI) |
+| `agents.py: synthesize_context()` | `query_claude(messages, ...)` | Add `backend=backend` param |
+| `agents.py: generate_plan()` | `query_claude(messages, ...)` | Add `backend=backend` param |
+| `loop/engine.py` | Revision calls via `query_claude()` | Add `backend=self.config.get("claude_backend", "direct")` |
+
+Each function gains a `backend: str = "direct"` parameter. CLI commands read `session_config["claude_backend"]` and pass it through. This is ~4 lines per call site — the same wiring pattern already used for `effort` and `thinking`.
 
 ---
 
@@ -79,23 +93,37 @@ Module-level default in `sdk_wrapper.py`:
 DEFAULT_BACKEND = "direct"  # Use Anthropic API directly (no subprocess)
 ```
 
-### Override hierarchy (highest wins)
+### Resolution (two levels, no ambiguity)
 
-1. **Per-call `backend=` param** — for specific calls that need a different backend
-2. **Session config `claude_backend`** — stored in `session_config.config_json["claude_backend"]`; set at session start
-3. **CLI flag `--claude-backend direct|sdk`** — on `start` command; persisted in session config
-4. **Module default `DEFAULT_BACKEND`** — `"direct"`
+1. **Per-call `backend=` param** — explicit at call site, highest priority
+2. **Module default `DEFAULT_BACKEND`** — fallback when `backend=None`
 
-### Which commands use it
+There is no wrapper-internal config lookup. The wrapper is stateless — it dispatches based on the `backend=` parameter it receives.
 
-| Command | Claude calls | Backend source |
-|---------|-------------|---------------|
-| `discuss` | `agents.discuss()` | Session config (set at `start`) |
-| `generate` | `agents.generate_plan()`, `agents.synthesize_context()` | Session config |
-| `review` | `loop/engine.py` revision calls | Session config |
-| `check --probe` | Test Claude call | Module default (no session) |
+### How CLI commands resolve the backend
 
-All go through `query_claude()`. Backend is resolved once per call from the hierarchy above.
+Each session-aware CLI command:
+1. Reads `session_config.config_json["claude_backend"]` from DB (set at `start`)
+2. Passes the value to agents/engine calls
+3. If no session config exists (e.g., `check --probe`), uses `DEFAULT_BACKEND`
+
+```python
+# In cli.py, each session-aware command:
+config = get_session_config(conn, session_id)
+claude_backend = json.loads(config["config_json"]).get("claude_backend", "direct")
+
+# Passed through to agents:
+response = asyncio.run(discuss(session_id, message, conn, backend=claude_backend))
+```
+
+### `--claude-backend` flag
+
+On `start` command only. Persisted in session config. Later commands (`discuss`, `generate`, `review`) read it from session config — no per-command flag needed.
+
+```bash
+planner-auto start --project my-feature --claude-backend sdk    # opt into SDK subprocess
+planner-auto start --project my-feature                         # default: direct
+```
 
 ### Session config persistence
 
@@ -208,12 +236,7 @@ except anthropic.BadRequestError as e:
 
 ## Changes to `check` Command
 
-Current `check` validates:
-- `claude` CLI on PATH ← only relevant for SDK backend
-- `claude_agent_sdk` importable ← only relevant for SDK backend
-- `openai` importable
-
-Updated `check` validates based on default backend:
+`check` validates **both backends** when their dependencies are installed. This ensures the user knows what's available regardless of which backend a specific session uses.
 
 ```
 planner-auto check
@@ -221,20 +244,39 @@ planner-auto check
   Environment:
     ANTHROPIC_API_KEY set: true
     OPENAI_API_KEY set: true
-  Claude backend: direct
-    anthropic package: true (v0.40.0)
+  Claude backends:
+    direct (anthropic): true (v0.40.0) ← default
+    sdk (claude-agent-sdk): true (v0.1.50), claude CLI: /opt/homebrew/bin/claude
   Reviewer:
-    openai package: true (v2.30.0)
+    openai: true (v2.30.0)
   Database:
     DB path writable: true
     Schema version: 2
+  Default backend: direct
 
   With --probe:
     Claude API (direct): OK (1.2s, 15 tokens)
     OpenAI API: OK (0.8s, 12 tokens)
 ```
 
-When backend is `sdk`, check also validates `claude` on PATH and `claude_agent_sdk` importable. When `direct`, those checks are skipped (not needed).
+With `--probe --claude-backend sdk`:
+```
+    Claude API (sdk subprocess): OK (3.4s, 15 tokens)
+    # or: RATE LIMITED (subprocess shares quota with active Claude Code sessions)
+```
+
+With `--session <id>`:
+```
+planner-auto check --session abc123
+  Session abc123 backend: direct
+  (validates the specific backend this session uses)
+```
+
+This covers:
+- Default check: validates both backends are installable
+- `--probe`: tests the default backend (direct) live
+- `--probe --claude-backend sdk`: tests the SDK backend live
+- `--session <id>`: validates the specific backend a session is configured to use
 
 ---
 
@@ -282,25 +324,27 @@ dependencies = [
 
 ## Test Changes
 
-- **No caller test changes** — `agents.py` and `loop/engine.py` tests mock `sdk_wrapper.query_claude()` which still returns `str`. Mocks continue to work.
-- **New `sdk_wrapper` tests** — test backend dispatch: `backend="direct"` routes to `_execute_direct`, `backend="sdk"` routes to `_execute_sdk`. Test retry logic shared for both. Test thinking fallback. ~8 new tests.
-- **Updated `check` tests** — validate correct checks for each backend mode.
+- **Caller tests mostly unchanged** — tests mock `sdk_wrapper.query_claude()` which still returns `str`. Existing mocks work. Tests that construct `agents.discuss()` or `generate_plan()` calls need to add `backend=` in the mock call signature (~4 test files, ~1 line each).
+- **New `sdk_wrapper` tests** — test backend dispatch: `backend="direct"` routes to `_execute_direct`, `backend="sdk"` routes to `_execute_sdk`. Test retry logic shared for both. Test thinking fallback. Test `backend=None` uses `DEFAULT_BACKEND`. ~10 new tests.
+- **Updated `check` tests** — validates both backends present, `--probe` tests default backend, `--session` validates session-specific backend.
+- **CLI tests** — verify `--claude-backend` flag persisted in session config, verify `discuss`/`generate`/`review` read it from config and pass through.
 
 ---
 
 ## Scope
 
 **In scope:**
-- Backend selection inside `sdk_wrapper.py` (direct default, sdk opt-in)
+- Backend dispatch inside `sdk_wrapper.py` (direct default, sdk opt-in)
 - `_execute_direct()` using `anthropic` package
 - Shared retry logic for both backends
 - Thinking fallback with explicit config
 - `--claude-backend` flag on `start` command, persisted in session config
-- `check` command updated for backend-aware validation
+- Small caller wiring: `agents.py` (3 functions) and `loop/engine.py` (1 call site) gain `backend=` param (~4 lines each)
+- CLI commands read session config and pass `claude_backend` to callers
+- `check` command validates both backends, `--probe` and `--session` options
 - `anthropic` added to `pyproject.toml`
 - Logging/observability for backend choice
 
 **Out of scope:**
 - Tool access via direct API (not needed — all calls are text-in/text-out)
 - Removing `claude-agent-sdk` dependency (kept for opt-in SDK backend)
-- Changes to `agents.py`, `loop/engine.py`, or any caller of `query_claude()` (no changes needed)
