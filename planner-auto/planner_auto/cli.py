@@ -9,7 +9,10 @@ import sqlite3
 
 import click
 
-# .env is loaded at package import time in __init__.py — no need to repeat here.
+from planner_auto import load_env
+
+# Load .env at CLI startup so API keys are available without manual shell exports.
+load_env()
 
 logger = logging.getLogger(__name__)
 
