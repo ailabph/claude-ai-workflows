@@ -295,10 +295,38 @@ Plan 2 extends this with reviewer settings:
 }
 ```
 
+## Known Issues
+
+### Claude Agent SDK + Opus + Thinking Mode + Large Prompts
+
+When using Opus with adaptive thinking on complex feature descriptions (200+ words), the Claude Agent SDK subprocess can produce empty results or crash. This was discovered during POC dogfooding — the same feature description that works with Sonnet (max_turns=1) or in a direct SDK call fails when the e2e loop script spawns it as a background task with multiple active Claude sessions.
+
+**Symptoms:**
+- `ResultMessage.result` is empty (0 chars) despite `is_error=False`
+- SDK subprocess exits with code 1: "Command failed with exit code 1"
+- Opus uses all available turns on tool calls (Read, Write) instead of generating text
+
+**Root cause:** The SDK spawns `claude` as a subprocess. Opus with thinking enabled is more aggressive about using tools (reading files, exploring the codebase) rather than generating text-only responses. With `max_turns=1`, it uses the single turn on a tool call and returns empty. With unlimited turns, it can spiral into extensive codebase exploration ($3.83 in one test) or crash when competing with other active Claude sessions for resources.
+
+**Current workarounds:**
+- `sdk_wrapper.py` defaults to unlimited turns when thinking is enabled (prevents the empty-result issue)
+- Revision calls pass effort/thinking/max_turns through config
+- For plan generation with very large feature descriptions, Sonnet at max_turns=1 is more reliable than Opus with thinking
+
+**What we want (goal):** planner-auto should reliably handle complex planning sessions with Opus + thinking — these produce the highest quality plans (POC experiments showed 4→1→1 issue reduction with Opus vs 6→8→7 oscillation with Sonnet). The ideal fix would be:
+
+1. **Text-only mode for plan generation** — a way to tell the SDK "thinking is OK, tool use is not" so Opus can reason deeply without reading files. `allowed_tools=[]` was attempted but crashes the SDK.
+2. **Chunked context injection** — instead of passing 200+ word feature descriptions in a single prompt, inject context files separately via the SDK's context mechanism so the prompt stays small.
+3. **Retry with fallback** — if Opus + thinking returns empty after N attempts, automatically fall back to Opus without thinking (effort=high, max_turns=1) which is still better than Sonnet.
+4. **Session isolation** — ensure SDK subprocess doesn't conflict with other active Claude sessions (may require `--session-id` isolation or a dedicated subprocess pool).
+
+This is a priority item for production readiness. The review loop itself works well — the bottleneck is reliable plan generation and revision with the strongest model configuration.
+
 ## Roadmap
 
 - [x] **Plan 1: Session Core** — CLI, DB, lifecycle, context, plan generation, export
 - [x] **Plan 2: Reviewer Adapter** — GPT review loop, convergence, .kafra handoff
+- [ ] **Opus + thinking reliability** — Fix SDK subprocess issues for complex planning sessions
 - [ ] **TUI mode** — Rich terminal UI (like orchestrator-auto's TUI)
 - [ ] **Telegram notifications** — Notify on plan approval or blocker
 - [ ] **Homebrew formula** — `brew install planner-auto`
