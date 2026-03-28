@@ -701,7 +701,7 @@ def review(
     else:
         # cap_with_criticals: pause with a blocker listing remaining criticals.
         blocker_q = "Review cap reached with critical issues remaining."
-        final_review = get_review_by_round(conn, session_id, result.rounds)
+        final_review = get_review_by_round(conn, session_id, result.final_round_number)
         if final_review and final_review["issues_json"]:
             try:
                 issues = json.loads(final_review["issues_json"])

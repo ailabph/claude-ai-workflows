@@ -227,6 +227,9 @@ class DirectAPIAdapter(ReviewerContract):
         reviewer_response.reviewer_model = self.model
         reviewer_response.input_tokens = input_tokens
         reviewer_response.output_tokens = output_tokens
+        reviewer_response.raw_text = raw_text
+        # Approximate GPT-5.4 pricing: $2/1M input, $8/1M output.
+        reviewer_response.cost = (input_tokens * 2.0 + output_tokens * 8.0) / 1_000_000
 
         logger.info(
             "Reviewer call: model=%s, elapsed=%.2fs, tokens=%d+%d, "

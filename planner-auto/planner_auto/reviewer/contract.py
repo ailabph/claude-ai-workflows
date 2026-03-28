@@ -88,6 +88,7 @@ class ReviewerResponse:
         cost: Estimated API cost in USD (metadata).
         input_tokens: Input token count (metadata).
         output_tokens: Output token count (metadata).
+        raw_text: The literal text returned by the reviewer API before parsing.
     """
     verdict: Verdict
     issues: list[ReviewIssue] = field(default_factory=list)
@@ -99,6 +100,7 @@ class ReviewerResponse:
     cost: Optional[float] = None
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    raw_text: str = ""
 
     @property
     def critical_issues(self) -> list[ReviewIssue]:

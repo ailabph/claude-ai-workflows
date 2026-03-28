@@ -72,6 +72,7 @@ def _converged_result() -> LoopResult:
             {"round": 2, "verdict": "GO", "issue_count": 0},
         ],
         stop_reason="go",
+        final_round_number=2,
     )
 
 
@@ -87,6 +88,7 @@ def _cap_criticals_result() -> LoopResult:
             {"round": 2, "verdict": "NO_GO", "issue_count": 1},
         ],
         stop_reason="cap_with_criticals",
+        final_round_number=2,
     )
 
 

@@ -82,6 +82,8 @@ class LoopResult:
             ``verdict``, ``issue_count``, ``review_id``.
         stop_reason: One of ``"go"``, ``"cap_no_criticals"``,
             ``"cap_with_criticals"``.
+        final_round_number: The absolute round number of the last review
+            executed (accounts for resumed sessions).
     """
     converged: bool
     rounds: int
@@ -90,6 +92,7 @@ class LoopResult:
     total_cost: float
     round_details: list = field(default_factory=list)
     stop_reason: str = "cap_with_criticals"
+    final_round_number: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -205,13 +208,17 @@ class ReviewLoopEngine:
                 verdict=review_response.verdict.value,
                 issues_json=issues_json,
                 summary=review_response.summary,
-                raw_response=review_response.to_json(),
+                raw_response=review_response.raw_text or review_response.to_json(),
                 reviewer_model=getattr(review_response, "reviewer_model", None),
                 cost=getattr(review_response, "cost", None),
                 input_tokens=getattr(review_response, "input_tokens", None),
                 output_tokens=getattr(review_response, "output_tokens", None),
             )
             self.conn.commit()
+
+            # Accumulate review cost.
+            review_cost = getattr(review_response, "cost", None) or 0.0
+            total_cost += review_cost
 
             # --- Step 4: export review artifact ----------------------------
             self._write_review_artifact(round_num, review_response)
@@ -299,6 +306,8 @@ class ReviewLoopEngine:
             round_detail["draft_number"] = new_draft_number
             round_details.append(round_detail)
 
+        final_round_num = round_details[-1]["round"] if round_details else 0
+
         return LoopResult(
             converged=(stop_reason in ("go", "cap_no_criticals")),
             rounds=len(round_details),
@@ -307,6 +316,7 @@ class ReviewLoopEngine:
             total_cost=total_cost,
             round_details=round_details,
             stop_reason=stop_reason,
+            final_round_number=final_round_num,
         )
 
     # ------------------------------------------------------------------
@@ -325,6 +335,12 @@ class ReviewLoopEngine:
             return str(output_dir)
         return os.path.join(DEFAULT_SESSIONS_DIR, self.session_id)
 
+    def _fast_mode_header(self) -> str:
+        """Return the fast mode HTML comment prefix if fast mode is active."""
+        if self.config.get("fast_mode", False):
+            return "<!-- [FAST MODE] -->\n"
+        return ""
+
     def _write_review_artifact(self, round_num: int, review: ReviewerResponse) -> None:
         """Write ``a-{2*round_num:02d}-review.md`` to the output directory."""
         out_dir = self._output_dir()
@@ -335,7 +351,7 @@ class ReviewLoopEngine:
             filename = f"a-{2 * round_num:02d}-review.md"
             path = os.path.join(out_dir, filename)
             with open(path, "w", encoding="utf-8") as f:
-                f.write(_format_review_artifact(round_num, review))
+                f.write(self._fast_mode_header() + _format_review_artifact(round_num, review))
             logger.debug("Wrote review artifact: %s", path)
         except OSError as exc:
             logger.warning("Failed to write review artifact: %s", exc)
@@ -350,7 +366,7 @@ class ReviewLoopEngine:
             filename = f"a-{2 * round_num + 1:02d}-plan.md"
             path = os.path.join(out_dir, filename)
             with open(path, "w", encoding="utf-8") as f:
-                f.write(plan_text)
+                f.write(self._fast_mode_header() + plan_text)
             logger.debug("Wrote plan artifact: %s", path)
         except OSError as exc:
             logger.warning("Failed to write plan artifact: %s", exc)
