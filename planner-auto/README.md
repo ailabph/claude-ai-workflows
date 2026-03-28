@@ -65,7 +65,7 @@ planner-auto complete <session-id>
 
 ## CLI Reference
 
-### Implemented (Plan 1)
+### Session Commands (Plan 1)
 
 | Command | Description |
 |---------|-------------|
@@ -93,32 +93,40 @@ planner-auto complete <session-id>
 | `--verbose` | Print detailed output |
 | `--debug` | Print debug-level output + stack traces |
 
-### Coming in Plan 2 (Reviewer Adapter)
+### Review Commands (Plan 2)
 
 | Command | Description |
 |---------|-------------|
 | `review <id>` | Run automated GPT review loop on current plan |
-| `review <id> --fast` | Fast mode: skip history, cap at 4 rounds |
-| `review <id> --max-rounds <n>` | Set round cap (default: 8 standard, 12 complex) |
+| `review <id> --fast` | Fast mode: 4 rounds, no history, basic prompt |
+| `review <id> --max-rounds <n>` | Override round cap |
 | `review <id> --no-review-history` | Disable review history context |
+| `review <id> --reviewer-model <model>` | Override GPT model (default: gpt-5.4) |
+| `review <id> --reviewer-reasoning <level>` | Reasoning effort (default: high) |
+| `review <id> --complexity standard\|complex` | Override complexity detection |
+| `review <id> --repo-root <path>` | Override repo root for .kafra handoff |
 
-**Review loop features (Plan 2):**
+**Review loop features:**
 - GPT-5.4 reviews with `resolution_guidance` + `target_section` per issue
 - `keep/trim` sections: GPT tells Claude what to preserve and what to simplify
 - `validate feedback`: Claude assesses each issue as ACCEPT / DEFER / REJECT
 - Severity filtering: only `critical` + `major` issues reach Claude
-- Review history: GPT sees previous plan + previous review per round
-- Complexity detection: auto-adjusts round cap based on feature keywords
-- Convergence: GPT GO or zero-critical threshold
+- Review history: GPT sees previous plan + cumulative DEFER decisions across all rounds
+- Complexity detection: auto-adjusts round cap (standard=8, complex=12)
+- Convergence: GPT GO, or cap with zero criticals = accepted
+- Cap with criticals = session paused for human review
 - Final plan copied to `<repo>/.kafra/a-01-plans/`
+- Review metadata persisted: model, cost, tokens, raw response per round
 
 ## Session Lifecycle
 
 ```
 SETUP ──► CONTEXT ──► DISCUSSION ──► PLANNING ──► REVIEW ──► COMPLETE
-                                        │                      ▲
-                                        └──────────────────────┘
-                                        (Plan 1: direct path)
+                                        │            │          ▲
+                                        │            └──────────┘
+                                        │            (revise & re-review)
+                                        └───────────────────────┘
+                                        (skip review — direct complete)
 
 Any phase can transition to PAUSED via blockers.
 PAUSED only allows: resume, status, export.
@@ -129,8 +137,8 @@ PAUSED only allows: resume, status, export.
 | SETUP | Session created, config saved | start, add-context, status, export |
 | CONTEXT | Files and notes loaded | add-context, status, export |
 | DISCUSSION | User describes feature, Claude asks questions | discuss, status, export |
-| PLANNING | Context synthesized, plan generated | generate, complete, status, export |
-| REVIEW | GPT review loop (Plan 2) | review, complete, status, export |
+| PLANNING | Context synthesized, plan generated | generate, review, complete, status, export |
+| REVIEW | GPT review loop running | review, complete, status, export |
 | COMPLETE | Session finished, artifacts exported | status, export |
 
 ## Database Schema
@@ -194,16 +202,27 @@ With Plan 2 (reviewer), additional files:
 ```
 planner_auto/
 ├── cli.py              # Click CLI — all user-facing commands
-├── db.py               # SQLite schema, CRUD, transaction()
+├── db.py               # SQLite schema (v2), CRUD, transaction(), schema migration
 ├── session.py          # SessionManager — phase transitions, pause/resume
 ├── state.py            # Phase/Status enums, transition rules, command permissions
 ├── agents.py           # discuss(), synthesize_context(), generate_plan()
-├── sdk_wrapper.py      # Claude Agent SDK wrapper — retry, timeout, error handling
+├── sdk_wrapper.py      # Claude Agent SDK wrapper — retry, timeout, effort/thinking
 ├── prompts.py          # System prompts with version hashing
-├── export.py           # Artifact file generation from DB
+├── export.py           # Artifact export — plans, reviews, .kafra handoff
 ├── validation.py       # Plan format validation (milestone headers, checkboxes)
-├── errors.py           # Custom exceptions (SDKError, SessionStateError, etc.)
-└── logging.py          # Session-scoped log file setup
+├── errors.py           # Custom exceptions (SDK, reviewer, session errors)
+├── git_utils.py        # Repo root discovery (git rev-parse + --repo-root)
+├── logging.py          # Session-scoped log file setup
+├── reviewer/
+│   ├── contract.py     # ReviewerContract ABC, ReviewerResponse, ReviewIssue
+│   ├── direct_api.py   # DirectAPIAdapter — GPT-5.4 via OpenAI SDK
+│   ├── parser.py       # Response parser (JSON/XML/free-form fallback)
+│   └── prompts.py      # Reviewer system prompts (basic, guidance, keep_trim)
+└── loop/
+    ├── engine.py       # ReviewLoopEngine — review → revise → repeat
+    ├── feedback.py     # Validate feedback (ACCEPT/DEFER/REJECT per issue)
+    ├── history.py      # Review context builder (cumulative deferred)
+    └── convergence.py  # Complexity detection, caps, fast mode
 ```
 
 ### Key Design Decisions
@@ -213,7 +232,7 @@ planner_auto/
 | SQLite as canonical state | Files drift from tool state. DB is authoritative, files are exports. |
 | Callers manage commits | Enables atomic multi-operation transactions without CRUD-level coupling. |
 | Phase-gated commands | Prevents out-of-order operations (e.g., generate before discuss). |
-| PLANNING→COMPLETE direct path | Plan 1 skips REVIEW. Plan 2 adds the review loop. |
+| PLANNING→COMPLETE or PLANNING→REVIEW→COMPLETE | Direct complete skips review; `review` command runs the GPT loop. |
 | `asyncio.wait_for` on SDK calls | Prevents hung SDK subprocess from blocking forever. |
 | Prompt version hashing | Config snapshot per session enables reproducibility and regression detection. |
 
@@ -239,7 +258,7 @@ pytest tests/test_db.py -v                 # Single file
 pytest tests/test_session.py::TestCheckCommand -v  # Single class
 pytest -k "complete" -v                    # Filter by name
 
-# Current test count: 103 passing
+# Current test count: 283 passing
 ```
 
 ## Config Versioning
@@ -257,11 +276,29 @@ Every session captures its configuration at creation time in `session_config`:
 }
 ```
 
-Plan 2 will extend this with: reviewer model, effort levels, thinking config, feature flags (history, keep/trim, validate feedback, severity filter).
+Plan 2 extends this with reviewer settings:
+
+```json
+{
+  "project": "my-api",
+  "model_default": "claude-opus-4-6",
+  "repo_root": "/Users/me/my-api",
+  "reviewer_model": "gpt-5.4",
+  "reasoning_effort": "high",
+  "prompt_mode": "keep_trim",
+  "review_history": true,
+  "validate_feedback": true,
+  "filter_severity": ["critical", "major"],
+  "fast_mode": false,
+  "complexity": "standard",
+  "max_rounds": 8
+}
+```
 
 ## Roadmap
 
 - [x] **Plan 1: Session Core** — CLI, DB, lifecycle, context, plan generation, export
-- [ ] **Plan 2: Reviewer Adapter** — GPT review loop, convergence, .kafra handoff
+- [x] **Plan 2: Reviewer Adapter** — GPT review loop, convergence, .kafra handoff
 - [ ] **TUI mode** — Rich terminal UI (like orchestrator-auto's TUI)
 - [ ] **Telegram notifications** — Notify on plan approval or blocker
+- [ ] **Homebrew formula** — `brew install planner-auto`

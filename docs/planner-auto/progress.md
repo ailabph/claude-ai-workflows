@@ -82,11 +82,27 @@
 | `state.py` | 49 | Implemented + reviewed (PLANNING→COMPLETE) |
 | **Tests** | **1,616** | **103 passing** |
 
-### Plan 2: Reviewer Adapter — NOT STARTED
+### Plan 2: Reviewer Adapter — COMPLETE
 
-Scope: GPT reviewer integration, review-fix loop, review history, feedback validation, keep/trim, convergence logic, severity filtering, complexity detection, fast mode, .kafra handoff.
+| Module | Lines | Status |
+|--------|-------|--------|
+| `reviewer/contract.py` | 163 | Implemented + reviewed (ReviewerContract, ReviewerResponse, ReviewIssue) |
+| `reviewer/parser.py` | 372 | Implemented + reviewed (JSON/XML/free-form fallback) |
+| `reviewer/prompts.py` | 171 | Implemented (3 prompt variants: basic, guidance, keep_trim) |
+| `reviewer/direct_api.py` | 237 | Implemented + reviewed (GPT-5.4, retry, cost tracking, raw_text) |
+| `loop/engine.py` | 425 | Implemented + reviewed (round resume, total_cost, metadata) |
+| `loop/feedback.py` | 217 | Implemented + reviewed (ACCEPT/DEFER/REJECT, full-list indexing) |
+| `loop/history.py` | 196 | Implemented (cumulative deferred context across all rounds) |
+| `loop/convergence.py` | 126 | Implemented (complexity detection, caps, fast mode) |
+| `git_utils.py` | 50 | Implemented (repo root discovery + --repo-root override) |
+| `export.py` (extended) | 193 | Implemented + reviewed (a-NN artifacts, keep/trim, fast headers) |
+| `db.py` (extended) | 303 | Implemented + reviewed (schema v2 migration, dispositions) |
+| `cli.py` (extended) | 243 | Implemented + reviewed (review command, fast/config wiring) |
+| **Tests** | **3,200+** | **283 passing** |
 
-All mechanisms proven in POC 5b experiments. Implementation plan not yet generated.
+**Review rounds:**
+- Round 1: 5 issues (resume bug, disposition indexing, CLI config, metadata, export naming) → all fixed
+- Round 2: 3 issues (cost/raw_text incomplete, round lookup, fast headers) → all fixed
 
 ---
 
@@ -98,6 +114,7 @@ All mechanisms proven in POC 5b experiments. Implementation plan not yet generat
 | v1.1 proposal | `docs/plans/planner-auto-proposal-v1.1.md` | Final architecture + convergence strategy |
 | Research | `docs/plans/planner-auto-proposal-v1-research.md` | Kagi research findings |
 | Plan 1 plan | `docs/planner-auto/plans/plan-phase1.1.md` | Implementation plan (dogfooded) |
+| Plan 2 plan | `docs/planner-auto/plans/plan-phase2.1.md` | Implementation plan (manual, reviewed) |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
 | POC 5b readme | `scripts/poc/planner-auto/poc_review_loop_e2e_readme.md` | 11 experiment analysis |
 
