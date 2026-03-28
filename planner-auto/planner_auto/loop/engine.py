@@ -345,6 +345,7 @@ class ReviewLoopEngine:
                 effort=self.config.get("effort"),
                 thinking=self.config.get("thinking", False),
                 max_turns=self.config.get("max_turns"),
+                backend=self.config.get("claude_backend", "direct"),
             )
             revision_latency_ms = int((time.monotonic() - _revision_t0) * 1000)
 

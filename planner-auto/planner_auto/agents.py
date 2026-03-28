@@ -49,6 +49,7 @@ async def discuss(
     session_id: str,
     user_input: str,
     conn: sqlite3.Connection,
+    backend: str = "direct",
 ) -> str:
     """Send a discussion message and get Claude's response.
 
@@ -86,6 +87,7 @@ async def discuss(
         messages=messages,
         system_prompt=DISCUSSION_SYSTEM_PROMPT,
         model=DEFAULT_MODEL,
+        backend=backend,
     )
     _duration_ms = int((time.monotonic() - _discuss_t0) * 1000)
     logger.info("Claude responded, %d chars, %dms", len(response), _duration_ms)
@@ -101,6 +103,7 @@ async def discuss(
 async def synthesize_context(
     session_id: str,
     conn: sqlite3.Connection,
+    backend: str = "direct",
 ) -> str:
     """Synthesize context entries and messages into a summary.
 
@@ -148,6 +151,7 @@ async def synthesize_context(
         messages=synthesis_messages,
         system_prompt=SYNTHESIS_SYSTEM_PROMPT,
         model=SYNTHESIS_MODEL,
+        backend=backend,
     )
     logger.info("Context synthesized, %d words", len(synthesis.split()))
 
@@ -164,6 +168,7 @@ async def generate_plan(
     session_id: str,
     conn: sqlite3.Connection,
     model: str = DEFAULT_MODEL,
+    backend: str = "direct",
 ) -> str:
     """Generate an implementation plan via context synthesis + planning.
 
@@ -184,7 +189,7 @@ async def generate_plan(
         SDKError subclasses: On SDK failures.
     """
     # Step 1: Synthesize context
-    synthesis = await synthesize_context(session_id, conn)
+    synthesis = await synthesize_context(session_id, conn, backend=backend)
 
     # Step 2: Get first user message for feature description
     messages = get_messages(conn, session_id)
@@ -210,6 +215,7 @@ async def generate_plan(
         messages=plan_messages,
         system_prompt=PLANNER_SYSTEM_PROMPT,
         model=model,
+        backend=backend,
     )
     _duration_ms = int((time.monotonic() - _t0) * 1000)
     logger.info("Claude responded, %d chars, %dms", len(plan_content), _duration_ms)

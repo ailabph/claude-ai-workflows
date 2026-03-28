@@ -38,6 +38,7 @@ from planner_auto.errors import (
 )
 from planner_auto.export import export_review_artifacts, kafra_handoff
 from planner_auto.git_utils import discover_repo_root
+from planner_auto.sdk_wrapper import resolve_default_backend
 from planner_auto.inspect import (
     dump_session_json,
     format_config,
@@ -63,6 +64,20 @@ def _get_conn(ctx: click.Context) -> sqlite3.Connection:
     return ctx.obj["conn"]
 
 
+def _resolve_session_backend(conn: sqlite3.Connection, session_id: str) -> str:
+    """Read claude_backend from session config, falling back to auto-detect."""
+    cfg_row = get_session_config(conn, session_id)
+    if cfg_row:
+        try:
+            cfg = json.loads(cfg_row["config_json"])
+            backend = cfg.get("claude_backend")
+            if backend in ("direct", "sdk"):
+                return backend
+        except (json.JSONDecodeError, TypeError):
+            pass
+    return resolve_default_backend()
+
+
 @click.group()
 @click.option("--db-path", default=None, envvar="PLANNER_AUTO_DB", help="Custom DB path.")
 @click.pass_context
@@ -82,8 +97,15 @@ def cli(ctx, db_path):
     default=None,
     help="Override repository root path (auto-detected from cwd if not provided).",
 )
+@click.option(
+    "--claude-backend",
+    "claude_backend",
+    default=None,
+    type=click.Choice(["direct", "sdk"]),
+    help="Claude backend: 'direct' (Anthropic API) or 'sdk' (CLI subprocess). Auto-detected from auth if not set.",
+)
 @click.pass_context
-def start(ctx, project, verbose, debug, repo_root):
+def start(ctx, project, verbose, debug, repo_root, claude_backend):
     """Start a new planning session."""
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
@@ -96,24 +118,38 @@ def start(ctx, project, verbose, debug, repo_root):
     else:
         resolved_repo_root = discover_repo_root()
 
+    # Resolve Claude backend: explicit flag > auth-based auto-detect.
+    if claude_backend is None:
+        claude_backend = resolve_default_backend()
+    else:
+        # Warn if user forces direct with only OAuth
+        if claude_backend == "direct" and not os.environ.get("ANTHROPIC_API_KEY") and os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+            click.echo(
+                "Warning: direct backend selected but only OAuth token found. "
+                "Direct API requires ANTHROPIC_API_KEY.",
+                err=True,
+            )
+
     # Save initial config snapshot (includes repo_root for .kafra handoff)
     config = {
         "project": project,
         "model_default": "claude-sonnet-4-6",
         "repo_root": resolved_repo_root,
+        "claude_backend": claude_backend,
     }
     save_session_config(conn, session_id, json.dumps(config))
     conn.commit()
 
     # Set up session logger (creates log file)
     setup_session_logging(session_id, verbose=verbose, debug=debug)
-    logger.info("Command invoked: start, session_id=%s, project=%s, verbose=%s, debug=%s",
-                session_id, project, verbose, debug)
+    logger.info("Command invoked: start, session_id=%s, project=%s, claude_backend=%s, verbose=%s, debug=%s",
+                session_id, project, claude_backend, verbose, debug)
 
     click.echo(f"Session created: {session_id}")
     click.echo(f"Project: {project}")
     click.echo(f"Phase: SETUP")
     click.echo(f"Status: ACTIVE")
+    click.echo(f"Claude backend: {claude_backend}")
     if resolved_repo_root:
         click.echo(f"Repo root: {resolved_repo_root}")
 
@@ -379,10 +415,12 @@ def discuss(ctx, session_id, message, interactive, done, verbose, debug):
         sm.advance_phase(session_id, Phase.DISCUSSION.value)
         click.echo("Phase advanced to DISCUSSION.")
 
+    claude_backend = _resolve_session_backend(conn, session_id)
+
     if interactive:
-        _discuss_interactive(ctx, conn, sm, session_id)
+        _discuss_interactive(ctx, conn, sm, session_id, claude_backend)
     elif message:
-        success = _discuss_single(ctx, conn, session_id, message, discuss_fn)
+        success = _discuss_single(ctx, conn, session_id, message, discuss_fn, claude_backend)
         if done and success:
             try:
                 sm.advance_phase(session_id, Phase.PLANNING.value)
@@ -396,10 +434,10 @@ def discuss(ctx, session_id, message, interactive, done, verbose, debug):
         ctx.exit(1)
 
 
-def _discuss_single(ctx, conn, session_id, message, discuss_fn):
+def _discuss_single(ctx, conn, session_id, message, discuss_fn, claude_backend="direct"):
     """Send a single discussion message. Returns True on success, False on failure."""
     try:
-        response = asyncio.run(discuss_fn(session_id, message, conn))
+        response = asyncio.run(discuss_fn(session_id, message, conn, backend=claude_backend))
         click.echo(f"\nAssistant: {response}")
         return True
     except SDKError as e:
@@ -415,7 +453,7 @@ def _discuss_single(ctx, conn, session_id, message, discuss_fn):
             click.echo(traceback.format_exc(), err=True)
 
 
-def _discuss_interactive(ctx, conn, sm, session_id):
+def _discuss_interactive(ctx, conn, sm, session_id, claude_backend="direct"):
     """Enter interactive discussion mode with prompt_toolkit."""
     from planner_auto.agents import discuss as discuss_fn
 
@@ -451,7 +489,7 @@ def _discuss_interactive(ctx, conn, sm, session_id):
             continue
 
         try:
-            response = asyncio.run(discuss_fn(session_id, user_input, conn))
+            response = asyncio.run(discuss_fn(session_id, user_input, conn, backend=claude_backend))
             click.echo(f"\nAssistant: {response}\n")
         except SDKError as e:
             click.echo(f"SDK Error: {e}", err=True)
@@ -500,8 +538,9 @@ def generate(ctx, session_id, model, verbose, debug):
         ctx.exit(1)
         return
 
+    claude_backend = _resolve_session_backend(conn, session_id)
     try:
-        plan = asyncio.run(generate_plan(session_id, conn, model=model))
+        plan = asyncio.run(generate_plan(session_id, conn, model=model, backend=claude_backend))
         click.echo("\n" + plan)
 
         # Validate format and print warnings
@@ -748,6 +787,8 @@ def review(
     else:
         verbosity = "quiet"
 
+    claude_backend = _resolve_session_backend(conn, session_id)
+
     engine_config: dict = {
         "validate_feedback": validate_fb,
         "filter_severity": ["critical", "major"],
@@ -756,6 +797,7 @@ def review(
         "thinking": True,         # POC-proven default for planner revision calls
         "max_turns": 0,           # unlimited for thinking mode
         "verbosity": verbosity,
+        "claude_backend": claude_backend,
     }
 
     engine = ReviewLoopEngine(
@@ -933,14 +975,24 @@ def inspect_dump(ctx, session_id, output_path):
 @cli.command("check")
 @click.option("--probe", is_flag=True, default=False,
               help="Send trivial live API calls to verify connectivity and measure latency.")
+@click.option(
+    "--claude-backend",
+    "probe_backend",
+    default=None,
+    type=click.Choice(["direct", "sdk"]),
+    help="With --probe, test a specific backend instead of the default.",
+)
+@click.option("--session", "session_id", default=None,
+              help="Validate the backend configured for a specific session.")
 @click.pass_context
-def check(ctx, probe):
+def check(ctx, probe, probe_backend, session_id):
     """Validate the planner-auto environment.
 
     Default (safe): checks env vars, CLI tools on PATH, importable packages,
-    DB writability, and schema version — no live API calls.
+    DB writability, and schema version -- no live API calls.
 
     With --probe: sends a trivial prompt to each API and reports latency.
+    With --session: validates the backend configured for a specific session.
     """
     import importlib
     import time
@@ -965,13 +1017,38 @@ def check(ctx, probe):
         "set" if openai_key else "not set",
     ))
 
+    # ---- Default backend ---------------------------------------------------
+    default_backend = resolve_default_backend()
+    if anthropic_key:
+        backend_reason = "ANTHROPIC_API_KEY"
+    elif oauth_token:
+        backend_reason = "OAuth requires CLI subprocess"
+    else:
+        backend_reason = "no credentials (will fail at call time)"
+    results.append(("Default backend", True, f"{default_backend} (based on {backend_reason})"))
+
+    # ---- Session backend (optional) ----------------------------------------
+    if session_id:
+        conn = _get_conn(ctx)
+        session_backend = _resolve_session_backend(conn, session_id)
+        results.append(("Session backend", True, f"{session_backend} (session {session_id})"))
+
     # ---- PATH checks -------------------------------------------------------
     claude_path = shutil.which("claude")
-    results.append((
-        "claude on PATH",
-        claude_path is not None,
-        claude_path or "not found",
-    ))
+    # claude on PATH is only required if default backend is sdk
+    claude_required = default_backend == "sdk"
+    if claude_required:
+        results.append((
+            "claude on PATH",
+            claude_path is not None,
+            claude_path or "not found (required for sdk backend)",
+        ))
+    else:
+        results.append((
+            "claude on PATH",
+            True,  # informational only when direct is default
+            claude_path or "not found (optional, sdk backend only)",
+        ))
 
     # ---- Import checks -----------------------------------------------------
     openai_importable = importlib.util.find_spec("openai") is not None
@@ -981,12 +1058,35 @@ def check(ctx, probe):
         "yes" if openai_importable else "not installed (pip install openai)",
     ))
 
+    # anthropic package check
+    try:
+        import anthropic as _anth
+        _anth_ver = getattr(_anth, "__version__", "unknown")
+        anthropic_importable = True
+        # Fail only if direct is the default backend
+        results.append(("anthropic importable", True, f"v{_anth_ver}"))
+    except ImportError:
+        anthropic_importable = False
+        is_required = default_backend == "direct"
+        results.append((
+            "anthropic importable",
+            not is_required,  # fail if direct is default, info-only otherwise
+            "not installed (required for direct backend)" if is_required
+            else "not installed (optional, direct backend only)",
+        ))
+
     try:
         import claude_agent_sdk as _cas
         _cas_ver = getattr(_cas, "__version__", "unknown")
         results.append(("claude_agent_sdk importable", True, f"v{_cas_ver}"))
     except ImportError:
-        results.append(("claude_agent_sdk importable", False, "not installed"))
+        is_required = default_backend == "sdk"
+        results.append((
+            "claude_agent_sdk importable",
+            not is_required,
+            "not installed (required for sdk backend)" if is_required
+            else "not installed (optional, sdk backend only)",
+        ))
 
     # ---- DB path writable --------------------------------------------------
     db_path = ctx.obj.get("db_path") or DEFAULT_DB_PATH
@@ -1023,7 +1123,8 @@ def check(ctx, probe):
 
     # ---- Live probe (optional) ---------------------------------------------
     if probe:
-        # Claude probe via SDK wrapper
+        probe_target = probe_backend or default_backend
+        # Claude probe via the specified backend
         try:
             import asyncio as _asyncio
             from planner_auto.sdk_wrapper import query_claude
@@ -1035,13 +1136,14 @@ def check(ctx, probe):
                     system_prompt="Respond with OK.",
                     model="claude-haiku-4-5-20251001",
                     timeout_sec=15,
+                    backend=probe_target,
                 )
 
             _asyncio.run(_probe_claude())
             _ms = int((time.monotonic() - _t0) * 1000)
-            results.append(("Claude API probe", True, f"{_ms}ms"))
+            results.append((f"Claude API probe ({probe_target})", True, f"{_ms}ms"))
         except Exception as exc:
-            results.append(("Claude API probe", False, str(exc)[:80]))
+            results.append((f"Claude API probe ({probe_target})", False, str(exc)[:80]))
 
         # OpenAI probe
         if openai_importable and openai_key:

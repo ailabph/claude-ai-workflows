@@ -1,19 +1,31 @@
 """
-SDK wrapper for Claude Agent SDK with robust error handling.
+SDK wrapper for Claude with dual-backend support.
 
-Wraps claude_agent_sdk.query() with:
+Supports two backends:
+- "direct": Calls the Anthropic API directly via the `anthropic` package.
+  Default when ANTHROPIC_API_KEY is set. Works alongside active Claude Code sessions.
+- "sdk": Calls via `claude-agent-sdk` subprocess. Required for OAuth-only auth.
+  Shares rate-limit quota with active Claude Code sessions.
+
+Both backends are wrapped with:
 - Authentication error mapping
 - Rate-limit retries with exponential backoff
 - Timeout/connection retries
 - Empty/malformed response detection
 - Logging of model, token count, and latency
+
+Backend selection: callers pass ``backend=`` explicitly (resolved from session
+config). When ``backend=None``, ``resolve_default_backend()`` determines the
+default based on available credentials.
 """
 
 import asyncio
 import logging
+import os
 import time
 from typing import Optional
 
+import anthropic
 import claude_agent_sdk
 
 from planner_auto.errors import (
@@ -26,6 +38,46 @@ from planner_auto.errors import (
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Effort-to-thinking mapping for direct backend
+# ---------------------------------------------------------------------------
+
+_EFFORT_THINKING_MAP: dict[str | None, dict] = {
+    None:     {"thinking": False, "max_tokens": 16384},
+    "low":    {"thinking": False, "max_tokens": 8192},
+    "medium": {"thinking": True,  "budget_tokens": 10000, "max_tokens": 16384},
+    "high":   {"thinking": True,  "budget_tokens": 20000, "max_tokens": 16384},
+    "max":    {"thinking": True,  "budget_tokens": 50000, "max_tokens": 32768},
+}
+
+
+# ---------------------------------------------------------------------------
+# Backend resolution
+# ---------------------------------------------------------------------------
+
+def resolve_default_backend() -> str:
+    """Determine default backend based on available auth credentials.
+
+    Returns:
+        "direct" if ANTHROPIC_API_KEY is set (preferred — no subprocess quota conflict).
+        "sdk" if only CLAUDE_CODE_OAUTH_TOKEN is set (OAuth requires CLI subprocess).
+        "direct" if neither is set (will fail at call time with clear auth error).
+    """
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+
+    if has_api_key:
+        return "direct"
+    elif has_oauth:
+        return "sdk"
+    else:
+        return "direct"
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 async def query_claude(
     messages: list[dict],
     system_prompt: str,
@@ -34,25 +86,21 @@ async def query_claude(
     effort: Optional[str] = None,
     thinking: bool = False,
     max_turns: Optional[int] = None,
+    backend: Optional[str] = None,
 ) -> str:
-    """Query Claude via the Agent SDK with retry logic and error handling.
+    """Query Claude with retry logic and error handling.
 
     Args:
         messages: List of message dicts with 'role' and 'content' keys.
-            Used to build the prompt for the SDK.
         system_prompt: System prompt to set agent behavior.
         model: Model identifier (e.g. 'claude-sonnet-4-6').
-        timeout_sec: Timeout in seconds for the SDK call.
+        timeout_sec: Timeout in seconds for the call.
         effort: Optional effort level ('low', 'medium', 'high', 'max').
-            When provided, sets ``ClaudeAgentOptions.effort``.
-        thinking: When True, enables adaptive thinking via
-            ``ThinkingConfigAdaptive``.  Also causes ``max_turns`` to
-            default to unlimited when not explicitly set.
-        max_turns: Override the default single-turn cap.
-            - ``> 0`` → use that value.
-            - ``0`` → unlimited (None passed to SDK).
-            - ``None`` + ``thinking=True`` → unlimited.
-            - ``None`` + ``thinking=False`` → default of 1.
+        thinking: When True, enables extended thinking (SDK backend) or
+            thinking config (direct backend).
+        max_turns: Override the default single-turn cap (SDK backend only).
+        backend: "direct" or "sdk". If None, resolved via
+            ``resolve_default_backend()``.
 
     Returns:
         The assistant's text response.
@@ -63,37 +111,11 @@ async def query_claude(
         SDKTimeoutError: After exhausting timeout/connection retries.
         SDKResponseError: On empty or malformed responses.
     """
-    # Build prompt from messages — last user message is the prompt,
-    # prior messages provide conversation context
+    resolved_backend = backend or resolve_default_backend()
+    logger.debug("query_claude: backend=%s (requested=%s)", resolved_backend, backend)
+
+    # Build prompt from messages
     prompt = _build_prompt(messages)
-
-    # Resolve effective max_turns for the SDK options object.
-    if max_turns is not None and max_turns > 0:
-        opts_max_turns: Optional[int] = max_turns
-    elif max_turns == 0:
-        opts_max_turns = None  # unlimited
-    elif thinking:
-        # Thinking mode: omit cap so the model can use as many turns as needed.
-        opts_max_turns = None
-    else:
-        opts_max_turns = 1  # safe default for non-thinking calls
-
-    # Build thinking config when requested.
-    thinking_config = (
-        claude_agent_sdk.ThinkingConfigAdaptive(type="adaptive") if thinking else None
-    )
-
-    options = claude_agent_sdk.ClaudeAgentOptions(
-        system_prompt=system_prompt,
-        model=model,
-        max_turns=opts_max_turns,
-        thinking=thinking_config,
-        effort=effort,
-    )
-    logger.debug(
-        "SDK config applied: effort=%s, thinking=%s, max_turns=%s",
-        effort, thinking, opts_max_turns,
-    )
 
     # Rate-limit retry: up to 3 attempts with exponential backoff (2s, 4s, 8s)
     rate_limit_delays = [2, 4, 8]
@@ -106,21 +128,37 @@ async def query_claude(
     for rate_attempt in range(len(rate_limit_delays) + 1):
         try:
             start_time = time.monotonic()
-            response_text, usage_info = await asyncio.wait_for(
-                _execute_query(prompt, options, timeout_sec),
-                timeout=timeout_sec,
-            )
-            elapsed = time.monotonic() - start_time
 
+            if resolved_backend == "direct":
+                response_text, usage_info = await _execute_direct_with_timeout(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    model=model,
+                    effort=effort,
+                    thinking=thinking,
+                    timeout_sec=timeout_sec,
+                )
+            else:
+                response_text, usage_info = await _execute_sdk_with_timeout(
+                    prompt=prompt,
+                    system_prompt=system_prompt,
+                    model=model,
+                    effort=effort,
+                    thinking=thinking,
+                    max_turns=max_turns,
+                    timeout_sec=timeout_sec,
+                )
+
+            elapsed = time.monotonic() - start_time
             input_tokens = usage_info.get("input_tokens", 0) if usage_info else 0
             output_tokens = usage_info.get("output_tokens", 0) if usage_info else 0
             logger.info(
-                "SDK call completed: model=%s, elapsed=%.2fs, tokens=%d+%d, response_len=%d",
-                model, elapsed, input_tokens, output_tokens, len(response_text),
+                "Claude call completed: backend=%s, model=%s, elapsed=%.2fs, tokens=%d+%d, response_len=%d",
+                resolved_backend, model, elapsed, input_tokens, output_tokens, len(response_text),
             )
 
             if not response_text or not response_text.strip():
-                raise SDKResponseError("Empty response from Claude SDK")
+                raise SDKResponseError("Empty response from Claude")
 
             return response_text
 
@@ -145,7 +183,6 @@ async def query_claude(
                     f"Request timed out after {timeout_sec}s (enforced by wait_for)"
                 )
             last_error = e
-            # Independent timeout retry counter (not coupled to rate-limit loop)
             if timeout_retries_used < max_timeout_retries:
                 timeout_retries_used += 1
                 logger.warning(
@@ -162,7 +199,108 @@ async def query_claude(
     raise SDKResponseError("Unexpected error in query_claude")
 
 
-async def _execute_query(
+# ---------------------------------------------------------------------------
+# Direct backend (anthropic package)
+# ---------------------------------------------------------------------------
+
+async def _execute_direct(
+    prompt: str,
+    system_prompt: str,
+    model: str,
+    max_tokens: int = 16384,
+    thinking: bool = False,
+    thinking_budget: int = 10000,
+) -> tuple[str, dict]:
+    """Call Claude via anthropic package directly. Returns (text, usage).
+
+    Maps all anthropic exceptions to the SDKError hierarchy.
+    """
+    client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY from env
+
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+    if thinking:
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+
+    try:
+        response = await client.messages.create(**kwargs)
+    except anthropic.AuthenticationError as e:
+        raise SDKAuthError(f"Invalid API key: {e}") from e
+    except anthropic.RateLimitError as e:
+        raise SDKRateLimitError(f"Rate limited: {e}") from e
+    except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+        raise SDKTimeoutError(f"Connection error: {e}") from e
+    except anthropic.BadRequestError as e:
+        if "thinking" in str(e).lower():
+            logger.warning("Extended thinking not available, falling back to non-thinking mode")
+            kwargs.pop("thinking", None)
+            try:
+                response = await client.messages.create(**kwargs)
+            except anthropic.AuthenticationError as e2:
+                raise SDKAuthError(f"Invalid API key: {e2}") from e2
+            except anthropic.RateLimitError as e2:
+                raise SDKRateLimitError(f"Rate limited: {e2}") from e2
+            except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e2:
+                raise SDKTimeoutError(f"Connection error: {e2}") from e2
+            except anthropic.APIError as e2:
+                raise SDKResponseError(f"API error: {e2}") from e2
+        else:
+            raise SDKResponseError(f"Bad request: {e}") from e
+    except anthropic.APIError as e:
+        raise SDKResponseError(f"API error: {e}") from e
+
+    text_parts = [b.text for b in response.content if b.type == "text"]
+    usage = {
+        "input_tokens": response.usage.input_tokens,
+        "output_tokens": response.usage.output_tokens,
+    }
+
+    return "\n".join(text_parts), usage
+
+
+async def _execute_direct_with_timeout(
+    prompt: str,
+    system_prompt: str,
+    model: str,
+    effort: Optional[str] = None,
+    thinking: bool = False,
+    timeout_sec: int = 120,
+) -> tuple[str, dict]:
+    """Resolve effort-to-thinking config and call _execute_direct with timeout."""
+    # Map effort to thinking config for direct backend
+    effort_config = _EFFORT_THINKING_MAP.get(effort, _EFFORT_THINKING_MAP[None])
+    use_thinking = effort_config.get("thinking", False) or thinking
+    max_tokens = effort_config.get("max_tokens", 16384)
+    thinking_budget = effort_config.get("budget_tokens", 10000)
+
+    try:
+        return await asyncio.wait_for(
+            _execute_direct(
+                prompt=prompt,
+                system_prompt=system_prompt,
+                model=model,
+                max_tokens=max_tokens,
+                thinking=use_thinking,
+                thinking_budget=thinking_budget,
+            ),
+            timeout=timeout_sec,
+        )
+    except asyncio.TimeoutError:
+        raise SDKTimeoutError(
+            f"Request timed out after {timeout_sec}s (enforced by wait_for)"
+        )
+
+
+# ---------------------------------------------------------------------------
+# SDK backend (claude-agent-sdk subprocess)
+# ---------------------------------------------------------------------------
+
+async def _execute_sdk(
     prompt: str,
     options: claude_agent_sdk.ClaudeAgentOptions,
     timeout_sec: int,
@@ -220,6 +358,53 @@ async def _execute_query(
     except Exception as e:
         raise SDKResponseError(f"Unexpected error: {e}") from e
 
+
+async def _execute_sdk_with_timeout(
+    prompt: str,
+    system_prompt: str,
+    model: str,
+    effort: Optional[str] = None,
+    thinking: bool = False,
+    max_turns: Optional[int] = None,
+    timeout_sec: int = 120,
+) -> tuple[str, dict]:
+    """Build SDK options and call _execute_sdk with timeout."""
+    # Resolve effective max_turns for the SDK options object.
+    if max_turns is not None and max_turns > 0:
+        opts_max_turns: Optional[int] = max_turns
+    elif max_turns == 0:
+        opts_max_turns = None  # unlimited
+    elif thinking:
+        opts_max_turns = None
+    else:
+        opts_max_turns = 1  # safe default for non-thinking calls
+
+    # Build thinking config when requested.
+    thinking_config = (
+        claude_agent_sdk.ThinkingConfigAdaptive(type="adaptive") if thinking else None
+    )
+
+    options = claude_agent_sdk.ClaudeAgentOptions(
+        system_prompt=system_prompt,
+        model=model,
+        max_turns=opts_max_turns,
+        thinking=thinking_config,
+        effort=effort,
+    )
+    logger.debug(
+        "SDK config applied: effort=%s, thinking=%s, max_turns=%s",
+        effort, thinking, opts_max_turns,
+    )
+
+    return await asyncio.wait_for(
+        _execute_sdk(prompt, options, timeout_sec),
+        timeout=timeout_sec,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
 def _build_prompt(messages: list[dict]) -> str:
     """Build a single prompt string from message history.
