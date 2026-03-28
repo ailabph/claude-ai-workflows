@@ -767,8 +767,8 @@ planner-auto → a-01-plans/ → PM agent → a-02-ongoing/ → orchestrator wat
 
 | Tool | Status | Pipeline Role |
 |------|--------|---------------|
-| `orchestrator-auto` | Built | Executes plans (implementation in `a-02-ongoing/`) |
-| `planner-auto` | To be built | Generates reviewed plans (feeds `a-01-plans/`) |
+| `orchestrator-auto` | Built (v1.10.0) | Executes plans (implementation in `a-02-ongoing/`) |
+| `planner-auto` | **Built (v0.3.0)** | Generates reviewed plans (feeds `a-01-plans/`) |
 | `reviewer-fixer-auto` | Not yet planned | Post-implementation review (processes `a-03-for-review/`) |
 | PM agent | Not yet planned | Traffic controller across all pipeline stages |
 
