@@ -17,9 +17,9 @@ planner-auto is unusable while the user has an active Claude Code session. This 
 
 ## Design Principles
 
-1. **`query_claude()` stays the only public API** — all callers (`agents.py`, `loop/engine.py`) continue to call `sdk_wrapper.query_claude()` with the same signature and return type (`str`). No caller changes.
-2. **Backend selection happens inside the wrapper** — `sdk_wrapper.py` gains an internal `_backend` choice: `"direct"` (Anthropic API) or `"sdk"` (subprocess). Callers don't know or care which backend is active.
-3. **Direct API is the default** — the SDK subprocess is opt-in for cases that need tool access (future).
+1. **`query_claude()` stays the only public API** — all callers (`agents.py`, `loop/engine.py`) continue to call `sdk_wrapper.query_claude()` with the same return type (`str`). Callers gain a `backend=` parameter (same pattern as `effort=` and `thinking=`).
+2. **Backend dispatch happens inside the wrapper** — `sdk_wrapper.py` routes to `_execute_direct()` or `_execute_sdk()` based on the `backend=` parameter. The wrapper is stateless — it does not read config or DB.
+3. **Default backend is auth-aware** — determined by available credentials, not hardcoded.
 4. **`anthropic` becomes a declared dependency** — added to `pyproject.toml`.
 
 ---
@@ -85,32 +85,58 @@ Each function gains a `backend: str = "direct"` parameter. CLI commands read `se
 
 ## Backend Selection Semantics
 
-### Default
+### Auth-Based Default
 
-Module-level default in `sdk_wrapper.py`:
+The default backend depends on which credentials are available:
+
+| Credentials | Default Backend | Reason |
+|-------------|----------------|--------|
+| `ANTHROPIC_API_KEY` set | `"direct"` | Direct API works, avoids subprocess quota conflict |
+| Only `CLAUDE_CODE_OAUTH_TOKEN` set | `"sdk"` | Direct API cannot use OAuth tokens; SDK subprocess handles OAuth natively |
+| Both set | `"direct"` | Prefer direct to avoid subprocess issues |
+| Neither set | `"direct"` | Will fail at call time with clear auth error |
+
+Implemented as a function in `sdk_wrapper.py`:
 
 ```python
-DEFAULT_BACKEND = "direct"  # Use Anthropic API directly (no subprocess)
+def resolve_default_backend() -> str:
+    """Determine default backend based on available auth credentials."""
+    has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))
+    has_oauth = bool(os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"))
+
+    if has_api_key:
+        return "direct"
+    elif has_oauth:
+        return "sdk"  # OAuth only works through CLI subprocess
+    else:
+        return "direct"  # will fail with clear auth error at call time
 ```
 
 ### Resolution (two levels, no ambiguity)
 
 1. **Per-call `backend=` param** — explicit at call site, highest priority
-2. **Module default `DEFAULT_BACKEND`** — fallback when `backend=None`
+2. **`resolve_default_backend()`** — fallback when `backend=None`
 
-There is no wrapper-internal config lookup. The wrapper is stateless — it dispatches based on the `backend=` parameter it receives.
+The wrapper is stateless — it dispatches based on the `backend=` parameter or the auth-based default.
 
 ### How CLI commands resolve the backend
 
-Each session-aware CLI command:
-1. Reads `session_config.config_json["claude_backend"]` from DB (set at `start`)
-2. Passes the value to agents/engine calls
-3. If no session config exists (e.g., `check --probe`), uses `DEFAULT_BACKEND`
+At session `start`:
+1. If `--claude-backend` flag provided, use it
+2. Otherwise, call `resolve_default_backend()`
+3. Store the resolved value in `session_config.config_json["claude_backend"]`
+4. Log: `INFO: Claude backend: direct (ANTHROPIC_API_KEY detected)` or `INFO: Claude backend: sdk (OAuth token only)`
+
+Later commands (`discuss`, `generate`, `review`):
+1. Read `session_config["claude_backend"]` from DB
+2. Pass to agents/engine calls
 
 ```python
 # In cli.py, each session-aware command:
 config = get_session_config(conn, session_id)
-claude_backend = json.loads(config["config_json"]).get("claude_backend", "direct")
+claude_backend = json.loads(config["config_json"]).get("claude_backend")
+if claude_backend is None:
+    claude_backend = resolve_default_backend()
 
 # Passed through to agents:
 response = asyncio.run(discuss(session_id, message, conn, backend=claude_backend))
@@ -118,12 +144,15 @@ response = asyncio.run(discuss(session_id, message, conn, backend=claude_backend
 
 ### `--claude-backend` flag
 
-On `start` command only. Persisted in session config. Later commands (`discuss`, `generate`, `review`) read it from session config — no per-command flag needed.
+On `start` command only. Overrides the auth-based default. Persisted in session config.
 
 ```bash
-planner-auto start --project my-feature --claude-backend sdk    # opt into SDK subprocess
-planner-auto start --project my-feature                         # default: direct
+planner-auto start --project my-feature                         # auto-detect from auth
+planner-auto start --project my-feature --claude-backend sdk    # force SDK subprocess
+planner-auto start --project my-feature --claude-backend direct # force direct API
 ```
+
+If user explicitly sets `--claude-backend direct` but only has `CLAUDE_CODE_OAUTH_TOKEN`, the `start` command prints a warning: `"Warning: direct backend selected but only OAuth token found. Direct API requires ANTHROPIC_API_KEY."`
 
 ### Session config persistence
 
@@ -236,47 +265,78 @@ except anthropic.BadRequestError as e:
 
 ## Changes to `check` Command
 
-`check` validates **both backends** when their dependencies are installed. This ensures the user knows what's available regardless of which backend a specific session uses.
+### Pass/Fail Semantics
+
+The **default backend's readiness determines pass/fail.** The optional backend's availability is informational only.
+
+| Check | Pass/Fail? | Condition |
+|-------|-----------|-----------|
+| Default backend dependencies | **FAIL** if missing | e.g., `anthropic` not installed when default is `direct` |
+| Default backend auth | **FAIL** if missing | e.g., no `ANTHROPIC_API_KEY` when default is `direct` |
+| Optional backend dependencies | **INFO** only | e.g., `claude` CLI not on PATH when default is `direct` — reported as "sdk: unavailable (optional)" |
+| Reviewer (openai) | **FAIL** if missing | Always required for `review` command |
+| DB writable | **FAIL** if not | Always required |
+
+### Output
 
 ```
 planner-auto check
 
-  Environment:
-    ANTHROPIC_API_KEY set: true
-    OPENAI_API_KEY set: true
+  Auth:
+    ANTHROPIC_API_KEY: set
+    CLAUDE_CODE_OAUTH_TOKEN: not set
+    OPENAI_API_KEY: set
+  Default backend: direct (based on ANTHROPIC_API_KEY)
   Claude backends:
-    direct (anthropic): true (v0.40.0) ← default
-    sdk (claude-agent-sdk): true (v0.1.50), claude CLI: /opt/homebrew/bin/claude
+    direct (anthropic v0.40.0): ready              ← determines pass/fail
+    sdk (claude-agent-sdk v0.1.50): available       ← informational
   Reviewer:
-    openai: true (v2.30.0)
+    openai (v2.30.0): ready
   Database:
-    DB path writable: true
+    DB writable: true
     Schema version: 2
-  Default backend: direct
 
-  With --probe:
-    Claude API (direct): OK (1.2s, 15 tokens)
-    OpenAI API: OK (0.8s, 12 tokens)
+  Result: PASS
 ```
 
-With `--probe --claude-backend sdk`:
+OAuth-only user:
 ```
-    Claude API (sdk subprocess): OK (3.4s, 15 tokens)
-    # or: RATE LIMITED (subprocess shares quota with active Claude Code sessions)
+  Auth:
+    ANTHROPIC_API_KEY: not set
+    CLAUDE_CODE_OAUTH_TOKEN: set
+  Default backend: sdk (OAuth requires CLI subprocess)
+  Claude backends:
+    direct (anthropic v0.40.0): installed but no API key  ← informational
+    sdk (claude-agent-sdk v0.1.50, claude on PATH): ready ← determines pass/fail
+  ...
+  Result: PASS
 ```
 
-With `--session <id>`:
+### `--probe` flag
+
+Tests the **default backend** live:
+```bash
+planner-auto check --probe
+  Claude API (direct): OK (1.2s, 15 tokens)
+  OpenAI API: OK (0.8s, 12 tokens)
 ```
+
+Tests a **specific backend** live:
+```bash
+planner-auto check --probe --claude-backend sdk
+  Claude API (sdk subprocess): OK (3.4s)
+  # or: RATE LIMITED (subprocess shares quota with active Claude Code sessions)
+```
+
+### `--session <id>`
+
+Validates the specific backend a session is configured to use:
+```bash
 planner-auto check --session abc123
   Session abc123 backend: direct
-  (validates the specific backend this session uses)
+  direct (anthropic): ready
+  Result: PASS
 ```
-
-This covers:
-- Default check: validates both backends are installable
-- `--probe`: tests the default backend (direct) live
-- `--probe --claude-backend sdk`: tests the SDK backend live
-- `--session <id>`: validates the specific backend a session is configured to use
 
 ---
 
