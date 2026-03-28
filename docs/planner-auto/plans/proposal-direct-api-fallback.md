@@ -1,4 +1,4 @@
-# Proposal: Direct Anthropic API Fallback for planner-auto (v2)
+# Proposal: Direct Anthropic API Fallback for planner-auto (v5)
 
 ## Problem
 
@@ -218,7 +218,7 @@ The existing `_execute_query()` (SDK subprocess path) is renamed to `_execute_sd
 
 ```python
 async def query_claude(..., backend=None) -> str:
-    resolved_backend = backend or _get_default_backend()
+    resolved_backend = backend or resolve_default_backend()
 
     if resolved_backend == "direct":
         text, usage = await _with_retries(_execute_direct, ...)
@@ -232,6 +232,57 @@ async def query_claude(..., backend=None) -> str:
 ```
 
 Retry logic (`_with_retries`) is shared between both backends: rate limit 3x with 2/4/8s backoff, timeout once after 2s, auth error immediate.
+
+---
+
+## Error Contract Preservation
+
+The direct backend translates all Anthropic exceptions to the **existing `SDKError` hierarchy** inside `_execute_direct()`. Callers and CLI error handling remain unchanged — they catch `SDKAuthError`, `SDKRateLimitError`, etc. exactly as they do today.
+
+### Error Mapping (direct backend)
+
+| Anthropic Exception | Mapped To | Behavior |
+|--------------------|-----------|----------|
+| `anthropic.AuthenticationError` | `SDKAuthError` | Fail immediately, no retry |
+| `anthropic.RateLimitError` | `SDKRateLimitError` | Retry 3x with 2/4/8s backoff |
+| `anthropic.APITimeoutError` | `SDKTimeoutError` | Retry once after 2s |
+| `anthropic.APIConnectionError` | `SDKTimeoutError` | Retry once after 2s |
+| `asyncio.TimeoutError` (from `wait_for`) | `SDKTimeoutError` | Retry once after 2s |
+| `anthropic.BadRequestError` (thinking unavailable) | _(handled internally)_ | Fallback to non-thinking, log warning |
+| `anthropic.BadRequestError` (other) | `SDKResponseError` | Fail immediately |
+| Empty/whitespace response text | `SDKResponseError` | Fail immediately |
+| Any other `anthropic.APIError` | `SDKResponseError` | Fail immediately |
+
+### Error Mapping (SDK backend — unchanged)
+
+The existing SDK backend already maps to `SDKError` subclasses. No changes.
+
+### What this guarantees
+
+- **CLI error handling unchanged** — `cli.py` catches `SDKError` and prints user-friendly messages. Works for both backends.
+- **Test mocks unchanged** — tests that mock `query_claude()` and assert on `SDKError` subclasses continue to work.
+- **`--debug` tracebacks unchanged** — the `SDKError` wraps the original exception as `__cause__`, so `traceback.print_exc()` shows the Anthropic error underneath.
+
+Implementation inside `_execute_direct()`:
+
+```python
+try:
+    response = await client.messages.create(**kwargs)
+except anthropic.AuthenticationError as e:
+    raise SDKAuthError(f"Invalid API key: {e}") from e
+except anthropic.RateLimitError as e:
+    raise SDKRateLimitError(f"Rate limited: {e}") from e
+except (anthropic.APITimeoutError, anthropic.APIConnectionError) as e:
+    raise SDKTimeoutError(f"Connection error: {e}") from e
+except anthropic.BadRequestError as e:
+    if "thinking" in str(e).lower():
+        # handled by thinking fallback (see below)
+        ...
+    else:
+        raise SDKResponseError(f"Bad request: {e}") from e
+except anthropic.APIError as e:
+    raise SDKResponseError(f"API error: {e}") from e
+```
 
 ---
 
