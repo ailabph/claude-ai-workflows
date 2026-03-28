@@ -162,6 +162,10 @@ planner-auto review 765ac72b --verbose              → 3 rounds, GO, $0.12
   Final plan: .kafra/a-01-plans/stress-test-3.md
 ```
 
+### Long Context Test — Level 1 (93KB, 4 files) — PASS
+
+Session `0ca49f61`: loaded cli.py (44K), engine.py (28K), README (13K), AGENTS (9.5K). Claude asked 12 relevant clarifying questions from the loaded code. Plan generated with 5 milestones referencing specific classes and file paths. Review loop converged in 5 rounds (2→1→1→1→GO), $0.29 total. History context stable at ~6.5-7.5K chars. No timeouts.
+
 ---
 
 ## Key Documents

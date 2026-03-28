@@ -207,9 +207,43 @@ For each test level, record per pass:
 
 ---
 
+## Results
+
+### Level 1: Moderate Context (~93KB) — PASS
+
+**Session:** `0ca49f61` (ctx-test-moderate)
+
+**Pass A (plan-only):**
+
+| Metric | Result |
+|--------|--------|
+| Files loaded | 4 (cli.py 44K, engine.py 28K, README 13K, AGENTS 9.5K) |
+| Total context size | ~93KB |
+| Discuss works | Yes — Claude asked 12 clarifying questions referencing loaded code |
+| Plan references context? | Yes — specific classes (`ReviewerContract`, `DirectAPIAdapter`), file paths, patterns |
+| Plan word count | ~1,500 (well under 3K limit) |
+| Plan quality | 5 milestones: contract hardening, registry, CLI refactor, config snapshot, docs. Highly specific to the codebase. |
+| Errors | None |
+
+**Pass B (full-loop):**
+
+| Metric | Result |
+|--------|--------|
+| Review rounds | 5 (issue trend: 2→1→1→1→GO) |
+| History context size | Stable at ~6.5-7.5K chars (bounded, not growing) |
+| Plan growth | 9.5K → 11.6K (22% over 5 rounds — well controlled) |
+| GPT review latency | 58s→69s→104s→116s→137s (growing but within timeout) |
+| All feedback | ACCEPT (no DEFER/REJECT needed) |
+| Total cost | $0.29 |
+| Artifacts | 11 exported + .kafra handoff |
+| Errors/timeouts | None |
+
+**Verdict:** PASS. Plan references loaded files, converges in 5 rounds, cost $0.29 (under $0.50 threshold). History context stays bounded. No timeouts despite growing review latency.
+
+---
+
 ## When to Run
 
-- **Level 1 Pass A:** Now — quick (~3 min)
-- **Level 1 Pass B:** After Pass A — adds ~5 min
-- **Level 2:** After Level 1 — ~15 min total
+- **Level 1:** Complete — PASS
+- **Level 2:** Next — ~15 min total
 - **Level 3:** Optional boundary test — time depends on context size
