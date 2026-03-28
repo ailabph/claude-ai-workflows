@@ -65,6 +65,7 @@ async def validate_feedback(
     planner_model: str,
     conn,
     review_id: int,
+    backend: str | None = None,
 ) -> ReviewerResponse:
     """Ask Claude to ACCEPT, DEFER, or REJECT each reviewer issue.
 
@@ -108,6 +109,7 @@ async def validate_feedback(
         messages=[{"role": "user", "content": user_content}],
         system_prompt=_FEEDBACK_SYSTEM_PROMPT,
         model=planner_model,
+        backend=backend,
     )
 
     dispositions = _parse_dispositions(raw_response, len(review.issues))

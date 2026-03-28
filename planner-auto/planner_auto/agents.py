@@ -20,6 +20,7 @@ from planner_auto.db import (
     add_plan_draft,
     get_context_entries,
     get_messages,
+    get_session_config,
     save_session_config,
     transaction,
 )
@@ -49,7 +50,7 @@ async def discuss(
     session_id: str,
     user_input: str,
     conn: sqlite3.Connection,
-    backend: str = "direct",
+    backend: str | None = None,
 ) -> str:
     """Send a discussion message and get Claude's response.
 
@@ -103,7 +104,7 @@ async def discuss(
 async def synthesize_context(
     session_id: str,
     conn: sqlite3.Connection,
-    backend: str = "direct",
+    backend: str | None = None,
 ) -> str:
     """Synthesize context entries and messages into a summary.
 
@@ -168,7 +169,7 @@ async def generate_plan(
     session_id: str,
     conn: sqlite3.Connection,
     model: str = DEFAULT_MODEL,
-    backend: str = "direct",
+    backend: str | None = None,
 ) -> str:
     """Generate an implementation plan via context synthesis + planning.
 
@@ -221,7 +222,17 @@ async def generate_plan(
     logger.info("Claude responded, %d chars, %dms", len(plan_content), _duration_ms)
 
     # Step 3: Commit config snapshot and plan draft atomically on success
+    # Preserve existing session config fields (especially claude_backend)
+    existing_config = get_session_config(conn, session_id)
+    preserved = {}
+    if existing_config:
+        try:
+            preserved = json.loads(existing_config["config_json"])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            pass
+
     config = {
+        **preserved,  # preserve claude_backend and other session-level settings
         "model": model,
         "prompt_hashes": {
             "planner": prompt_version_hash(PLANNER_SYSTEM_PROMPT),

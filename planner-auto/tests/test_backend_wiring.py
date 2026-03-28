@@ -90,11 +90,12 @@ class TestDiscussBackend:
         assert call_kwargs["backend"] == "sdk"
 
     @patch("planner_auto.agents.query_claude", new_callable=AsyncMock)
-    async def test_discuss_default_backend_is_direct(self, mock_qc, db_conn, session_in_discussion):
+    async def test_discuss_default_backend_is_none(self, mock_qc, db_conn, session_in_discussion):
+        """When no backend is passed, agents default to None (auth-aware via wrapper)."""
         mock_qc.return_value = "response"
         await discuss(session_in_discussion, "hello", db_conn)
         call_kwargs = mock_qc.call_args.kwargs
-        assert call_kwargs["backend"] == "direct"
+        assert call_kwargs["backend"] is None
 
 
 # ---------------------------------------------------------------------------

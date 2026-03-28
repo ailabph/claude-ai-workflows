@@ -312,6 +312,7 @@ class ReviewLoopEngine:
                     self.planner_model,
                     self.conn,
                     review_id,
+                    backend=self.config.get("claude_backend"),
                 )
                 self.conn.commit()
                 issues_for_revision = validated.issues  # only ACCEPT issues

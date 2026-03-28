@@ -1028,15 +1028,21 @@ def check(ctx, probe, probe_backend, session_id):
     results.append(("Default backend", True, f"{default_backend} (based on {backend_reason})"))
 
     # ---- Session backend (optional) ----------------------------------------
+    effective_backend = default_backend  # used for PATH/import pass/fail decisions
     if session_id:
         conn = _get_conn(ctx)
-        session_backend = _resolve_session_backend(conn, session_id)
-        results.append(("Session backend", True, f"{session_backend} (session {session_id})"))
+        session = get_session(conn, session_id)
+        if session is None:
+            results.append(("Session backend", False, f"session {session_id} not found"))
+        else:
+            session_backend = _resolve_session_backend(conn, session_id)
+            results.append(("Session backend", True, f"{session_backend} (session {session_id})"))
+            effective_backend = session_backend  # validate against session's backend
 
     # ---- PATH checks -------------------------------------------------------
     claude_path = shutil.which("claude")
-    # claude on PATH is only required if default backend is sdk
-    claude_required = default_backend == "sdk"
+    # claude on PATH is only required if effective backend is sdk
+    claude_required = effective_backend == "sdk"
     if claude_required:
         results.append((
             "claude on PATH",
@@ -1067,10 +1073,10 @@ def check(ctx, probe, probe_backend, session_id):
         results.append(("anthropic importable", True, f"v{_anth_ver}"))
     except ImportError:
         anthropic_importable = False
-        is_required = default_backend == "direct"
+        is_required = effective_backend == "direct"
         results.append((
             "anthropic importable",
-            not is_required,  # fail if direct is default, info-only otherwise
+            not is_required,  # fail if direct is effective backend, info-only otherwise
             "not installed (required for direct backend)" if is_required
             else "not installed (optional, direct backend only)",
         ))
@@ -1080,7 +1086,7 @@ def check(ctx, probe, probe_backend, session_id):
         _cas_ver = getattr(_cas, "__version__", "unknown")
         results.append(("claude_agent_sdk importable", True, f"v{_cas_ver}"))
     except ImportError:
-        is_required = default_backend == "sdk"
+        is_required = effective_backend == "sdk"
         results.append((
             "claude_agent_sdk importable",
             not is_required,
