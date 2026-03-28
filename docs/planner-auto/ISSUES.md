@@ -20,12 +20,17 @@ _(none currently)_
 **Fix needed:** Text-only mode for plan generation, retry with fallback, or chunked context injection.
 **Documented in:** `planner-auto/README.md` Known Issues, `claude/agents/planner-auto-debugger.md`
 
-### H2: Rate limit retry not working — error propagates without retrying
+### H2: Rate limit from SDK subprocess — not the Anthropic API
 **Found:** Stress test (2026-03-28), `planner-auto discuss` command
 **Symptom:** `Error: Rate limited by API` printed immediately without retry. `sdk_wrapper.py` has 3x retry with 2/4/8s backoff but it didn't fire.
-**Likely cause:** The SDK raises `RateLimitEvent` in the async stream which gets caught as a different exception type than `SDKRateLimitError`. The wrapper's retry logic catches `SDKRateLimitError` but the event-to-exception mapping may not trigger on all paths.
-**Fix needed:** Verify that all rate limit signals (both `RateLimitEvent` in stream and HTTP 429 responses) are caught and retried consistently. Add a stress test that simulates rate limiting.
-**Refs:** `planner_auto/sdk_wrapper.py`, `planner_auto/agents.py`
+**Root cause confirmed:** The rate limit is NOT from the Anthropic HTTP API — direct API calls via the `anthropic` package work fine (`scripts/check_api_keys.py` passes). The rate limit comes from the **Claude CLI subprocess** that `claude-agent-sdk` spawns. The CLI shares quota with active Claude Code sessions (like this one). When the user is in a Claude Code conversation, the CLI subprocess gets throttled.
+**Why retry doesn't work:** The `RateLimitEvent` is emitted inside the SDK's async stream and mapped to `SDKRateLimitError` in `_execute_query()`. But the rate limit may fire before the stream even starts (at subprocess initialization), bypassing the retry loop entirely.
+**Fix options:**
+1. **Direct API fallback (recommended):** Use the `anthropic` package directly (like `scripts/check_api_keys.py` does) instead of `claude-agent-sdk` subprocess. This avoids the CLI rate limit entirely. The reviewer already uses `openai` directly — the planner should do the same.
+2. **Retry at a higher level:** Wrap the entire `query_claude()` call in a retry loop, not just the inner stream iteration.
+3. **Session isolation:** Use `--session-id` or `--no-project` flags on the CLI subprocess to avoid quota sharing.
+**Impact:** planner-auto is unusable while the user has an active Claude Code session. This is the #1 production blocker.
+**Refs:** `planner_auto/sdk_wrapper.py`, `planner_auto/agents.py`, `scripts/check_api_keys.py`
 
 ### H3: anyio cancel scope tracebacks on SDK error paths
 **Found:** Stress test (2026-03-28), `planner-auto discuss` command
