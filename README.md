@@ -4,7 +4,7 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)](https://www.python.org/downloads/)
 [![Version](https://img.shields.io/badge/version-1.9.0-orange.svg)](orchestrator-auto/)
 
-Milestone-based orchestration for AI agents with human oversight. Describe what you want built, review a plan, approve each milestone.
+Milestone-based orchestration for AI agents with human oversight. Two tools: **planner-auto** generates high-quality plans through a Claude + GPT review loop, then **orchestrator-auto** implements them milestone by milestone.
 
 ## What Is This?
 
@@ -41,8 +41,27 @@ sequenceDiagram
 | **Queue mode** | Chain multiple workflows to run sequentially |
 | **Sub-agents** | Specialized Explore and Bash sub-agents for deep codebase research |
 | **Planner chat** | Dedicated TUI chat window for freeform conversation with the Planner agent |
+| **Plan generation** | `planner-auto` generates plans with Claude, reviewed by GPT until approved |
+| **Cross-model review** | GPT-5.4 reviews plans with resolution guidance, keep/trim, and feedback validation |
+| **Review history** | GPT tracks prior rounds to prevent re-raising resolved issues |
 
 ## Quick Start
+
+### planner-auto (plan generation)
+
+```bash
+cd planner-auto && pip install -e ".[dev]"
+export ANTHROPIC_API_KEY="your-key"
+export OPENAI_API_KEY="your-key"       # For GPT reviewer
+
+planner-auto start --project my-feature
+planner-auto add-context <id> --file src/app.py
+planner-auto discuss <id> "Add user registration with email validation" --done
+planner-auto generate <id>
+planner-auto review <id>               # GPT review loop → approved plan
+```
+
+### orchestrator-auto (implementation)
 
 ```bash
 # Install
@@ -114,6 +133,19 @@ See [orchestrator-auto/README.md](orchestrator-auto/README.md) for full CLI docu
 
 ## Architecture
 
+### The Pipeline
+
+```
+planner-auto                          orchestrator-auto
+┌──────────────────────┐              ┌──────────────────────┐
+│ User describes feature│              │ Executor implements   │
+│ Claude generates plan │──── plan ───►│ milestone by milestone│
+│ GPT reviews & approves│   (.kafra)   │ Human approves each   │
+└──────────────────────┘              └──────────────────────┘
+```
+
+### orchestrator-auto
+
 ```mermaid
 graph TD
     CLI[CLI · click] --> Engine[Engine · state machine + orchestration loop]
@@ -139,6 +171,63 @@ Key modules in [`orchestrator-auto/`](orchestrator-auto/):
 | `telegram.py` | Telegram notifications and blocker replies |
 | `git.py` | Auto-commit with AI-generated messages |
 | `tui/` | Textual-based dashboard widgets |
+
+### planner-auto
+
+Key modules in [`planner-auto/`](planner-auto/):
+
+| Module | Purpose |
+|--------|---------|
+| `cli.py` | Click CLI (start, discuss, generate, review, inspect, check) |
+| `db.py` | SQLite v2 schema, 8 tables, schema migration |
+| `loop/engine.py` | Review-fix loop (GPT review → Claude revise → repeat) |
+| `loop/feedback.py` | Feedback validation (ACCEPT/DEFER/REJECT per issue) |
+| `loop/history.py` | Cumulative review context with deferred issue tracking |
+| `reviewer/direct_api.py` | GPT-5.4 adapter via OpenAI SDK |
+| `reviewer/parser.py` | Response parser (JSON/XML/free-form fallback) |
+| `inspect.py` | DB inspection for debugging (reviews, dispositions, config, dump) |
+
+See [planner-auto/README.md](planner-auto/README.md) for full documentation and [planner-auto/AGENTS.md](planner-auto/AGENTS.md) for developer context.
+
+## Claude Code Agents
+
+Custom [Claude Code agents](https://docs.anthropic.com/en/docs/claude-code/agents) are included in [`claude/agents/`](claude/agents/) for use within Claude Code sessions.
+
+### orchestrator-expert
+
+**File:** [`claude/agents/orchestrator-expert.md`](claude/agents/orchestrator-expert.md)
+
+A specialized agent with deep knowledge of the orchestrator-auto codebase — state machine, engine flow, response parsing, database schema, blocker handling, and all modules. Use it when developing features, debugging stuck sessions, or understanding how the orchestration works.
+
+**Setup:** Copy to your Claude Code config directory:
+```bash
+cp claude/agents/orchestrator-expert.md ~/.claude/agents/
+```
+
+**Usage in Claude Code:** Reference the agent when working on orchestrator-auto tasks:
+```
+@orchestrator-expert debug session 51939a3c — it's stuck in paused state
+@orchestrator-expert add a new CLI command to show milestone history
+@orchestrator-expert how does the blocker injection flow work after resume?
+```
+
+### planner-auto-debugger
+
+**File:** [`claude/agents/planner-auto-debugger.md`](claude/agents/planner-auto-debugger.md)
+
+A debugging agent for planner-auto sessions — diagnosing review loop convergence, inspecting DB state, tracing disposition issues, and investigating stuck or failed sessions. Includes 6 common failure patterns with diagnosis steps.
+
+```
+@planner-auto-debugger my review loop ran 12 rounds and still hasn't converged
+@planner-auto-debugger session abc123 is stuck in REVIEW phase
+@planner-auto-debugger generate produced an empty plan
+```
+
+### backend-architect
+
+**File:** [`claude/agents/backend-architect.md`](claude/agents/backend-architect.md)
+
+A general-purpose backend architecture agent for API design, database optimization, authentication, and scalable system design.
 
 ## Scripts
 
