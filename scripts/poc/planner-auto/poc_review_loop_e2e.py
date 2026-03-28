@@ -124,6 +124,7 @@ async def _call_claude(
         model=model,
         permission_mode="bypassPermissions",
         stderr=lambda s: None,
+        cwd=str(Path(__file__).resolve().parents[3]),  # repo root, not planner-auto/
     )
     if turns is not None:
         opts.max_turns = turns

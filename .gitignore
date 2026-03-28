@@ -271,3 +271,7 @@ credentials*.json
 *.sqlite3
 *.db
 scripts/poc/planner-auto/__pycache__/
+
+# planner-auto artifacts (generated, session-specific)
+.kafra/
+scripts/temp/

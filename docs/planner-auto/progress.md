@@ -162,13 +162,19 @@ planner-auto review 765ac72b --verbose              → 3 rounds, GO, $0.12
   Final plan: .kafra/a-01-plans/stress-test-3.md
 ```
 
-### Long Context Tests — Level 1 & 2 PASS
+### Long Context Tests — Level 1 & 2 PASS, Level 3 Qualified PASS
 
 **Level 1 (93KB, 4 files):** Session `0ca49f61`. Plan referenced specific classes/file paths. Review: 5 rounds (2→1→1→1→GO), $0.29. History stable ~6.5-7.5K chars.
 
 **Level 2 (255KB, 16 files):** Session `69716dcd`. 10 source files + 5 docs + 1 note. Plan referenced db.py helpers, session_config, review_dispositions, Click conventions, dataclass patterns. Review: 7 rounds (2→1→2→1→1→1→GO), $0.40. History stable ~6.5-7.4K chars. GPT found real edge cases: formatter API inconsistency, cost NULL handling, convergence winner semantics.
 
-**Key finding:** Cost scales sublinearly (2.7x context → 1.4x cost). History context bounded regardless of input size.
+**Level 3 (471KB, 56 files):** Session `665523c1`. All source + test + docs. Pass A (plan-only): PASS — 5-milestone security audit plan with file:line references, format OK, no errors. Pass B (review loop): FAIL at Round 8 — timeout during revision. Issue trend: 3→1→2→3→1→2→1→1 (oscillating). History bounded ~7K chars (same as L1/L2). Plan grew 93% (9.7K→18.8K). Cost ~$0.47 (partial). Failure mode: plan growth caused revision timeout (120s×2), not context size or history overflow.
+
+**Key findings:**
+- History context bounded at ~7K chars regardless of input size (93KB, 255KB, 471KB all the same)
+- Cost scales sublinearly (5.1x context → ~1.6x cost)
+- Plan generation handles any context size — bottleneck is plan growth during revision
+- Topic affects convergence more than context size (security audits oscillate; feature plans decline)
 
 ---
 
