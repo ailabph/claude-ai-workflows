@@ -242,8 +242,54 @@ For each test level, record per pass:
 
 ---
 
+### Level 2: Heavy Context (~255KB) — PASS
+
+**Session:** `69716dcd` (ctx-test-heavy)
+
+**Pass A (plan-only):**
+
+| Metric | Result |
+|--------|--------|
+| Files loaded | 16 (15 files + 1 note, ~255KB total) |
+| Total context size | ~255KB (larger than estimated — v1.1 proposal was 45KB not 30KB) |
+| Discuss works | Yes — Claude asked 12 architecture-aware questions |
+| Plan references context? | Yes — `db.py` helpers, `session_config`, `review_dispositions`, `inspect` patterns, Click conventions, `dataclasses.asdict`, specific SQL patterns |
+| Plan word count | ~2,000 (under 3K limit) |
+| Plan quality | 5 milestones: data layer, DB helpers, formatters (table+JSON), CLI integration, edge cases. Production-quality with real dataclass definitions and test specifications. |
+| Errors | None |
+
+**Pass B (full-loop):**
+
+| Metric | Result |
+|--------|--------|
+| Review rounds | 7 (issue trend: 2→1→2→1→1→1→GO) |
+| History context size | Stable at ~6.5-7.4K chars (bounded, same as Level 1) |
+| Plan growth | 11.5K → 19K (65% over 7 rounds — more than Level 1 due to more edge cases) |
+| GPT review latency | 57s→109s→96s→107s→80s→57s→110s (variable but within timeout) |
+| All feedback | ACCEPT (GPT found real issues: formatter API inconsistency, cost NULL handling, convergence winner semantics, disposition zero-total, label collision risk) |
+| Total cost | $0.40 |
+| Artifacts | 15 exported + .kafra handoff |
+| Errors/timeouts | None |
+
+**Verdict:** PASS. 255KB context handled without issue. Synthesis useful, plan under 3K words, history bounded at same size as Level 1, cost $0.40 (under $2.00 threshold).
+
+### Cross-Level Comparison
+
+| Metric | Level 1 (93KB) | Level 2 (255KB) | Scaling |
+|--------|---------------|----------------|---------|
+| Context size | 93KB, 4 files | 255KB, 16 files | 2.7x |
+| Plan quality | Excellent | Excellent (more specific) | Better with more context |
+| Review rounds | 5 | 7 | +2 rounds |
+| History context | ~6.5-7.5K chars | ~6.5-7.4K chars | Same (bounded) |
+| Cost | $0.29 | $0.40 | 1.4x (sublinear) |
+| Plan growth | 22% | 65% | More edge cases found |
+
+**Key finding:** Cost scales sublinearly with context size (2.7x more context → 1.4x more cost). History context is bounded regardless of input size. The review loop handles large-context plans well.
+
+---
+
 ## When to Run
 
 - **Level 1:** Complete — PASS
-- **Level 2:** Next — ~15 min total
+- **Level 2:** Complete — PASS
 - **Level 3:** Optional boundary test — time depends on context size
