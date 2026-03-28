@@ -21,7 +21,7 @@ from planner_auto.db import (
 )
 from planner_auto.git_utils import discover_repo_root
 
-logger = logging.getLogger("planner-auto.export")
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SESSIONS_DIR = os.path.join(os.path.expanduser("~"), ".planner-auto", "sessions")
@@ -88,6 +88,8 @@ def _export_chat_csv(session_id: str, conn, output_dir: str) -> str:
                 msg["content"],
             ])
 
+    size = os.path.getsize(path)
+    logger.info("Exported %s, %d bytes", os.path.basename(path), size)
     return path
 
 
@@ -115,6 +117,8 @@ def _export_context_summary(session_id: str, conn, output_dir: str) -> str:
                 f.write(f"### {entry['entry_key']}\n\n")
                 f.write(f"{entry['content']}\n\n")
 
+    size = os.path.getsize(path)
+    logger.info("Exported %s, %d bytes", os.path.basename(path), size)
     return path
 
 
@@ -128,6 +132,8 @@ def _export_plan_drafts(session_id: str, conn, output_dir: str) -> list[str]:
         path = os.path.join(output_dir, filename)
         with open(path, "w", encoding="utf-8") as f:
             f.write(draft["content"])
+        size = os.path.getsize(path)
+        logger.info("Exported %s, %d bytes", filename, size)
         paths.append(path)
 
     return paths
@@ -265,10 +271,7 @@ def kafra_handoff(
         repo_root = discover_repo_root()
 
     if repo_root is None:
-        logger.warning(
-            "kafra_handoff: no repo root found — skipping handoff for session %s",
-            session_id,
-        )
+        logger.warning(".kafra skipped, no repo root (session=%s)", session_id)
         return None
 
     kafra_dir = os.path.join(repo_root, ".kafra", "a-01-plans")
@@ -278,7 +281,7 @@ def kafra_handoff(
     with open(dest, "w", encoding="utf-8") as f:
         f.write(final_plan_text)
 
-    logger.info("kafra_handoff: wrote %s", dest)
+    logger.info("Copied to %s", dest)
     return dest
 
 

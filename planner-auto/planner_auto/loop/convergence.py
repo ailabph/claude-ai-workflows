@@ -18,7 +18,7 @@ from typing import Optional
 
 from planner_auto.db import get_latest_plan_draft, get_messages
 
-logger = logging.getLogger("planner-auto.loop.convergence")
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Complexity keywords
@@ -99,11 +99,12 @@ def detect_complexity(conn, session_id: str) -> str:
                     matched_source = source_name
 
     level = "complex" if matched_keywords else "standard"
+    cap = _MAX_ROUNDS_COMPLEX if level == "complex" else _MAX_ROUNDS_STANDARD
     logger.info(
-        "Complexity detection: %s (source=%s, keywords=%s)",
+        "Complexity: %s, keywords: %s, cap: %d",
         level,
-        matched_source or "none",
-        matched_keywords,
+        matched_keywords or [],
+        cap,
     )
     return level
 

@@ -22,7 +22,7 @@ from planner_auto.db import (
 )
 from planner_auto.reviewer.contract import ReviewIssue, Severity
 
-logger = logging.getLogger("planner-auto.loop.history")
+logger = logging.getLogger(__name__)
 
 # Maximum characters of previous plan text to include in history context.
 _PREV_PLAN_CAP = 5000
@@ -180,7 +180,12 @@ def build_review_context(
         "- Focus only on genuinely NEW issues not previously raised or deferred."
     )
 
-    return "\n".join(lines)
+    result = "\n".join(lines)
+    logger.debug(
+        "History context: %d chars, %d cumulative defers",
+        len(result), len(defer_disps),
+    )
+    return result
 
 
 def _get_issue_desc(review_row, issue_index: int) -> str:

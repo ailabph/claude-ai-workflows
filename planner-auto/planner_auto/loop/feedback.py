@@ -21,7 +21,7 @@ from planner_auto.db import add_disposition
 from planner_auto.reviewer.contract import ReviewIssue, ReviewerResponse, Severity, Verdict
 from planner_auto.sdk_wrapper import query_claude
 
-logger = logging.getLogger("planner-auto.loop.feedback")
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # System / user prompt templates
@@ -120,8 +120,8 @@ async def validate_feedback(
         rationale = disp.get("rationale", "") or ""
 
         add_disposition(conn, review_id, idx, disposition_value, rationale or None)
-        logger.debug(
-            "Issue %d: %s — %s", idx, issue.description[:60], disposition_value
+        logger.info(
+            "Issue %d: %s — %s", idx, disposition_value, issue.description[:60]
         )
 
         if disposition_value == "ACCEPT":

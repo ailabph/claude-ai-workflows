@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import sys
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -31,7 +33,7 @@ from planner_auto.loop.history import build_review_context, filter_issues
 from planner_auto.reviewer.contract import ReviewerContract, ReviewerResponse, Severity, Verdict
 from planner_auto.sdk_wrapper import query_claude
 
-logger = logging.getLogger("planner-auto.loop.engine")
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Revision prompt templates
@@ -174,10 +176,7 @@ class ReviewLoopEngine:
         start_round = ((existing_max["max_round"] or 0) + 1) if existing_max else 1
 
         for round_num in range(start_round, start_round + max_rounds):
-            logger.info(
-                "Session %s — starting review round %d/%d",
-                self.session_id, round_num, max_rounds,
-            )
+            logger.info("Round %d starting (session=%s)", round_num, self.session_id)
 
             # --- Step 1: build history context (None for round 1) ----------
             if self.config.get("review_history", True):
@@ -188,12 +187,16 @@ class ReviewLoopEngine:
             else:
                 history_context = None
 
-            # --- Step 2: call reviewer -------------------------------------
+            history_context_size = len(history_context) if history_context else 0
+
+            # --- Step 2: call reviewer (timed) -----------------------------
+            _review_t0 = time.monotonic()
             review_response: ReviewerResponse = await self.reviewer.review(
                 current_plan, history_context
             )
+            review_latency_ms = int((time.monotonic() - _review_t0) * 1000)
             logger.info(
-                "Round %d verdict: %s (%d issues)",
+                "Round %d: %s, %d issues",
                 round_num, review_response.verdict.value, len(review_response.issues),
             )
 
@@ -217,8 +220,8 @@ class ReviewLoopEngine:
             self.conn.commit()
 
             # Accumulate review cost.
-            review_cost = getattr(review_response, "cost", None) or 0.0
-            total_cost += review_cost
+            round_review_cost = getattr(review_response, "cost", None) or 0.0
+            total_cost += round_review_cost
 
             # --- Step 4: export review artifact ----------------------------
             self._write_review_artifact(round_num, review_response)
@@ -232,8 +235,35 @@ class ReviewLoopEngine:
             }
 
             # --- Step 6: apply stop policy ---------------------------------
+            is_final_round = (
+                review_response.verdict == Verdict.GO
+                or round_num == start_round + max_rounds - 1
+            )
             if review_response.verdict == Verdict.GO:
                 stop_reason = "go"
+                self._emit_progress(
+                    round_num=round_num,
+                    verdict=review_response.verdict.value,
+                    issue_count=len(review_response.issues),
+                    reviewer_model=getattr(review_response, "reviewer_model", None),
+                    review_latency_ms=review_latency_ms,
+                    input_tokens=getattr(review_response, "input_tokens", None),
+                    output_tokens=getattr(review_response, "output_tokens", None),
+                    review_cost=round_review_cost,
+                    keep_count=len(review_response.keep),
+                    trim_count=len(review_response.trim),
+                    dispositions=None,
+                    revision_model=None,
+                    revision_latency_ms=None,
+                    revision_cost=None,
+                    prev_draft_size=len(current_plan),
+                    new_draft_size=None,
+                    history_context_size=history_context_size,
+                    raw_gpt_response=review_response.raw_text,
+                    history_context_text=history_context,
+                    revision_prompt_text=None,
+                    is_go=True,
+                )
                 round_details.append(round_detail)
                 break
 
@@ -244,6 +274,29 @@ class ReviewLoopEngine:
                 stop_reason = (
                     "cap_with_criticals" if has_criticals else "cap_no_criticals"
                 )
+                self._emit_progress(
+                    round_num=round_num,
+                    verdict=review_response.verdict.value,
+                    issue_count=len(review_response.issues),
+                    reviewer_model=getattr(review_response, "reviewer_model", None),
+                    review_latency_ms=review_latency_ms,
+                    input_tokens=getattr(review_response, "input_tokens", None),
+                    output_tokens=getattr(review_response, "output_tokens", None),
+                    review_cost=round_review_cost,
+                    keep_count=len(review_response.keep),
+                    trim_count=len(review_response.trim),
+                    dispositions=None,
+                    revision_model=None,
+                    revision_latency_ms=None,
+                    revision_cost=None,
+                    prev_draft_size=len(current_plan),
+                    new_draft_size=None,
+                    history_context_size=history_context_size,
+                    raw_gpt_response=review_response.raw_text,
+                    history_context_text=history_context,
+                    revision_prompt_text=None,
+                    is_go=False,
+                )
                 round_details.append(round_detail)
                 break
 
@@ -251,6 +304,7 @@ class ReviewLoopEngine:
             # Validate on the FULL issue list first so disposition indices
             # match the stored issues_json (see history.py:137).
             issues_for_revision = review_response.issues
+            disposition_list: Optional[list[dict]] = None
             if self.config.get("validate_feedback", False):
                 validated = await validate_feedback(
                     current_plan,
@@ -261,6 +315,15 @@ class ReviewLoopEngine:
                 )
                 self.conn.commit()
                 issues_for_revision = validated.issues  # only ACCEPT issues
+                # Build disposition list for verbose output.
+                accept_descs = {i.description for i in validated.issues}
+                disposition_list = [
+                    {
+                        "description": issue.description,
+                        "disposition": "ACCEPT" if issue.description in accept_descs else "DEFER/REJECT",
+                    }
+                    for issue in review_response.issues
+                ]
 
             # --- Step 8: filter issues by severity -------------------------
             filtered_issues = filter_issues(
@@ -273,7 +336,8 @@ class ReviewLoopEngine:
                 current_plan, filtered_issues, review_response
             )
 
-            # --- Step 10: call Claude for revision -------------------------
+            # --- Step 10: call Claude for revision (timed) -----------------
+            _revision_t0 = time.monotonic()
             revised_text = await query_claude(
                 messages=[{"role": "user", "content": revision_prompt}],
                 system_prompt=_REVISION_SYSTEM_PROMPT,
@@ -282,6 +346,7 @@ class ReviewLoopEngine:
                 thinking=self.config.get("thinking", False),
                 max_turns=self.config.get("max_turns"),
             )
+            revision_latency_ms = int((time.monotonic() - _revision_t0) * 1000)
 
             # --- Step 11: store revised draft ------------------------------
             draft_row_id = add_plan_draft(
@@ -300,6 +365,31 @@ class ReviewLoopEngine:
             # --- Step 12: export revised plan artifact ---------------------
             self._write_plan_artifact(round_num, revised_text)
 
+            # --- Step 13: emit per-round progress --------------------------
+            self._emit_progress(
+                round_num=round_num,
+                verdict=review_response.verdict.value,
+                issue_count=len(review_response.issues),
+                reviewer_model=getattr(review_response, "reviewer_model", None),
+                review_latency_ms=review_latency_ms,
+                input_tokens=getattr(review_response, "input_tokens", None),
+                output_tokens=getattr(review_response, "output_tokens", None),
+                review_cost=round_review_cost,
+                keep_count=len(review_response.keep),
+                trim_count=len(review_response.trim),
+                dispositions=disposition_list,
+                revision_model=self.planner_model,
+                revision_latency_ms=revision_latency_ms,
+                revision_cost=None,  # SDK doesn't return cost directly
+                prev_draft_size=len(current_plan),
+                new_draft_size=len(revised_text),
+                history_context_size=history_context_size,
+                raw_gpt_response=review_response.raw_text,
+                history_context_text=history_context,
+                revision_prompt_text=revision_prompt,
+                is_go=False,
+            )
+
             # Advance loop state.
             prev_plan_text = current_plan
             current_plan = revised_text
@@ -307,6 +397,13 @@ class ReviewLoopEngine:
             round_details.append(round_detail)
 
         final_round_num = round_details[-1]["round"] if round_details else 0
+        logger.info("Loop stopped: %s", stop_reason)
+        logger.info("Loop complete: %d rounds, $%.4f", len(round_details), total_cost)
+        self._emit_final(
+            stop_reason=stop_reason,
+            total_rounds=len(round_details),
+            total_cost=total_cost,
+        )
 
         return LoopResult(
             converged=(stop_reason in ("go", "cap_no_criticals")),
@@ -322,6 +419,139 @@ class ReviewLoopEngine:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Progress output
+    # ------------------------------------------------------------------
+
+    def _verbosity(self) -> str:
+        """Return the configured verbosity level: 'quiet', 'verbose', or 'debug'."""
+        return self.config.get("verbosity", "quiet")
+
+    def _emit_progress(
+        self,
+        round_num: int,
+        verdict: str,
+        issue_count: int,
+        *,
+        reviewer_model: Optional[str] = None,
+        review_latency_ms: Optional[int] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+        review_cost: Optional[float] = None,
+        keep_count: int = 0,
+        trim_count: int = 0,
+        dispositions: Optional[list] = None,
+        revision_model: Optional[str] = None,
+        revision_latency_ms: Optional[int] = None,
+        revision_cost: Optional[float] = None,
+        prev_draft_size: Optional[int] = None,
+        new_draft_size: Optional[int] = None,
+        history_context_size: int = 0,
+        raw_gpt_response: Optional[str] = None,
+        history_context_text: Optional[str] = None,
+        revision_prompt_text: Optional[str] = None,
+        is_go: bool = False,
+    ) -> None:
+        """Emit per-round progress to stdout.
+
+        Output format depends on ``self.config["verbosity"]``:
+
+        * ``"quiet"`` (default) — one line per round, headless-safe.
+        * ``"verbose"`` — full round block with metrics and dispositions.
+        * ``"debug"`` — all of verbose plus raw API content with warning.
+        """
+        v = self._verbosity()
+        suffix = "" if is_go else " → revising..."
+        headless_line = f"Round {round_num}: {verdict} ({issue_count} issues){suffix}"
+        print(headless_line, flush=True)
+
+        if v not in ("verbose", "debug"):
+            return
+
+        # --- Verbose block -------------------------------------------------
+        print("─" * 60, flush=True)
+
+        # Reviewer metrics
+        model_str = reviewer_model or "unknown"
+        latency_str = f"{review_latency_ms}ms" if review_latency_ms is not None else "?"
+        tok_str = (
+            f"{input_tokens}in/{output_tokens}out"
+            if input_tokens is not None and output_tokens is not None
+            else "?"
+        )
+        cost_str = f"${review_cost:.4f}" if review_cost is not None else "$?"
+        print(
+            f"  Reviewer: model={model_str}, latency={latency_str}, "
+            f"tokens={tok_str}, cost={cost_str}",
+            flush=True,
+        )
+
+        # Keep/trim counts
+        print(f"  Keep: {keep_count} items  Trim: {trim_count} items", flush=True)
+
+        # Per-issue dispositions
+        if dispositions:
+            for d in dispositions:
+                disp = d.get("disposition", "")
+                desc = d.get("description", "")[:80]
+                print(f"    [{disp}] {desc}", flush=True)
+
+        # Revision metrics (only when revision happened)
+        if revision_model is not None:
+            rev_latency_str = f"{revision_latency_ms}ms" if revision_latency_ms is not None else "?"
+            rev_cost_str = f"${revision_cost:.4f}" if revision_cost is not None else "n/a"
+            print(
+                f"  Revision: model={revision_model}, latency={rev_latency_str}, "
+                f"cost={rev_cost_str}",
+                flush=True,
+            )
+
+        # Draft size change
+        if prev_draft_size is not None and new_draft_size is not None:
+            delta = new_draft_size - prev_draft_size
+            sign = "+" if delta >= 0 else ""
+            print(
+                f"  Draft: {prev_draft_size} → {new_draft_size} chars ({sign}{delta})",
+                flush=True,
+            )
+
+        # History context size
+        print(f"  History context: {history_context_size} chars", flush=True)
+
+        if v != "debug":
+            return
+
+        # --- Debug block ---------------------------------------------------
+        _DEBUG_WARN = "⚠ DEBUG OUTPUT — may contain sensitive content"
+
+        if raw_gpt_response:
+            print(f"\n{_DEBUG_WARN}", flush=True)
+            print("  [Raw GPT response]", flush=True)
+            print(raw_gpt_response, flush=True)
+
+        if history_context_text:
+            print(f"\n{_DEBUG_WARN}", flush=True)
+            print("  [History context sent to GPT]", flush=True)
+            print(history_context_text, flush=True)
+
+        if revision_prompt_text:
+            print(f"\n{_DEBUG_WARN}", flush=True)
+            print("  [Revision prompt sent to Claude]", flush=True)
+            print(revision_prompt_text, flush=True)
+
+    def _emit_final(
+        self,
+        stop_reason: str,
+        total_rounds: int,
+        total_cost: float,
+    ) -> None:
+        """Emit the final summary line to stdout."""
+        cost_str = f"${total_cost:.4f}"
+        if stop_reason in ("go", "cap_no_criticals"):
+            print(f"Converged in {total_rounds} rounds. {cost_str} total.", flush=True)
+        else:
+            print(f"Cap reached after {total_rounds} rounds. {cost_str} total.", flush=True)
 
     def _latest_draft_number(self) -> int:
         """Return the draft_number of the most recent plan draft, or 0."""

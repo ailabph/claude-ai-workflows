@@ -20,7 +20,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
-logger = logging.getLogger("planner-auto.db")
+logger = logging.getLogger(__name__)
 
 # Default database directory
 DEFAULT_DB_DIR = os.path.join(os.path.expanduser("~"), ".planner-auto")
@@ -167,7 +167,9 @@ def get_schema_version(conn: sqlite3.Connection) -> int:
     row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
     if row is None:
         return 1
-    return int(row[0])
+    version = int(row[0])
+    logger.debug("Schema version: %d", version)
+    return version
 
 
 def set_schema_version(conn: sqlite3.Connection, version: int) -> None:
@@ -204,7 +206,7 @@ def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
     Foreign key enforcement is disabled for the duration of the rebuild
     (required by SQLite when dropping/recreating tables with FK refs).
     """
-    logger.info("Running schema migration v1 → v2")
+    logger.warning("Migrating schema v1 → v2")
 
     # Must be outside an open transaction to toggle foreign_keys.
     conn.commit()

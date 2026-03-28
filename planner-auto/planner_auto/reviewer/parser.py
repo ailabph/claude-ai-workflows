@@ -13,6 +13,7 @@ Never raises — ``parse_reviewer_response()`` always returns a valid
 from __future__ import annotations
 
 import json
+import logging
 import re
 import xml.etree.ElementTree as ET
 from typing import Any, Optional
@@ -23,6 +24,8 @@ from planner_auto.reviewer.contract import (
     Severity,
     Verdict,
 )
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -351,22 +354,31 @@ def parse_reviewer_response(raw_text: str) -> ReviewerResponse:
         A :class:`ReviewerResponse` with a verdict and any extracted issues.
     """
     if not raw_text or not raw_text.strip():
+        logger.debug("Parsed as failure: empty input")
         return _make_parse_failure()
 
     # Stage 1: JSON
     result = _try_parse_json(raw_text)
     if result is not None:
+        logger.debug("Parsed as JSON")
         return result
+
+    logger.debug("JSON parse failed, trying XML")
 
     # Stage 2: XML
     result = _try_parse_xml(raw_text)
     if result is not None:
+        logger.debug("Parsed as XML")
         return result
+
+    logger.debug("XML parse failed, trying free-form")
 
     # Stage 3: Free-form
     result = _try_parse_freeform(raw_text)
     if result is not None:
+        logger.debug("Parsed as free-form")
         return result
 
     # Stage 4: Parse failure
+    logger.debug("Parsed as failure: no format matched")
     return _make_parse_failure()

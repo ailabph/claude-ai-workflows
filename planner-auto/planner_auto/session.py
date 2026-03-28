@@ -2,6 +2,7 @@
 SessionManager: enforces phase transitions and command permissions.
 """
 
+import logging
 import sqlite3
 
 from planner_auto.db import (
@@ -25,6 +26,8 @@ from planner_auto.state import (
     Phase,
     Status,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class SessionManager:
@@ -70,6 +73,7 @@ class SessionManager:
         if target not in allowed_targets:
             raise InvalidTransitionError(current_phase, target_phase)
 
+        logger.info("Phase %s → %s (session %s)", current_phase, target_phase, session_id)
         update_session_phase(self.conn, session_id, target_phase)
         self.conn.commit()
 
@@ -101,6 +105,10 @@ class SessionManager:
         # Rule 2: PAUSED status restrictions
         if status == Status.PAUSED.value:
             if command_name not in PAUSED_ALLOWED_COMMANDS:
+                logger.warning(
+                    "Command '%s' blocked in phase %s (status=PAUSED, session=%s)",
+                    command_name, phase, session_id,
+                )
                 raise CommandNotAllowedError(
                     command_name, phase, status,
                     reason="Session is PAUSED. Only 'resume', 'status', and 'export' are allowed.",
@@ -129,6 +137,10 @@ class SessionManager:
 
         allowed = PHASE_ALLOWED_COMMANDS.get(current_phase, set())
         if command_name not in allowed:
+            logger.warning(
+                "Command '%s' blocked in phase %s (session=%s)",
+                command_name, phase, session_id,
+            )
             raise CommandNotAllowedError(
                 command_name, phase, status,
                 reason=f"Command '{command_name}' is not allowed in the {phase} phase.",
@@ -151,6 +163,7 @@ class SessionManager:
             SessionNotFoundError: If session doesn't exist.
         """
         self._get_session_or_raise(session_id)
+        logger.info("Session paused, blocker: %s (session=%s)", source, session_id)
         with transaction(self.conn):
             update_session_status(self.conn, session_id, Status.PAUSED.value)
             blocker_id = create_blocker(self.conn, session_id, source, question)
@@ -175,4 +188,5 @@ class SessionManager:
             resolve_blocker(self.conn, blocker_id, answer)
             remaining = get_open_blockers(self.conn, session_id)
             if not remaining:
+                logger.info("Session resumed after blocker resolution (session=%s)", session_id)
                 update_session_status(self.conn, session_id, Status.ACTIVE.value)

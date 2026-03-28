@@ -29,7 +29,7 @@ from planner_auto.reviewer.contract import ReviewerContract, ReviewerResponse
 from planner_auto.reviewer.parser import parse_reviewer_response
 from planner_auto.reviewer.prompts import PROMPT_BY_MODE, USER_PROMPT_TEMPLATE
 
-logger = logging.getLogger("planner-auto.reviewer")
+logger = logging.getLogger(__name__)
 
 # Retry configuration
 _RATE_LIMIT_DELAYS = [2, 4, 8]  # seconds between each of 3 retries

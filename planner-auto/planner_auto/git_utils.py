@@ -4,7 +4,7 @@ import logging
 import subprocess
 from typing import Optional
 
-logger = logging.getLogger("planner-auto.git")
+logger = logging.getLogger(__name__)
 
 
 def discover_repo_root(cwd: Optional[str] = None) -> Optional[str]:

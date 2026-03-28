@@ -23,7 +23,7 @@ from planner_auto.errors import (
     SDKTimeoutError,
 )
 
-logger = logging.getLogger("planner-auto.sdk")
+logger = logging.getLogger(__name__)
 
 
 async def query_claude(
@@ -90,6 +90,10 @@ async def query_claude(
         thinking=thinking_config,
         effort=effort,
     )
+    logger.debug(
+        "SDK config applied: effort=%s, thinking=%s, max_turns=%s",
+        effort, thinking, opts_max_turns,
+    )
 
     # Rate-limit retry: up to 3 attempts with exponential backoff (2s, 4s, 8s)
     rate_limit_delays = [2, 4, 8]
@@ -128,7 +132,7 @@ async def query_claude(
             if rate_attempt < len(rate_limit_delays):
                 delay = rate_limit_delays[rate_attempt]
                 logger.warning(
-                    "Rate limited (attempt %d/%d), retrying in %ds...",
+                    "Rate limited, retry %d/%d in %ds",
                     rate_attempt + 1, len(rate_limit_delays) + 1, delay,
                 )
                 await asyncio.sleep(delay)
@@ -145,8 +149,8 @@ async def query_claude(
             if timeout_retries_used < max_timeout_retries:
                 timeout_retries_used += 1
                 logger.warning(
-                    "Timeout/connection error (retry %d/%d), retrying in 2s...",
-                    timeout_retries_used, max_timeout_retries,
+                    "Timeout after %ds, retrying (%d/%d)",
+                    timeout_sec, timeout_retries_used, max_timeout_retries,
                 )
                 await asyncio.sleep(2)
                 continue

@@ -8,7 +8,9 @@ Persistence contracts:
 """
 
 import json
+import logging
 import sqlite3
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -30,6 +32,7 @@ from planner_auto.prompts import (
 from planner_auto.sdk_wrapper import query_claude
 from planner_auto.session import SessionManager
 
+logger = logging.getLogger(__name__)
 
 DISCUSSION_SYSTEM_PROMPT = """\
 You are a helpful planning assistant. You are in a discussion phase with the user \
@@ -77,11 +80,15 @@ async def discuss(
     messages.append({"role": "user", "content": user_input})
 
     # Call SDK — if this fails, nothing is persisted
+    logger.info("Calling Claude for discussion, model=%s", DEFAULT_MODEL)
+    _discuss_t0 = time.monotonic()
     response = await query_claude(
         messages=messages,
         system_prompt=DISCUSSION_SYSTEM_PROMPT,
         model=DEFAULT_MODEL,
     )
+    _duration_ms = int((time.monotonic() - _discuss_t0) * 1000)
+    logger.info("Claude responded, %d chars, %dms", len(response), _duration_ms)
 
     # Commit both messages together atomically on success
     with transaction(conn):
@@ -136,11 +143,13 @@ async def synthesize_context(
     synthesis_messages = [{"role": "user", "content": synthesis_input}]
 
     # Call SDK — if this fails, nothing is persisted
+    logger.info("Calling Claude for synthesis, model=%s", SYNTHESIS_MODEL)
     synthesis = await query_claude(
         messages=synthesis_messages,
         system_prompt=SYNTHESIS_SYSTEM_PROMPT,
         model=SYNTHESIS_MODEL,
     )
+    logger.info("Context synthesized, %d words", len(synthesis.split()))
 
     # Commit synthesis entry only on success (no UPSERT — syntheses accumulate)
     timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
@@ -195,11 +204,15 @@ async def generate_plan(
     plan_messages = [{"role": "user", "content": plan_prompt}]
 
     # Call SDK — if this fails, nothing is persisted
+    logger.info("Calling Claude for plan generation, model=%s", model)
+    _t0 = time.monotonic()
     plan_content = await query_claude(
         messages=plan_messages,
         system_prompt=PLANNER_SYSTEM_PROMPT,
         model=model,
     )
+    _duration_ms = int((time.monotonic() - _t0) * 1000)
+    logger.info("Claude responded, %d chars, %dms", len(plan_content), _duration_ms)
 
     # Step 3: Commit config snapshot and plan draft atomically on success
     config = {

@@ -2,12 +2,18 @@
 
 import asyncio
 import json
+import logging
 import os
+import shutil
 import sqlite3
 
 import click
 
+logger = logging.getLogger(__name__)
+
 from planner_auto.db import (
+    CURRENT_SCHEMA_VERSION,
+    DEFAULT_DB_PATH,
     add_context_entry,
     create_session,
     get_all_plan_drafts,
@@ -16,6 +22,7 @@ from planner_auto.db import (
     get_messages,
     get_open_blockers,
     get_review_by_round,
+    get_schema_version,
     get_session,
     get_session_config,
     init_schema,
@@ -31,7 +38,15 @@ from planner_auto.errors import (
 )
 from planner_auto.export import export_review_artifacts, kafra_handoff
 from planner_auto.git_utils import discover_repo_root
-from planner_auto.logging import setup_session_logger
+from planner_auto.inspect import (
+    dump_session_json,
+    format_config,
+    format_dispositions,
+    format_raw_response,
+    format_reviews_table,
+    reconstruct_history,
+)
+from planner_auto.logging import setup_session_logging
 from planner_auto.loop.convergence import detect_complexity, get_max_rounds
 from planner_auto.loop.engine import ReviewLoopEngine
 from planner_auto.reviewer.direct_api import DirectAPIAdapter
@@ -70,6 +85,7 @@ def cli(ctx, db_path):
 @click.pass_context
 def start(ctx, project, verbose, debug, repo_root):
     """Start a new planning session."""
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
 
     session_id = create_session(conn, project)
@@ -90,7 +106,9 @@ def start(ctx, project, verbose, debug, repo_root):
     conn.commit()
 
     # Set up session logger (creates log file)
-    setup_session_logger(session_id, verbose=verbose, debug=debug)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: start, session_id=%s, project=%s, verbose=%s, debug=%s",
+                session_id, project, verbose, debug)
 
     click.echo(f"Session created: {session_id}")
     click.echo(f"Project: {project}")
@@ -172,10 +190,16 @@ def status(ctx, session_id):
 
 @cli.command()
 @click.argument("session_id")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def resume(ctx, session_id):
+def resume(ctx, session_id, verbose, debug):
     """Resume a paused or active session, resolving open blockers."""
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: resume, session_id=%s, verbose=%s, debug=%s",
+                session_id, verbose, debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -221,9 +245,11 @@ MAX_FILE_SIZE = 500 * 1024  # 500 KB
 @click.argument("session_id")
 @click.option("--file", "file_path", type=click.Path(), default=None, help="Path to a file to add as context.")
 @click.option("--note", default=None, help="Text note to add as context.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def add_context(ctx, session_id, file_path, note):
+def add_context(ctx, session_id, file_path, note, debug):
     """Add a context entry (file or note) to a session."""
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
 
     session = get_session(conn, session_id)
@@ -238,6 +264,9 @@ def add_context(ctx, session_id, file_path, note):
         sm.check_command(session_id, "add-context")
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
         ctx.exit(1)
         return
 
@@ -316,12 +345,18 @@ def _add_note_context(conn, session_id, note):
 @click.argument("message", required=False, default=None)
 @click.option("--interactive", is_flag=True, default=False, help="Enter interactive discussion mode.")
 @click.option("--done", is_flag=True, default=False, help="Advance to PLANNING after this message.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def discuss(ctx, session_id, message, interactive, done):
+def discuss(ctx, session_id, message, interactive, done, verbose, debug):
     """Send a discussion message or enter interactive mode."""
     from planner_auto.agents import discuss as discuss_fn
 
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: discuss, session_id=%s, interactive=%s, done=%s, verbose=%s, debug=%s",
+                session_id, interactive, done, verbose, debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -361,10 +396,15 @@ def _discuss_single(ctx, conn, session_id, message, discuss_fn):
         return True
     except SDKError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
         return False
-        click.echo("Hint: Check your API key and network connection.", err=True)
     except CommandNotAllowedError as e:
         click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
 
 
 def _discuss_interactive(ctx, conn, sm, session_id):
@@ -394,6 +434,9 @@ def _discuss_interactive(ctx, conn, sm, session_id):
                 click.echo("Phase advanced to PLANNING.")
             except Exception as e:
                 click.echo(f"Error advancing phase: {e}", err=True)
+                if ctx.obj.get("debug"):
+                    import traceback
+                    click.echo(traceback.format_exc(), err=True)
             break
 
         if not user_input.strip():
@@ -405,20 +448,32 @@ def _discuss_interactive(ctx, conn, sm, session_id):
         except SDKError as e:
             click.echo(f"SDK Error: {e}", err=True)
             click.echo("You can retry or type '/done' to exit.\n", err=True)
+            if ctx.obj.get("debug"):
+                import traceback
+                click.echo(traceback.format_exc(), err=True)
         except CommandNotAllowedError as e:
             click.echo(f"Error: {e}", err=True)
+            if ctx.obj.get("debug"):
+                import traceback
+                click.echo(traceback.format_exc(), err=True)
 
 
 @cli.command()
 @click.argument("session_id")
 @click.option("--model", default="claude-sonnet-4-6", help="Model for plan generation.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def generate(ctx, session_id, model):
+def generate(ctx, session_id, model, verbose, debug):
     """Generate an implementation plan."""
     from planner_auto.agents import generate_plan
     from planner_auto.validation import validate_plan_format
 
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: generate, session_id=%s, model=%s, verbose=%s, debug=%s",
+                session_id, model, verbose, debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -450,17 +505,26 @@ def generate(ctx, session_id, model):
     except SDKError as e:
         click.echo(f"Error: {e}", err=True)
         click.echo("Hint: Check your API key and network connection.", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
 
 
 @cli.command("export")
 @click.argument("session_id")
 @click.option("--output-dir", default=None, help="Override output directory.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def export_cmd(ctx, session_id, output_dir):
+def export_cmd(ctx, session_id, output_dir, verbose, debug):
     """Export session artifacts to disk."""
     from planner_auto.export import export_session
 
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: export, session_id=%s, output_dir=%s, verbose=%s, debug=%s",
+                session_id, output_dir, verbose, debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -476,12 +540,18 @@ def export_cmd(ctx, session_id, output_dir):
 
 @cli.command()
 @click.argument("session_id")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def complete(ctx, session_id):
+def complete(ctx, session_id, verbose, debug):
     """Complete a session — checks blockers, advances phase, auto-exports."""
     from planner_auto.export import export_session
 
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("Command invoked: complete, session_id=%s, verbose=%s, debug=%s",
+                session_id, verbose, debug)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -512,6 +582,9 @@ def complete(ctx, session_id):
         sm.advance_phase(session_id, Phase.COMPLETE.value)
     except Exception as e:
         click.echo(f"Error advancing phase: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
         ctx.exit(1)
         return
 
@@ -542,6 +615,8 @@ def complete(ctx, session_id):
     help="Override complexity detection.",
 )
 @click.option("--repo-root", default=None, help="Override repository root for .kafra handoff.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
 def review(
     ctx,
@@ -553,9 +628,17 @@ def review(
     reviewer_reasoning,
     complexity_override,
     repo_root,
+    verbose,
+    debug,
 ):
     """Run the GPT review loop for a planning session."""
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info(
+        "Command invoked: review, session_id=%s, fast=%s, reviewer_model=%s, verbose=%s, debug=%s",
+        session_id, fast, reviewer_model, verbose, debug,
+    )
 
     session = get_session(conn, session_id)
     if session is None:
@@ -640,6 +723,14 @@ def review(
     # Try both, preferring "model" (from generate_plan config).
     planner_model = base_config.get("model") or base_config.get("model_default", "claude-sonnet-4-6")
 
+    # Resolve verbosity from CLI flags: debug > verbose > quiet.
+    if debug:
+        verbosity = "debug"
+    elif verbose:
+        verbosity = "verbose"
+    else:
+        verbosity = "quiet"
+
     engine_config: dict = {
         "validate_feedback": validate_fb,
         "filter_severity": ["critical", "major"],
@@ -647,6 +738,7 @@ def review(
         "effort": "medium",       # POC-proven default for planner revision calls
         "thinking": True,         # POC-proven default for planner revision calls
         "max_turns": 0,           # unlimited for thinking mode
+        "verbosity": verbosity,
     }
 
     engine = ReviewLoopEngine(
@@ -665,6 +757,9 @@ def review(
         result = asyncio.run(engine.run(current_plan, max_rounds=max_rounds))
     except Exception as exc:
         click.echo(f"Error during review loop: {exc}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            click.echo(traceback.format_exc(), err=True)
         ctx.exit(1)
         return
 
@@ -676,6 +771,9 @@ def review(
             sm.advance_phase(session_id, Phase.COMPLETE.value)
         except Exception as exc:
             click.echo(f"Error advancing phase: {exc}", err=True)
+            if ctx.obj.get("debug"):
+                import traceback
+                click.echo(traceback.format_exc(), err=True)
 
         update_session_status(conn, session_id, "COMPLETE")
         conn.commit()
@@ -720,3 +818,209 @@ def review(
 
         sm.pause_with_blocker(session_id, "reviewer", blocker_q)
         click.echo(f"Session paused. Blocker: {blocker_q[:120]}")
+
+
+# ---------------------------------------------------------------------------
+# inspect subgroup
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def inspect():
+    """Inspect session data stored in the database."""
+
+
+@inspect.command("reviews")
+@click.argument("session_id")
+@click.pass_context
+def inspect_reviews(ctx, session_id):
+    """Show a table of all reviews for a session."""
+    conn = _get_conn(ctx)
+    click.echo(format_reviews_table(conn, session_id))
+
+
+@inspect.command("dispositions")
+@click.argument("session_id")
+@click.option("--round", "round_num", type=int, default=None, help="Filter to a single round.")
+@click.pass_context
+def inspect_dispositions(ctx, session_id, round_num):
+    """Show issue dispositions (ACCEPT/DEFER/REJECT) for a session."""
+    conn = _get_conn(ctx)
+    click.echo(format_dispositions(conn, session_id, round_num))
+
+
+@inspect.command("config")
+@click.argument("session_id")
+@click.pass_context
+def inspect_config(ctx, session_id):
+    """Show the latest config snapshot for a session."""
+    conn = _get_conn(ctx)
+    click.echo(format_config(conn, session_id))
+
+
+@inspect.command("history")
+@click.argument("session_id")
+@click.argument("round_num", type=int)
+@click.pass_context
+def inspect_history(ctx, session_id, round_num):
+    """Show review history context for a round (reconstructed from DB state, not stored)."""
+    conn = _get_conn(ctx)
+    click.echo(reconstruct_history(conn, session_id, round_num))
+
+
+@inspect.command("raw-response")
+@click.argument("session_id")
+@click.argument("round_num", type=int)
+@click.pass_context
+def inspect_raw_response(ctx, session_id, round_num):
+    """Show the raw reviewer API response for a round.
+
+    ⚠ Output may contain repository content and API responses.
+    Do not share without redaction.
+    """
+    conn = _get_conn(ctx)
+    click.echo(format_raw_response(conn, session_id, round_num))
+
+
+@inspect.command("dump")
+@click.argument("session_id")
+@click.pass_context
+def inspect_dump(ctx, session_id):
+    """Dump all session data as JSON.
+
+    ⚠ Output may contain repository content and API responses.
+    Do not share without redaction.
+    """
+    conn = _get_conn(ctx)
+    click.echo(dump_session_json(conn, session_id))
+
+
+# ---------------------------------------------------------------------------
+# check command
+# ---------------------------------------------------------------------------
+
+@cli.command("check")
+@click.option("--probe", is_flag=True, default=False,
+              help="Send trivial live API calls to verify connectivity and measure latency.")
+@click.pass_context
+def check(ctx, probe):
+    """Validate the planner-auto environment.
+
+    Default (safe): checks env vars, CLI tools on PATH, importable packages,
+    DB writability, and schema version — no live API calls.
+
+    With --probe: sends a trivial prompt to each API and reports latency.
+    """
+    import importlib
+    import time
+
+    results: list[tuple[str, bool, str]] = []  # (label, passed, detail)
+
+    # ---- Auth checks -------------------------------------------------------
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    oauth_token = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    claude_auth_ok = bool(anthropic_key or oauth_token)
+    if claude_auth_ok:
+        src = "ANTHROPIC_API_KEY" if anthropic_key else "CLAUDE_CODE_OAUTH_TOKEN"
+        results.append(("Claude auth", True, f"set via {src}"))
+    else:
+        results.append(("Claude auth", False,
+                        "neither ANTHROPIC_API_KEY nor CLAUDE_CODE_OAUTH_TOKEN is set"))
+
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+    results.append((
+        "OPENAI_API_KEY",
+        bool(openai_key),
+        "set" if openai_key else "not set",
+    ))
+
+    # ---- PATH checks -------------------------------------------------------
+    claude_path = shutil.which("claude")
+    results.append((
+        "claude on PATH",
+        claude_path is not None,
+        claude_path or "not found",
+    ))
+
+    # ---- Import checks -----------------------------------------------------
+    openai_importable = importlib.util.find_spec("openai") is not None
+    results.append((
+        "openai importable",
+        openai_importable,
+        "yes" if openai_importable else "not installed (pip install openai)",
+    ))
+
+    # ---- DB path writable --------------------------------------------------
+    db_path = ctx.obj.get("db_path") or DEFAULT_DB_PATH
+    db_dir = os.path.dirname(db_path)
+    try:
+        os.makedirs(db_dir, exist_ok=True)
+        # Test write by opening the DB (creates it if missing)
+        test_conn = open_db(db_path)
+        db_ver = get_schema_version(test_conn)
+        test_conn.close()
+        results.append(("DB path writable", True, db_path))
+    except Exception as exc:
+        db_ver = None
+        results.append(("DB path writable", False, f"{exc}"))
+
+    # ---- Schema version ----------------------------------------------------
+    if db_ver is not None:
+        schema_current = db_ver == CURRENT_SCHEMA_VERSION
+        results.append((
+            "Schema version",
+            schema_current,
+            f"v{db_ver}" + ("" if schema_current else f" (expected v{CURRENT_SCHEMA_VERSION})"),
+        ))
+    else:
+        results.append(("Schema version", False, "could not read (DB not writable)"))
+
+    # ---- Live probe (optional) ---------------------------------------------
+    if probe:
+        # Claude probe via SDK wrapper
+        try:
+            import asyncio as _asyncio
+            from planner_auto.sdk_wrapper import query_claude
+            _t0 = time.monotonic()
+
+            async def _probe_claude():
+                return await query_claude("Say OK", model="claude-haiku-4-5-20251001")
+
+            _asyncio.run(_probe_claude())
+            _ms = int((time.monotonic() - _t0) * 1000)
+            results.append(("Claude API probe", True, f"{_ms}ms"))
+        except Exception as exc:
+            results.append(("Claude API probe", False, str(exc)[:80]))
+
+        # OpenAI probe
+        if openai_importable and openai_key:
+            try:
+                import openai as _openai
+                _t0 = time.monotonic()
+                _client = _openai.OpenAI(api_key=openai_key)
+                _client.chat.completions.create(
+                    model="gpt-4o-mini",
+                    messages=[{"role": "user", "content": "Say OK"}],
+                    max_tokens=5,
+                )
+                _ms = int((time.monotonic() - _t0) * 1000)
+                results.append(("OpenAI API probe", True, f"{_ms}ms"))
+            except Exception as exc:
+                results.append(("OpenAI API probe", False, str(exc)[:80]))
+        elif probe:
+            results.append(("OpenAI API probe", False,
+                            "skipped (openai not installed or OPENAI_API_KEY not set)"))
+
+    # ---- Print results -----------------------------------------------------
+    all_passed = all(ok for _, ok, _ in results)
+    click.echo("planner-auto environment check")
+    click.echo("=" * 50)
+    for label, ok, detail in results:
+        icon = "✓" if ok else "✗"
+        click.echo(f"  {icon}  {label:<28} {detail}")
+    click.echo("=" * 50)
+    if all_passed:
+        click.echo("All checks passed.")
+    else:
+        failed = [label for label, ok, _ in results if not ok]
+        click.echo(f"{len(failed)} check(s) failed: {', '.join(failed)}")
+        ctx.exit(1)
