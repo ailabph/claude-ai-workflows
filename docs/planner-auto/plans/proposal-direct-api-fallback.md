@@ -1,4 +1,4 @@
-# Proposal: Direct Anthropic API Fallback for planner-auto
+# Proposal: Direct Anthropic API Fallback for planner-auto (v2)
 
 ## Problem
 
@@ -13,191 +13,294 @@ planner-auto is unusable while the user has an active Claude Code session. This 
 
 **The irony:** planner-auto was designed to be used alongside Claude Code, but the SDK subprocess architecture makes this impossible.
 
-## Context
+---
 
-planner-auto makes three types of Claude calls:
+## Design Principles
 
-| Call | Module | Current Implementation | Purpose |
-|------|--------|----------------------|---------|
-| **discuss** | `agents.py: discuss()` | `sdk_wrapper.query_claude()` → `claude-agent-sdk` subprocess | Interactive conversation |
-| **synthesize** | `agents.py: synthesize_context()` | `sdk_wrapper.query_claude()` → `claude-agent-sdk` subprocess | Context synthesis (Haiku) |
-| **generate** | `agents.py: generate_plan()` | `sdk_wrapper.query_claude()` → `claude-agent-sdk` subprocess | Plan generation (Sonnet/Opus) |
-| **revise** | `loop/engine.py` | `sdk_wrapper.query_claude()` → `claude-agent-sdk` subprocess | Plan revision during review loop |
+1. **`query_claude()` stays the only public API** — all callers (`agents.py`, `loop/engine.py`) continue to call `sdk_wrapper.query_claude()` with the same signature and return type (`str`). No caller changes.
+2. **Backend selection happens inside the wrapper** — `sdk_wrapper.py` gains an internal `_backend` choice: `"direct"` (Anthropic API) or `"sdk"` (subprocess). Callers don't know or care which backend is active.
+3. **Direct API is the default** — the SDK subprocess is opt-in for cases that need tool access (future).
+4. **`anthropic` becomes a declared dependency** — added to `pyproject.toml`.
 
-All four go through `sdk_wrapper.query_claude()` which uses the SDK subprocess. None of them need tool access (Read, Write, Bash) — they're all text-in/text-out conversations.
+---
 
-The GPT reviewer already uses the `openai` package directly — no subprocess, no rate limit conflicts.
+## Architecture
 
-## Proposed Fix
+### Current (broken with active Claude Code)
 
-Replace the `claude-agent-sdk` subprocess with direct `anthropic` package calls for all planner-auto Claude interactions. Keep the SDK as an optional backend for cases where tool access is needed (future).
+```
+agents.py / engine.py
+    → sdk_wrapper.query_claude()       # returns str
+        → claude-agent-sdk.query()     # spawns claude CLI subprocess
+            → RATE LIMITED (shares quota with Claude Code)
+```
 
-### Why direct API, not fix the SDK
+### Proposed (works alongside Claude Code)
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| Fix SDK rate limit retry | Keeps tool access capability | Still shares quota with Claude Code; may need 30s+ backoff; fragile |
-| Direct `anthropic` package | No rate limit conflict; simpler; faster startup (no subprocess spawn); already a dependency | No tool access (Read/Write/Bash); need to reimplement effort/thinking params |
-| Hybrid (direct default, SDK opt-in) | Best of both | More code paths to maintain |
+```
+agents.py / engine.py
+    → sdk_wrapper.query_claude()       # returns str (UNCHANGED)
+        → backend = config["claude_backend"]
+        ├── "direct" (default):
+        │   → anthropic.AsyncAnthropic().messages.create()
+        │   → extract text → return str
+        └── "sdk" (opt-in):
+            → claude-agent-sdk.query()
+            → extract ResultMessage.result → return str
+```
 
-**Recommendation: Direct API as default, SDK as opt-in (`--use-sdk` flag).**
-
-planner-auto's Claude calls are all text conversations — discuss, synthesize, generate, revise. None need file system access. The `anthropic` package supports:
-- All models (Opus, Sonnet, Haiku) ✓
-- System prompts ✓
-- Temperature / max_tokens ✓
-- Extended thinking (beta) ✓
-- Streaming ✓
-- Token usage in response ✓
-
-What it doesn't support (that SDK does):
-- Tool use (Read, Write, Bash) — not needed for planner-auto
-- MCP servers — not needed
-- Session continuity / resume — planner-auto manages its own sessions via SQLite
-
-### Implementation
-
-**New module: `planner_auto/claude_client.py`**
+### Return Contract (unchanged)
 
 ```python
-"""Direct Anthropic API client for planner-auto.
-
-Uses the `anthropic` package directly instead of `claude-agent-sdk` subprocess.
-This avoids rate-limit conflicts with active Claude Code sessions.
-"""
-
-import anthropic
-import time
-import logging
-
-logger = logging.getLogger(__name__)
-
-async def query_claude_direct(
+async def query_claude(
     messages: list[dict],
     system_prompt: str,
-    model: str = "claude-sonnet-4-6",
-    max_tokens: int = 16384,
+    model: str,
     timeout_sec: int = 120,
     effort: str | None = None,
     thinking: bool = False,
+    max_turns: int | None = None,
+    backend: str | None = None,      # NEW: "direct" or "sdk", defaults to module-level setting
+) -> str:
+    """Returns response text. Callers do not change."""
+```
+
+The only addition is the optional `backend` parameter. All existing callers continue to work without modification.
+
+---
+
+## Backend Selection Semantics
+
+### Default
+
+Module-level default in `sdk_wrapper.py`:
+
+```python
+DEFAULT_BACKEND = "direct"  # Use Anthropic API directly (no subprocess)
+```
+
+### Override hierarchy (highest wins)
+
+1. **Per-call `backend=` param** — for specific calls that need a different backend
+2. **Session config `claude_backend`** — stored in `session_config.config_json["claude_backend"]`; set at session start
+3. **CLI flag `--claude-backend direct|sdk`** — on `start` command; persisted in session config
+4. **Module default `DEFAULT_BACKEND`** — `"direct"`
+
+### Which commands use it
+
+| Command | Claude calls | Backend source |
+|---------|-------------|---------------|
+| `discuss` | `agents.discuss()` | Session config (set at `start`) |
+| `generate` | `agents.generate_plan()`, `agents.synthesize_context()` | Session config |
+| `review` | `loop/engine.py` revision calls | Session config |
+| `check --probe` | Test Claude call | Module default (no session) |
+
+All go through `query_claude()`. Backend is resolved once per call from the hierarchy above.
+
+### Session config persistence
+
+```json
+{
+  "project": "my-api",
+  "claude_backend": "direct",
+  "model_default": "claude-opus-4-6",
+  ...
+}
+```
+
+Logged at session start: `INFO: Claude backend: direct (Anthropic API)` or `INFO: Claude backend: sdk (CLI subprocess)`.
+
+---
+
+## Direct API Implementation (inside sdk_wrapper.py)
+
+New internal function added to `sdk_wrapper.py`:
+
+```python
+async def _execute_direct(
+    prompt: str,
+    system_prompt: str,
+    model: str,
+    max_tokens: int = 16384,
+    timeout_sec: int = 120,
+    thinking: bool = False,
     thinking_budget: int = 10000,
 ) -> tuple[str, dict]:
-    """Call Claude via the Anthropic API directly.
-
-    Returns (response_text, usage_info).
-    """
+    """Call Claude via anthropic package directly. Returns (text, usage)."""
     client = anthropic.AsyncAnthropic()  # reads ANTHROPIC_API_KEY from env
 
     kwargs = {
         "model": model,
         "max_tokens": max_tokens,
         "system": system_prompt,
-        "messages": messages,
+        "messages": [{"role": "user", "content": prompt}],
     }
 
     if thinking:
-        kwargs["thinking"] = {
-            "type": "enabled",
-            "budget_tokens": thinking_budget,
-        }
+        kwargs["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+        # Extended thinking requires beta header — handled by anthropic package
+        # if available; falls back gracefully (see Thinking Fallback below)
 
-    # Note: effort is not directly supported by the Anthropic API
-    # (it's a Claude Code / SDK concept). For direct API, we use
-    # thinking budget as the equivalent lever.
+    response = await asyncio.wait_for(
+        client.messages.create(**kwargs),
+        timeout=timeout_sec,
+    )
 
-    start = time.monotonic()
-    response = await client.messages.create(**kwargs)
-    elapsed = time.monotonic() - start
-
-    # Extract text from response blocks
-    text_parts = []
-    for block in response.content:
-        if block.type == "text":
-            text_parts.append(block.text)
-
-    response_text = "\n".join(text_parts)
-
-    usage_info = {
+    text_parts = [b.text for b in response.content if b.type == "text"]
+    usage = {
         "input_tokens": response.usage.input_tokens,
         "output_tokens": response.usage.output_tokens,
     }
 
-    logger.info(
-        "Claude direct API: model=%s, elapsed=%.2fs, tokens=%d+%d, len=%d",
-        model, elapsed, usage_info["input_tokens"],
-        usage_info["output_tokens"], len(response_text),
-    )
-
-    return response_text, usage_info
+    return "\n".join(text_parts), usage
 ```
 
-**Changes to existing modules:**
+The existing `_execute_query()` (SDK subprocess path) is renamed to `_execute_sdk()` and kept as-is.
 
-1. **`sdk_wrapper.py`** — Keep as-is but rename to `sdk_wrapper.py` (legacy). Add deprecation notice.
-2. **`agents.py`** — Switch from `sdk_wrapper.query_claude()` to `claude_client.query_claude_direct()`. Same interface (messages, system_prompt, model) so the change is minimal.
-3. **`loop/engine.py`** — Revision calls already go through agents.py or sdk_wrapper. Route to `claude_client` instead.
-4. **`cli.py`** — Add `--use-sdk` flag for backward compatibility. Default is direct API.
-
-### Retry Logic
-
-The direct API client handles retries natively:
+`query_claude()` dispatches:
 
 ```python
-# Rate limit: retry 3x with 2/4/8s backoff
-# Timeout: asyncio.wait_for with retry once
-# Auth error: fail immediately
-# Empty response: raise SDKResponseError
+async def query_claude(..., backend=None) -> str:
+    resolved_backend = backend or _get_default_backend()
+
+    if resolved_backend == "direct":
+        text, usage = await _with_retries(_execute_direct, ...)
+    else:
+        text, usage = await _with_retries(_execute_sdk, ...)
+
+    # Log usage
+    logger.info("Claude call: backend=%s, model=%s, tokens=%d+%d", ...)
+
+    return text  # same return type as before
 ```
 
-Same retry semantics as current `sdk_wrapper.py` but against the HTTP API, not a subprocess.
+Retry logic (`_with_retries`) is shared between both backends: rate limit 3x with 2/4/8s backoff, timeout once after 2s, auth error immediate.
 
-### Effort / Thinking Mapping
+---
 
-| SDK Concept | Direct API Equivalent |
-|-------------|----------------------|
-| `effort="low"` | `thinking=False`, lower `max_tokens` |
-| `effort="medium"` | `thinking=True`, `budget_tokens=10000` |
-| `effort="high"` | `thinking=True`, `budget_tokens=20000` |
-| `effort="max"` | `thinking=True`, `budget_tokens=50000` |
-| `thinking=True` | `thinking={"type": "enabled", "budget_tokens": N}` |
-| `max_turns=N` | Not applicable (no tool use = single turn always) |
+## Thinking Fallback (explicit)
 
-Note: The Anthropic API's extended thinking is currently in beta and requires a beta header. Check availability before implementation.
+The `effort` parameter maps to thinking configuration:
 
-## Impact
+| effort | Direct API config | Fallback if thinking unavailable |
+|--------|------------------|----------------------------------|
+| `None` | `thinking=False`, `max_tokens=16384` | N/A |
+| `"low"` | `thinking=False`, `max_tokens=8192` | N/A |
+| `"medium"` | `thinking=True`, `budget_tokens=10000` | `thinking=False`, `max_tokens=16384` |
+| `"high"` | `thinking=True`, `budget_tokens=20000` | `thinking=False`, `max_tokens=16384` |
+| `"max"` | `thinking=True`, `budget_tokens=50000` | `thinking=False`, `max_tokens=32768` |
 
-| Area | Change |
-|------|--------|
-| `claude_client.py` | New module (~100 lines) |
-| `agents.py` | Switch import from `sdk_wrapper` to `claude_client` (~10 line changes) |
-| `loop/engine.py` | Same — route through `claude_client` |
-| `cli.py` | Add `--use-sdk` flag |
-| `sdk_wrapper.py` | Keep for backward compat, add deprecation notice |
-| Tests | Update mocks from `sdk_wrapper.query_claude` to `claude_client.query_claude_direct` |
-| `pyproject.toml` | `anthropic` already a dependency — no change |
+**Fallback behavior:** If `client.messages.create()` raises an error indicating thinking is unavailable (beta not enabled, model doesn't support it), retry the same call without thinking and log a warning:
+
+```python
+except anthropic.BadRequestError as e:
+    if "thinking" in str(e).lower():
+        logger.warning("Extended thinking not available, falling back to non-thinking mode")
+        kwargs.pop("thinking", None)
+        response = await client.messages.create(**kwargs)
+    else:
+        raise
+```
+
+**Impact on convergence defaults:** The v1 config uses `effort="medium"` + `thinking=True`. If thinking falls back to non-thinking, the plan quality may be slightly lower (similar to Sonnet baseline in POC experiments — still produces good plans, just needs 1-2 more review rounds). This is acceptable and logged.
+
+---
+
+## Changes to `check` Command
+
+Current `check` validates:
+- `claude` CLI on PATH ← only relevant for SDK backend
+- `claude_agent_sdk` importable ← only relevant for SDK backend
+- `openai` importable
+
+Updated `check` validates based on default backend:
+
+```
+planner-auto check
+
+  Environment:
+    ANTHROPIC_API_KEY set: true
+    OPENAI_API_KEY set: true
+  Claude backend: direct
+    anthropic package: true (v0.40.0)
+  Reviewer:
+    openai package: true (v2.30.0)
+  Database:
+    DB path writable: true
+    Schema version: 2
+
+  With --probe:
+    Claude API (direct): OK (1.2s, 15 tokens)
+    OpenAI API: OK (0.8s, 12 tokens)
+```
+
+When backend is `sdk`, check also validates `claude` on PATH and `claude_agent_sdk` importable. When `direct`, those checks are skipped (not needed).
+
+---
+
+## Dependency Change
+
+Add to `planner-auto/pyproject.toml`:
+
+```toml
+dependencies = [
+    "click>=8.0",
+    "claude-agent-sdk>=0.1.50,<0.2.0",  # kept for --claude-backend sdk
+    "anthropic>=0.40.0",                  # NEW: direct API backend
+    "prompt_toolkit>=3.0",
+    "openai>=2.0",
+]
+```
+
+`claude-agent-sdk` stays as a dependency for the SDK backend opt-in. `anthropic` is added for the default direct backend.
+
+---
+
+## Observability
+
+| What | Where | Level |
+|------|-------|-------|
+| Backend resolved | `query_claude()` entry | DEBUG |
+| Direct API call start | `_execute_direct()` | DEBUG |
+| Direct API call complete | `_execute_direct()` | INFO (model, latency, tokens) |
+| Thinking fallback triggered | `_execute_direct()` | WARNING |
+| Backend stored in session | `cli.py start` | INFO |
+| Backend in session config | `session_config.config_json` | Persisted |
+
+---
 
 ## What This Fixes
 
 | Issue | Before | After |
 |-------|--------|-------|
-| **H2: Rate limit during Claude Code session** | Unusable — subprocess shares quota | Works — direct API has own quota |
+| **H2: Rate limit during Claude Code** | Unusable — subprocess shares quota | Works — direct API has own quota |
 | **H3: anyio traceback noise** | Multiple tracebacks on every error | Gone — no subprocess = no anyio |
-| **H1: Opus + thinking + empty results** | SDK subprocess + tool use = empty | Direct API + thinking = text only |
+| **H1: Opus + thinking empty results** | SDK subprocess + tool use = empty | Direct API + thinking = text only (no tools to consume turns) |
 | **M1: Multiple session conflicts** | Intermittent crashes | Gone — no subprocess |
 
-This single change resolves 4 of the 5 open issues (H1, H2, H3, M1).
+---
 
-## Risk
+## Test Changes
 
-| Risk | Mitigation |
-|------|------------|
-| Extended thinking API may be beta/limited | Check availability; fall back to non-thinking if unavailable |
-| No tool access for future features | Keep SDK as `--use-sdk` opt-in for cases that need tools |
-| Breaking change for tests | Tests mock the wrapper — update mock targets |
-| Direct API may have different token limits | Anthropic API supports same models/limits as SDK |
+- **No caller test changes** — `agents.py` and `loop/engine.py` tests mock `sdk_wrapper.query_claude()` which still returns `str`. Mocks continue to work.
+- **New `sdk_wrapper` tests** — test backend dispatch: `backend="direct"` routes to `_execute_direct`, `backend="sdk"` routes to `_execute_sdk`. Test retry logic shared for both. Test thinking fallback. ~8 new tests.
+- **Updated `check` tests** — validate correct checks for each backend mode.
 
-## Recommendation
+---
 
-**Implement this as the next priority** — before stress testing or any other work. planner-auto is currently broken for its primary use case (planning while coding). This fix resolves 4 open issues with a single architectural change.
+## Scope
 
-Estimated effort: ~2-3 hours. New module is ~100 lines. Most changes are import swaps.
+**In scope:**
+- Backend selection inside `sdk_wrapper.py` (direct default, sdk opt-in)
+- `_execute_direct()` using `anthropic` package
+- Shared retry logic for both backends
+- Thinking fallback with explicit config
+- `--claude-backend` flag on `start` command, persisted in session config
+- `check` command updated for backend-aware validation
+- `anthropic` added to `pyproject.toml`
+- Logging/observability for backend choice
+
+**Out of scope:**
+- Tool access via direct API (not needed — all calls are text-in/text-out)
+- Removing `claude-agent-sdk` dependency (kept for opt-in SDK backend)
+- Changes to `agents.py`, `loop/engine.py`, or any caller of `query_claude()` (no changes needed)
