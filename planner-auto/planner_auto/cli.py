@@ -151,10 +151,15 @@ def list_sessions(ctx, status_filter):
 
 @cli.command()
 @click.argument("session_id")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def status(ctx, session_id):
+def status(ctx, session_id, verbose, debug):
     """Show detailed session status."""
+    ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("status: session=%s", session_id)
 
     session = get_session(conn, session_id)
     if session is None:
@@ -253,6 +258,7 @@ def add_context(ctx, session_id, file_path, note, verbose, debug):
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
     setup_session_logging(session_id, verbose=verbose, debug=debug)
+    logger.info("add-context: session=%s, file=%s, note=%s", session_id, file_path, bool(note))
 
     session = get_session(conn, session_id)
     if session is None:
@@ -760,9 +766,10 @@ def review(
         config=engine_config,
     )
 
-    click.echo(
-        f"Starting review loop (max_rounds={max_rounds}, complexity={complexity}, fast={fast})..."
-    )
+    if verbosity != "quiet":
+        click.echo(
+            f"Starting review loop (max_rounds={max_rounds}, complexity={complexity}, fast={fast})..."
+        )
 
     try:
         result = asyncio.run(engine.run(current_plan, max_rounds=max_rounds))
@@ -774,7 +781,8 @@ def review(
         ctx.exit(1)
         return
 
-    click.echo(f"Loop complete. Stop reason: {result.stop_reason} (rounds={result.rounds})")
+    # Final summary line — always printed (headless-safe)
+    click.echo(f"{result.stop_reason.replace('_', ' ').title()} after {result.rounds} round(s). ${result.total_cost:.2f} total.")
 
     if result.converged:
         # Advance REVIEW → COMPLETE.
@@ -791,7 +799,8 @@ def review(
 
         # Export review artifacts.
         export_paths = export_review_artifacts(session_id, conn, fast_mode=fast)
-        click.echo(f"Exported {len(export_paths)} artifact(s).")
+        if verbosity != "quiet":
+            click.echo(f"Exported {len(export_paths)} artifact(s).")
 
         # .kafra handoff.
         project = base_config.get("project", session_id)
@@ -802,10 +811,11 @@ def review(
             project,
             repo_root=resolved_repo_root,
         )
-        if kafra_path:
+        if kafra_path and verbosity != "quiet":
             click.echo(f".kafra handoff: {kafra_path}")
 
-        click.echo(f"Session {session_id} completed.")
+        if verbosity != "quiet":
+            click.echo(f"Session {session_id} completed.")
 
     else:
         # cap_with_criticals: pause with a blocker listing remaining criticals.
@@ -870,7 +880,7 @@ def inspect_config(ctx, session_id):
 
 @inspect.command("history")
 @click.argument("session_id")
-@click.argument("round_num", type=int)
+@click.option("--round", "round_num", required=True, type=int, help="Review round number.")
 @click.pass_context
 def inspect_history(ctx, session_id, round_num):
     """Show review history context for a round (reconstructed from DB state, not stored)."""
@@ -880,7 +890,7 @@ def inspect_history(ctx, session_id, round_num):
 
 @inspect.command("raw-response")
 @click.argument("session_id")
-@click.argument("round_num", type=int)
+@click.option("--round", "round_num", required=True, type=int, help="Review round number.")
 @click.pass_context
 def inspect_raw_response(ctx, session_id, round_num):
     """Show the raw reviewer API response for a round.
@@ -894,8 +904,9 @@ def inspect_raw_response(ctx, session_id, round_num):
 
 @inspect.command("dump")
 @click.argument("session_id")
+@click.option("--output", "output_path", default=None, type=click.Path(), help="Save JSON to file instead of stdout.")
 @click.pass_context
-def inspect_dump(ctx, session_id):
+def inspect_dump(ctx, session_id, output_path):
     """Dump all session data as JSON.
 
     ⚠ Output may contain repository content and API responses.
@@ -907,7 +918,13 @@ def inspect_dump(ctx, session_id):
         "Do not share without redaction.",
         err=True,
     )
-    click.echo(dump_session_json(conn, session_id))
+    json_output = dump_session_json(conn, session_id)
+    if output_path:
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(json_output)
+        click.echo(f"Dump saved to: {output_path}", err=True)
+    else:
+        click.echo(json_output)
 
 
 # ---------------------------------------------------------------------------
