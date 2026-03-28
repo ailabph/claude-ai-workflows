@@ -9,13 +9,7 @@ import sqlite3
 
 import click
 
-# Load .env from cwd (or parent dirs) so ANTHROPIC_API_KEY / OPENAI_API_KEY
-# are available without manual shell exports.
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass  # dotenv is optional — env vars must be exported manually
+# .env is loaded at package import time in __init__.py — no need to repeat here.
 
 logger = logging.getLogger(__name__)
 
