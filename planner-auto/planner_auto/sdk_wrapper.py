@@ -31,6 +31,9 @@ async def query_claude(
     system_prompt: str,
     model: str,
     timeout_sec: int = 120,
+    effort: Optional[str] = None,
+    thinking: bool = False,
+    max_turns: Optional[int] = None,
 ) -> str:
     """Query Claude via the Agent SDK with retry logic and error handling.
 
@@ -40,6 +43,16 @@ async def query_claude(
         system_prompt: System prompt to set agent behavior.
         model: Model identifier (e.g. 'claude-sonnet-4-6').
         timeout_sec: Timeout in seconds for the SDK call.
+        effort: Optional effort level ('low', 'medium', 'high', 'max').
+            When provided, sets ``ClaudeAgentOptions.effort``.
+        thinking: When True, enables adaptive thinking via
+            ``ThinkingConfigAdaptive``.  Also causes ``max_turns`` to
+            default to unlimited when not explicitly set.
+        max_turns: Override the default single-turn cap.
+            - ``> 0`` → use that value.
+            - ``0`` → unlimited (None passed to SDK).
+            - ``None`` + ``thinking=True`` → unlimited.
+            - ``None`` + ``thinking=False`` → default of 1.
 
     Returns:
         The assistant's text response.
@@ -54,10 +67,28 @@ async def query_claude(
     # prior messages provide conversation context
     prompt = _build_prompt(messages)
 
+    # Resolve effective max_turns for the SDK options object.
+    if max_turns is not None and max_turns > 0:
+        opts_max_turns: Optional[int] = max_turns
+    elif max_turns == 0:
+        opts_max_turns = None  # unlimited
+    elif thinking:
+        # Thinking mode: omit cap so the model can use as many turns as needed.
+        opts_max_turns = None
+    else:
+        opts_max_turns = 1  # safe default for non-thinking calls
+
+    # Build thinking config when requested.
+    thinking_config = (
+        claude_agent_sdk.ThinkingConfigAdaptive(type="adaptive") if thinking else None
+    )
+
     options = claude_agent_sdk.ClaudeAgentOptions(
         system_prompt=system_prompt,
         model=model,
-        max_turns=1,
+        max_turns=opts_max_turns,
+        thinking=thinking_config,
+        effort=effort,
     )
 
     # Rate-limit retry: up to 3 attempts with exponential backoff (2s, 4s, 8s)

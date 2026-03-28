@@ -65,3 +65,32 @@ class SDKTimeoutError(SDKError):
 class SDKResponseError(SDKError):
     """Raised on empty or malformed SDK responses."""
     pass
+
+
+# ---------------------------------------------------------------------------
+# Reviewer errors (Plan 2 — GPT-based reviewer adapter)
+# ---------------------------------------------------------------------------
+
+class ReviewerError(PlannerAutoError):
+    """Base exception for reviewer adapter errors."""
+    pass
+
+
+class ReviewerAuthError(ReviewerError):
+    """Raised when the OpenAI API key is missing or invalid."""
+    pass
+
+
+class ReviewerRateLimitError(ReviewerError):
+    """Raised after exhausting rate-limit retries against the reviewer API."""
+    pass
+
+
+class ReviewerTimeoutError(ReviewerError):
+    """Raised after exhausting timeout/connection retries against the reviewer API."""
+    pass
+
+
+class ReviewerResponseError(ReviewerError):
+    """Raised when the reviewer returns an empty or unparseable response."""
+    pass

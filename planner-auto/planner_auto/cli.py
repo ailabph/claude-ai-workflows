@@ -10,11 +10,14 @@ import click
 from planner_auto.db import (
     add_context_entry,
     create_session,
+    get_all_plan_drafts,
     get_context_entries,
+    get_latest_plan_draft,
     get_messages,
     get_open_blockers,
-    get_all_plan_drafts,
+    get_review_by_round,
     get_session,
+    get_session_config,
     init_schema,
     open_db,
     resolve_blocker,
@@ -26,7 +29,12 @@ from planner_auto.errors import (
     SDKError,
     SessionNotFoundError,
 )
+from planner_auto.export import export_review_artifacts, kafra_handoff
+from planner_auto.git_utils import discover_repo_root
 from planner_auto.logging import setup_session_logger
+from planner_auto.loop.convergence import detect_complexity, get_max_rounds
+from planner_auto.loop.engine import ReviewLoopEngine
+from planner_auto.reviewer.direct_api import DirectAPIAdapter
 from planner_auto.session import SessionManager
 from planner_auto.state import Phase
 
@@ -54,15 +62,30 @@ def cli(ctx, db_path):
 @click.option("--project", required=True, help="Project name.")
 @click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
 @click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
+@click.option(
+    "--repo-root",
+    default=None,
+    help="Override repository root path (auto-detected from cwd if not provided).",
+)
 @click.pass_context
-def start(ctx, project, verbose, debug):
+def start(ctx, project, verbose, debug, repo_root):
     """Start a new planning session."""
     conn = _get_conn(ctx)
 
     session_id = create_session(conn, project)
 
-    # Save initial config snapshot
-    config = {"project": project, "model_default": "claude-sonnet-4-6"}
+    # Resolve repo root: explicit flag takes precedence, then auto-detect.
+    if repo_root is not None:
+        resolved_repo_root = os.path.abspath(repo_root)
+    else:
+        resolved_repo_root = discover_repo_root()
+
+    # Save initial config snapshot (includes repo_root for .kafra handoff)
+    config = {
+        "project": project,
+        "model_default": "claude-sonnet-4-6",
+        "repo_root": resolved_repo_root,
+    }
     save_session_config(conn, session_id, json.dumps(config))
     conn.commit()
 
@@ -73,6 +96,8 @@ def start(ctx, project, verbose, debug):
     click.echo(f"Project: {project}")
     click.echo(f"Phase: SETUP")
     click.echo(f"Status: ACTIVE")
+    if resolved_repo_root:
+        click.echo(f"Repo root: {resolved_repo_root}")
 
 
 @cli.command("list")
@@ -238,15 +263,20 @@ def add_context(ctx, session_id, file_path, note):
 
 
 def _add_file_context(ctx, conn, session_id, file_path):
-    """Validate and store a file as context."""
-    import os
+    """Validate and store a file as context.
 
-    if not os.path.exists(file_path):
+    Resolves the path to an absolute path so context entries are
+    unambiguous regardless of the working directory at query time.
+    """
+    # Resolve to absolute path at add-context time.
+    abs_path = os.path.abspath(file_path)
+
+    if not os.path.exists(abs_path):
         click.echo(f"Error: File not found: {file_path}", err=True)
         ctx.exit(1)
         return
 
-    file_size = os.path.getsize(file_path)
+    file_size = os.path.getsize(abs_path)
     if file_size > MAX_FILE_SIZE:
         click.echo(
             f"Error: File too large ({file_size} bytes). Maximum is {MAX_FILE_SIZE} bytes (500KB).",
@@ -257,17 +287,18 @@ def _add_file_context(ctx, conn, session_id, file_path):
 
     # Read and validate UTF-8
     try:
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(abs_path, "r", encoding="utf-8") as f:
             content = f.read()
     except UnicodeDecodeError:
         click.echo("Error: File is not valid UTF-8 (binary files are not supported).", err=True)
         ctx.exit(1)
         return
 
-    key = os.path.basename(file_path)
+    # Use the absolute path as the key so it's unambiguous.
+    key = abs_path
     add_context_entry(conn, session_id, key, "file", content)
     conn.commit()
-    click.echo(f"Context added: file '{key}' ({len(content)} chars)")
+    click.echo(f"Context added: file '{abs_path}' ({len(content)} chars)")
 
 
 def _add_note_context(conn, session_id, note):
@@ -494,3 +525,193 @@ def complete(ctx, session_id):
     click.echo(f"Exported {len(paths)} file(s):")
     for p in paths:
         click.echo(f"  {p}")
+
+
+@cli.command()
+@click.argument("session_id")
+@click.option("--fast", is_flag=True, default=False, help="Fast mode: 4 rounds, no history, basic prompt.")
+@click.option("--max-rounds", default=None, type=int, help="Override maximum review rounds.")
+@click.option("--no-review-history", is_flag=True, default=False, help="Disable review history context.")
+@click.option("--reviewer-model", default="gpt-5.4", show_default=True, help="GPT model for review.")
+@click.option("--reviewer-reasoning", default="high", show_default=True, help="Reasoning effort level.")
+@click.option(
+    "--complexity",
+    "complexity_override",
+    default=None,
+    type=click.Choice(["standard", "complex"]),
+    help="Override complexity detection.",
+)
+@click.option("--repo-root", default=None, help="Override repository root for .kafra handoff.")
+@click.pass_context
+def review(
+    ctx,
+    session_id,
+    fast,
+    max_rounds,
+    no_review_history,
+    reviewer_model,
+    reviewer_reasoning,
+    complexity_override,
+    repo_root,
+):
+    """Run the GPT review loop for a planning session."""
+    conn = _get_conn(ctx)
+
+    session = get_session(conn, session_id)
+    if session is None:
+        click.echo(f"Error: Session not found: {session_id}", err=True)
+        ctx.exit(1)
+        return
+
+    sm = SessionManager(conn)
+    try:
+        sm.check_command(session_id, "review")
+    except CommandNotAllowedError as e:
+        click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
+        return
+
+    # Advance PLANNING → REVIEW if needed.
+    if session["phase"] == Phase.PLANNING.value:
+        sm.advance_phase(session_id, Phase.REVIEW.value)
+        click.echo("Phase advanced to REVIEW.")
+
+    # Require a plan draft.
+    draft = get_latest_plan_draft(conn, session_id)
+    if draft is None:
+        click.echo("Error: No plan draft found. Run 'generate' first.", err=True)
+        ctx.exit(1)
+        return
+    current_plan = draft["content"]
+
+    # Determine complexity and max rounds.
+    complexity = complexity_override or detect_complexity(conn, session_id)
+    if max_rounds is None:
+        max_rounds = get_max_rounds(complexity, fast=fast)
+
+    # Fast mode overrides.
+    prompt_mode = "basic"
+    review_history_enabled = not no_review_history
+    validate_fb = True
+
+    if fast:
+        review_history_enabled = False
+        validate_fb = False
+
+    # Load existing config for project name and model default.
+    base_config: dict = {}
+    existing_config_row = get_session_config(conn, session_id)
+    if existing_config_row:
+        try:
+            base_config = json.loads(existing_config_row["config_json"])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    # Resolve repo_root override (absolute path if provided).
+    resolved_repo_root = os.path.abspath(repo_root) if repo_root is not None else base_config.get("repo_root")
+
+    # Save extended config snapshot capturing all reviewer settings.
+    review_config = {
+        **base_config,
+        "reviewer_model": reviewer_model,
+        "reasoning_effort": reviewer_reasoning,
+        "prompt_mode": prompt_mode,
+        "review_history": review_history_enabled,
+        "validate_feedback": validate_fb,
+        "filter_severity": ["critical", "major"],
+        "keep_trim": not fast,
+        "fast_mode": fast,
+        "complexity": complexity,
+        "max_rounds": max_rounds,
+        "mode": "fast" if fast else "standard",
+        "repo_root": resolved_repo_root,
+    }
+    save_session_config(conn, session_id, json.dumps(review_config))
+    conn.commit()
+
+    # Build reviewer adapter.
+    reviewer = DirectAPIAdapter(
+        model=reviewer_model,
+        reasoning_effort=reviewer_reasoning,
+        prompt_mode=prompt_mode,
+    )
+
+    planner_model = base_config.get("model_default", "claude-sonnet-4-6")
+
+    engine_config: dict = {
+        "validate_feedback": validate_fb,
+        "filter_severity": ["critical", "major"],
+        "review_history": review_history_enabled,
+    }
+
+    engine = ReviewLoopEngine(
+        conn=conn,
+        session_id=session_id,
+        reviewer=reviewer,
+        planner_model=planner_model,
+        config=engine_config,
+    )
+
+    click.echo(
+        f"Starting review loop (max_rounds={max_rounds}, complexity={complexity}, fast={fast})..."
+    )
+
+    try:
+        result = asyncio.run(engine.run(current_plan, max_rounds=max_rounds))
+    except Exception as exc:
+        click.echo(f"Error during review loop: {exc}", err=True)
+        ctx.exit(1)
+        return
+
+    click.echo(f"Loop complete. Stop reason: {result.stop_reason} (rounds={result.rounds})")
+
+    if result.converged:
+        # Advance REVIEW → COMPLETE.
+        try:
+            sm.advance_phase(session_id, Phase.COMPLETE.value)
+        except Exception as exc:
+            click.echo(f"Error advancing phase: {exc}", err=True)
+
+        update_session_status(conn, session_id, "COMPLETE")
+        conn.commit()
+
+        # Export review artifacts.
+        export_paths = export_review_artifacts(session_id, conn, fast_mode=fast)
+        click.echo(f"Exported {len(export_paths)} artifact(s).")
+
+        # .kafra handoff.
+        project = base_config.get("project", session_id)
+        kafra_path = kafra_handoff(
+            session_id,
+            conn,
+            result.final_plan,
+            project,
+            repo_root=resolved_repo_root,
+        )
+        if kafra_path:
+            click.echo(f".kafra handoff: {kafra_path}")
+
+        click.echo(f"Session {session_id} completed.")
+
+    else:
+        # cap_with_criticals: pause with a blocker listing remaining criticals.
+        blocker_q = "Review cap reached with critical issues remaining."
+        final_review = get_review_by_round(conn, session_id, result.rounds)
+        if final_review and final_review["issues_json"]:
+            try:
+                issues = json.loads(final_review["issues_json"])
+                criticals = [
+                    i.get("description", "")
+                    for i in issues
+                    if i.get("severity") == "critical"
+                ]
+                if criticals:
+                    blocker_q = (
+                        "Review cap reached. Critical issues remaining:\n"
+                        + "\n".join(f"- {c}" for c in criticals)
+                    )
+            except (json.JSONDecodeError, TypeError):
+                pass
+
+        sm.pause_with_blocker(session_id, "reviewer", blocker_q)
+        click.echo(f"Session paused. Blocker: {blocker_q[:120]}")

@@ -57,7 +57,9 @@ class TestAddContextFile:
         init_schema(conn)
         entries = get_context_entries(conn, sid, entry_type="file")
         assert len(entries) == 1
-        assert entries[0]["entry_key"] == "readme.txt"
+        # entry_key is now the absolute path (resolved at add-context time).
+        assert os.path.isabs(entries[0]["entry_key"])
+        assert entries[0]["entry_key"].endswith("readme.txt")
         assert entries[0]["content"] == "Hello world!"
         conn.close()
 
