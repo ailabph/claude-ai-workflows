@@ -653,3 +653,161 @@ class TestValidateFeedbackIntegration:
         disps = get_all_dispositions(conn, sid)
         assert len(disps) >= 1
         assert disps[0]["disposition"] == "ACCEPT"
+
+
+# ---------------------------------------------------------------------------
+# 10. TUI verbosity suppresses all stdout
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+class TestTuiVerbosity:
+    @patch("planner_auto.loop.engine.query_claude", new_callable=AsyncMock)
+    async def test_tui_verbosity_skips_all_stdout(self, mock_qc):
+        """Engine with verbosity='tui' and callbacks should produce zero print calls."""
+        conn = _make_conn()
+        sid = _make_session(conn)
+        add_plan_draft(conn, sid, "plan v1", "claude-sonnet")
+        conn.commit()
+
+        mock_qc.return_value = "revised plan"
+
+        reviewer = MagicMock()
+        reviewer.review = AsyncMock(side_effect=[_nogo_response(), _go_response()])
+
+        mock_callbacks = {
+            "on_round_start": MagicMock(),
+            "on_review_complete": MagicMock(),
+            "on_feedback_validated": MagicMock(),
+            "on_revision_start": MagicMock(),
+            "on_revision_complete": MagicMock(),
+            "on_loop_finished": MagicMock(),
+            "on_revision_timeout": MagicMock(),
+        }
+
+        engine = ReviewLoopEngine(
+            conn=conn,
+            session_id=sid,
+            reviewer=reviewer,
+            planner_model="claude-sonnet",
+            config={"verbosity": "tui"},
+            callbacks=mock_callbacks,
+        )
+
+        with patch("builtins.print") as mock_print:
+            await engine.run("plan v1", max_rounds=5)
+
+        mock_print.assert_not_called()
+
+    @patch("planner_auto.loop.engine.query_claude", new_callable=AsyncMock)
+    async def test_callbacks_none_does_not_crash(self, mock_qc):
+        """Engine with verbosity='tui' and callbacks=None should not raise."""
+        conn = _make_conn()
+        sid = _make_session(conn)
+        add_plan_draft(conn, sid, "plan v1", "claude-sonnet")
+        conn.commit()
+
+        mock_qc.return_value = "revised plan"
+
+        reviewer = MagicMock()
+        reviewer.review = AsyncMock(side_effect=[_nogo_response(), _go_response()])
+
+        engine = ReviewLoopEngine(
+            conn=conn,
+            session_id=sid,
+            reviewer=reviewer,
+            planner_model="claude-sonnet",
+            config={"verbosity": "tui"},
+            callbacks=None,
+        )
+
+        # Should not raise any exception.
+        result = await engine.run("plan v1", max_rounds=5)
+        assert result.converged is True
+
+    @patch("planner_auto.loop.engine.query_claude", new_callable=AsyncMock)
+    async def test_callbacks_partial_dict(self, mock_qc):
+        """Provide dict with only 4 of 7 keys — missing keys should be skipped."""
+        conn = _make_conn()
+        sid = _make_session(conn)
+        add_plan_draft(conn, sid, "plan v1", "claude-sonnet")
+        conn.commit()
+
+        mock_qc.return_value = "revised plan"
+
+        reviewer = MagicMock()
+        reviewer.review = AsyncMock(side_effect=[_nogo_response(), _go_response()])
+
+        partial_callbacks = {
+            "on_round_start": MagicMock(),
+            "on_review_complete": MagicMock(),
+            "on_loop_finished": MagicMock(),
+            "on_revision_complete": MagicMock(),
+        }
+
+        engine = ReviewLoopEngine(
+            conn=conn,
+            session_id=sid,
+            reviewer=reviewer,
+            planner_model="claude-sonnet",
+            config={"verbosity": "tui"},
+            callbacks=partial_callbacks,
+        )
+
+        # Should not raise — missing keys are skipped.
+        result = await engine.run("plan v1", max_rounds=5)
+        assert result.converged is True
+
+        # The provided callbacks should have been invoked.
+        assert partial_callbacks["on_round_start"].call_count >= 1
+        assert partial_callbacks["on_review_complete"].call_count >= 1
+        assert partial_callbacks["on_loop_finished"].call_count == 1
+
+    @patch("planner_auto.loop.engine.query_claude", new_callable=AsyncMock)
+    async def test_on_revision_start_fires_before_revision(self, mock_qc):
+        """on_revision_start should fire between on_feedback_validated and on_revision_complete."""
+        conn = _make_conn()
+        sid = _make_session(conn)
+        add_plan_draft(conn, sid, "plan v1", "claude-sonnet")
+        conn.commit()
+
+        mock_qc.return_value = "revised plan"
+
+        reviewer = MagicMock()
+        reviewer.review = AsyncMock(side_effect=[_nogo_response(), _go_response()])
+
+        call_order: list[str] = []
+
+        def track(name):
+            def handler(*args, **kwargs):
+                call_order.append(name)
+            return handler
+
+        callbacks = {
+            "on_round_start": track("round_start"),
+            "on_review_complete": track("review_complete"),
+            "on_feedback_validated": track("feedback_validated"),
+            "on_revision_start": track("revision_start"),
+            "on_revision_complete": track("revision_complete"),
+            "on_loop_finished": track("loop_finished"),
+        }
+
+        engine = ReviewLoopEngine(
+            conn=conn,
+            session_id=sid,
+            reviewer=reviewer,
+            planner_model="claude-sonnet",
+            config={"verbosity": "tui"},
+            callbacks=callbacks,
+        )
+
+        await engine.run("plan v1", max_rounds=5)
+
+        # Verify ordering: feedback_validated before revision_start before revision_complete.
+        assert "feedback_validated" in call_order
+        assert "revision_start" in call_order
+        assert "revision_complete" in call_order
+
+        fb_idx = call_order.index("feedback_validated")
+        rs_idx = call_order.index("revision_start")
+        rc_idx = call_order.index("revision_complete")
+        assert fb_idx < rs_idx < rc_idx

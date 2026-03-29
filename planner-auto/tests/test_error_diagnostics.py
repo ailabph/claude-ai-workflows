@@ -262,9 +262,8 @@ class TestReviewLoopException:
         db_path, session_id = self._setup_review_session(tmp_path)
         runner = CliRunner(mix_stderr=False)
 
-        mock_adapter = MagicMock()
-        with patch("planner_auto.cli.DirectAPIAdapter", return_value=mock_adapter), \
-             patch("planner_auto.loop.engine.ReviewLoopEngine.run",
+        with patch("planner_auto.review_workflow.DirectAPIAdapter"), \
+             patch("planner_auto.review_workflow.ReviewWorkflow.run",
                    side_effect=RuntimeError("reviewer API down")):
             result = runner.invoke(
                 cli,
@@ -283,9 +282,8 @@ class TestReviewLoopException:
         db_path, session_id = self._setup_review_session(tmp_path)
         runner = CliRunner(mix_stderr=False)
 
-        mock_adapter = MagicMock()
-        with patch("planner_auto.cli.DirectAPIAdapter", return_value=mock_adapter), \
-             patch("planner_auto.loop.engine.ReviewLoopEngine.run",
+        with patch("planner_auto.review_workflow.DirectAPIAdapter"), \
+             patch("planner_auto.review_workflow.ReviewWorkflow.run",
                    side_effect=RuntimeError("reviewer API down")):
             result = runner.invoke(
                 cli,

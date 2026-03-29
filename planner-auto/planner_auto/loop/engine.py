@@ -138,12 +138,14 @@ class ReviewLoopEngine:
         reviewer: ReviewerContract,
         planner_model: str,
         config: Optional[dict] = None,
+        callbacks: Optional[dict] = None,
     ) -> None:
         self.conn = conn
         self.session_id = session_id
         self.reviewer = reviewer
         self.planner_model = planner_model
         self.config: dict = config or {}
+        self._callbacks: Optional[dict] = callbacks
 
     # ------------------------------------------------------------------
     # Public API
@@ -178,6 +180,9 @@ class ReviewLoopEngine:
         for round_num in range(start_round, start_round + max_rounds):
             logger.info("Round %d starting (session=%s)", round_num, self.session_id)
 
+            # Callback 1: on_round_start
+            self._dispatch("on_round_start", round_num, max_rounds)
+
             # --- Step 1: build history context (None for round 1) ----------
             if self.config.get("review_history", True):
                 history_context = build_review_context(
@@ -199,6 +204,20 @@ class ReviewLoopEngine:
                 "Round %d: %s, %d issues",
                 round_num, review_response.verdict.value, len(review_response.issues),
             )
+
+            # Callback 2: on_review_complete
+            self._dispatch("on_review_complete", {
+                "round_num": round_num,
+                "verdict": review_response.verdict.value,
+                "issue_count": len(review_response.issues),
+                "latency_ms": review_latency_ms,
+                "input_tokens": getattr(review_response, "input_tokens", None),
+                "output_tokens": getattr(review_response, "output_tokens", None),
+                "cost": getattr(review_response, "cost", None),
+                "keep_count": len(review_response.keep),
+                "trim_count": len(review_response.trim),
+                "issues": [i.to_dict() for i in review_response.issues],
+            })
 
             # --- Step 3: store review in DB --------------------------------
             issues_json = json.dumps(
@@ -326,6 +345,9 @@ class ReviewLoopEngine:
                     for issue in review_response.issues
                 ]
 
+            # Callback 3: on_feedback_validated
+            self._dispatch("on_feedback_validated", round_num, disposition_list)
+
             # --- Step 8: filter issues by severity -------------------------
             filtered_issues = filter_issues(
                 issues_for_revision,
@@ -336,6 +358,12 @@ class ReviewLoopEngine:
             revision_prompt = _build_revision_user_prompt(
                 current_plan, filtered_issues, review_response
             )
+
+            # Callback 4: on_revision_start
+            accepted = sum(1 for d in (disposition_list or []) if d.get("disposition") == "ACCEPT")
+            deferred = sum(1 for d in (disposition_list or []) if "DEFER" in (d.get("disposition") or ""))
+            rejected = sum(1 for d in (disposition_list or []) if "REJECT" in (d.get("disposition") or ""))
+            self._dispatch("on_revision_start", round_num, accepted, deferred, rejected)
 
             # --- Step 10: call Claude for revision (timed) -----------------
             _revision_t0 = time.monotonic()
@@ -349,6 +377,16 @@ class ReviewLoopEngine:
                 backend=self.config.get("claude_backend", "direct"),
             )
             revision_latency_ms = int((time.monotonic() - _revision_t0) * 1000)
+
+            # Callback 5: on_revision_complete
+            self._dispatch(
+                "on_revision_complete",
+                round_num,
+                len(current_plan),
+                len(revised_text),
+                revision_latency_ms,
+                history_context_size,
+            )
 
             # --- Step 11: store revised draft ------------------------------
             draft_row_id = add_plan_draft(
@@ -422,6 +460,11 @@ class ReviewLoopEngine:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _dispatch(self, key: str, *args, **kwargs) -> None:
+        """Invoke a callback if registered."""
+        if self._callbacks and key in self._callbacks:
+            self._callbacks[key](*args, **kwargs)
+
     # ------------------------------------------------------------------
     # Progress output
     # ------------------------------------------------------------------
@@ -464,6 +507,10 @@ class ReviewLoopEngine:
         * ``"debug"`` — all of verbose plus raw API content with warning.
         """
         v = self._verbosity()
+        if v == "tui":
+            # TUI mode: suppress all stdout, dispatch via callbacks only.
+            return
+
         suffix = "" if is_go else " → revising..."
         headless_line = f"Round {round_num}: {verdict} ({issue_count} issues){suffix}"
         print(headless_line, flush=True)
@@ -548,7 +595,19 @@ class ReviewLoopEngine:
         total_rounds: int,
         total_cost: float,
     ) -> None:
-        """Emit the final summary line to stdout."""
+        """Emit the final summary line to stdout (or dispatch to callback in TUI mode)."""
+        if self._verbosity() == "tui":
+            self._dispatch(
+                "on_loop_finished",
+                {
+                    "stop_reason": stop_reason,
+                    "total_rounds": total_rounds,
+                    "total_cost": total_cost,
+                    "converged": stop_reason in ("go", "cap_no_criticals"),
+                },
+            )
+            return
+
         cost_str = f"${total_cost:.4f}"
         if stop_reason in ("go", "cap_no_criticals"):
             print(f"Converged in {total_rounds} rounds. {cost_str} total.", flush=True)
