@@ -6,8 +6,21 @@ build-backend = "setuptools.build_meta"
 name = "planner-auto"
 version = "0.5.0"
 description = "Interactive planning session manager with SQLite persistence and artifact export"
-license = "MIT"
+license = {text = "MIT"}
 requires-python = ">=3.10"
+readme = "README.md"
+authors = [
+    {name = "Danny Almaden", email = "dan@ailab.ph"},
+]
+keywords = ["planning", "claude", "ai", "orchestration", "milestone", "gpt", "review"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
     "click>=8.0",
     "claude-agent-sdk>=0.1.50,<0.2.0",
@@ -16,6 +29,11 @@ dependencies = [
     "openai>=2.0",
     "python-dotenv>=1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ailabph/claude-ai-workflows"
+Repository = "https://github.com/ailabph/claude-ai-workflows"
+Changelog = "https://github.com/ailabph/claude-ai-workflows/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
@@ -29,6 +47,9 @@ tui = [
 
 [project.scripts]
 planner-auto = "planner_auto.cli:cli"
+
+[tool.setuptools.package-data]
+planner_auto = ["tui/styles/*.tcss"]
 
 [tool.setuptools.packages.find]
 include = ["planner_auto*"]

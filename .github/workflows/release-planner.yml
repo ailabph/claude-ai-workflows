@@ -1,0 +1,267 @@
+name: Release planner-auto
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'planner-auto/pyproject.toml'
+
+# OIDC token required for PyPI Trusted Publishing (no stored secret needed)
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 1: detect
+  # Read version from pyproject.toml, check whether it already exists on PyPI.
+  # Sets should_publish=true only when the version is new (idempotent guard).
+  # ─────────────────────────────────────────────────────────────────────────────
+  detect:
+    name: Detect version / check PyPI
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.read_version.outputs.version }}
+      should_publish: ${{ steps.check_pypi.outputs.should_publish }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from pyproject.toml
+        id: read_version
+        run: |
+          # Use grep + sed — no tomllib dependency, works on any Python version
+          VERSION=$(grep '^version = ' planner-auto/pyproject.toml \
+            | sed 's/^version = "\(.*\)"$/\1/')
+          if [[ -z "$VERSION" ]]; then
+            echo "::error::Could not parse version from pyproject.toml" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
+      - name: Check if version already published on PyPI
+        id: check_pypi
+        run: |
+          VERSION="${{ steps.read_version.outputs.version }}"
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+            "https://pypi.org/pypi/planner-auto/${VERSION}/json")
+          case "$HTTP_CODE" in
+            404)
+              echo "should_publish=true" >> "$GITHUB_OUTPUT"
+              echo "Version ${VERSION} is new — will publish"
+              ;;
+            200)
+              echo "should_publish=false" >> "$GITHUB_OUTPUT"
+              echo "Version ${VERSION} already on PyPI — skipping"
+              ;;
+            *)
+              echo "::error::Unexpected HTTP ${HTTP_CODE} from PyPI when checking version ${VERSION}." >&2
+              echo "::error::This may be a transient PyPI outage. Re-run the workflow once PyPI recovers." >&2
+              exit 1
+              ;;
+          esac
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 2: publish
+  # Build sdist + wheel, verify theme.tcss integrity, publish via OIDC Trusted
+  # Publishing, then poll until the new version is confirmed live on PyPI.
+  # ─────────────────────────────────────────────────────────────────────────────
+  publish:
+    name: Build and publish to PyPI
+    needs: detect
+    if: needs.detect.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Build sdist + wheel in isolated venv
+        working-directory: planner-auto
+        run: |
+          python -m venv /tmp/publish-venv
+          source /tmp/publish-venv/bin/activate
+          pip install -q --upgrade pip build
+          rm -rf dist/
+          python -m build
+          echo ""
+          echo "Built artifacts:"
+          ls -lh dist/
+
+      - name: Verify theme.tcss is packaged
+        working-directory: planner-auto
+        run: |
+          # Wheel check
+          WHL=$(ls dist/planner_auto-*.whl)
+          TCSS_IN_WHEEL=$(unzip -p "$WHL" "planner_auto/tui/styles/theme.tcss" 2>/dev/null || true)
+          if [[ -n "$TCSS_IN_WHEEL" ]]; then
+            echo "✓ theme.tcss present in wheel"
+          else
+            echo "✗ theme.tcss MISSING from wheel — aborting" >&2
+            exit 1
+          fi
+
+          # Sdist check
+          TARBALL=$(ls dist/planner_auto-*.tar.gz)
+          TCSS_IN_SDIST=$(tar -tzf "$TARBALL" 2>/dev/null | { grep "theme.tcss" || true; })
+          if [[ -n "$TCSS_IN_SDIST" ]]; then
+            echo "✓ theme.tcss present in sdist"
+          else
+            echo "✗ theme.tcss MISSING from sdist — aborting" >&2
+            exit 1
+          fi
+
+      - name: Publish to PyPI via OIDC Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: planner-auto/dist/
+
+      - name: Wait for version to appear on PyPI (90s timeout)
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          echo "Polling PyPI for planner-auto==${VERSION}..."
+          for i in $(seq 1 9); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              "https://pypi.org/pypi/planner-auto/${VERSION}/json")
+            if [[ "$HTTP_CODE" == "200" ]]; then
+              echo "✓ planner-auto==${VERSION} is live on PyPI"
+              exit 0
+            fi
+            echo "  Attempt ${i}/9 — not yet available (HTTP ${HTTP_CODE}), waiting 10s..."
+            sleep 10
+          done
+          echo "::error::Timed out after 90s waiting for planner-auto==${VERSION} on PyPI" >&2
+          exit 1
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Job 3: update-homebrew
+  # Fetch the new sdist SHA256 from PyPI, clone the tap repo, update url + sha256
+  # in Formula/planner-auto.rb (top-level only; resource blocks stay pinned),
+  # then push directly to tap main.
+  # ─────────────────────────────────────────────────────────────────────────────
+  update-homebrew:
+    name: Update Homebrew formula
+    needs: [detect, publish]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fetch sdist SHA256 and URL from PyPI JSON API
+        id: pypi_meta
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          echo "Fetching release metadata for planner-auto==${VERSION}..."
+
+          PYPI_JSON=$(curl -sf "https://pypi.org/pypi/planner-auto/${VERSION}/json")
+
+          SHA256=$(echo "$PYPI_JSON" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for f in d['urls']:
+              if f['packagetype'] == 'sdist':
+                  print(f['digests']['sha256'])
+                  break
+          ")
+
+          SDIST_URL=$(echo "$PYPI_JSON" | python3 -c "
+          import sys, json
+          d = json.load(sys.stdin)
+          for f in d['urls']:
+              if f['packagetype'] == 'sdist':
+                  print(f['url'])
+                  break
+          ")
+
+          if [[ -z "$SHA256" || -z "$SDIST_URL" ]]; then
+            echo "::error::Could not extract SHA256 or URL from PyPI JSON for version ${VERSION}" >&2
+            exit 1
+          fi
+
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "sdist_url=$SDIST_URL" >> "$GITHUB_OUTPUT"
+          echo "SHA256:  $SHA256"
+          echo "URL:     $SDIST_URL"
+
+      - name: Clone Homebrew tap
+        run: |
+          git clone \
+            "https://x-access-token:${{ secrets.HOMEBREW_TAP_TOKEN }}@github.com/ailabph/homebrew-orchestrator-auto.git" \
+            tap
+
+      - name: Update formula url and sha256
+        run: |
+          python3 - <<'PYEOF'
+          import re, os, sys
+
+          formula_path = "tap/Formula/planner-auto.rb"
+          sha256    = os.environ["SHA256"]
+          sdist_url = os.environ["SDIST_URL"]
+
+          with open(formula_path) as f:
+              content = f.read()
+
+          original = content
+
+          # Replace top-level url (2-space indent = class body, not inside resource blocks
+          # which use 4-space indent). count=1 ensures only the first match is replaced.
+          content = re.sub(
+              r'^(  url ")[^"]+(")',
+              lambda m: m.group(1) + sdist_url + m.group(2),
+              content,
+              count=1,
+              flags=re.MULTILINE,
+          )
+
+          # Replace top-level sha256 (2-space indent, first occurrence only).
+          # Resource-block sha256 lines use 4-space indent and come after all top-level lines.
+          content = re.sub(
+              r'^(  sha256 ")[0-9a-f]+(")',
+              lambda m: m.group(1) + sha256 + m.group(2),
+              content,
+              count=1,
+              flags=re.MULTILINE,
+          )
+
+          if content == original:
+              print("WARNING: formula content unchanged — url/sha256 patterns may not have matched", file=sys.stderr)
+              sys.exit(1)
+
+          with open(formula_path, "w") as f:
+              f.write(content)
+
+          print("Formula updated successfully")
+          PYEOF
+        env:
+          SHA256: ${{ steps.pypi_meta.outputs.sha256 }}
+          SDIST_URL: ${{ steps.pypi_meta.outputs.sdist_url }}
+
+      - name: Commit and push formula update
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          cd tap
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/planner-auto.rb
+          git diff --cached --stat
+          git commit -m "planner-auto ${VERSION}"
+          git push
+          echo "✓ Homebrew formula updated to planner-auto==${VERSION}"
+
+      # This step runs only when an earlier step in this job failed.
+      # It surfaces a clear, actionable error message in the Actions UI.
+      - name: Report tap failure clearly
+        if: failure()
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          echo "::error::PyPI publish succeeded (planner-auto ${VERSION} is live)."
+          echo "::error::Homebrew tap update FAILED. Run the manual recovery steps in docs/RELEASE.md."
