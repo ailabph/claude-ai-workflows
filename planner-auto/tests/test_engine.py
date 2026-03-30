@@ -811,3 +811,59 @@ class TestTuiVerbosity:
         rs_idx = call_order.index("revision_start")
         rc_idx = call_order.index("revision_complete")
         assert fb_idx < rs_idx < rc_idx
+
+    @patch("planner_auto.loop.engine.query_claude", new_callable=AsyncMock)
+    async def test_on_revision_timeout_fires_on_sdk_timeout(self, mock_qc):
+        """on_revision_timeout callback fires when revision hits a timeout and retries."""
+        from planner_auto.errors import SDKTimeoutError
+
+        conn = _make_conn()
+        sid = _make_session(conn)
+        add_plan_draft(conn, sid, "plan v1", "claude-sonnet")
+        conn.commit()
+
+        # First call: timeout (triggers retry inside query_claude)
+        # Second call: succeed
+        # But query_claude handles retries internally — we need to simulate
+        # the on_timeout callback being invoked.
+        # The real flow: query_claude catches TimeoutError, calls on_timeout, retries.
+        # We mock query_claude to invoke on_timeout before returning.
+        async def _qc_with_timeout(*args, **kwargs):
+            on_timeout = kwargs.get("on_timeout")
+            if on_timeout is not None and not hasattr(_qc_with_timeout, "_called"):
+                _qc_with_timeout._called = True
+                on_timeout(120, 1, 1)  # timeout_sec, retry_count, max_retries
+            return "revised plan"
+
+        mock_qc.side_effect = _qc_with_timeout
+
+        reviewer = MagicMock()
+        reviewer.review = AsyncMock(side_effect=[_nogo_response(), _go_response()])
+
+        mock_callbacks = {
+            "on_round_start": MagicMock(),
+            "on_review_complete": MagicMock(),
+            "on_feedback_validated": MagicMock(),
+            "on_revision_start": MagicMock(),
+            "on_revision_complete": MagicMock(),
+            "on_loop_finished": MagicMock(),
+            "on_revision_timeout": MagicMock(),
+        }
+
+        engine = ReviewLoopEngine(
+            conn=conn,
+            session_id=sid,
+            reviewer=reviewer,
+            planner_model="claude-sonnet",
+            config={"verbosity": "tui"},
+            callbacks=mock_callbacks,
+        )
+
+        await engine.run("plan v1", max_rounds=5)
+
+        # on_revision_timeout should have been called once
+        mock_callbacks["on_revision_timeout"].assert_called_once()
+        call_args = mock_callbacks["on_revision_timeout"].call_args
+        assert call_args[0][0] == 1  # round_num
+        assert call_args[0][1] == 120  # timeout_sec
+        assert call_args[0][2] == 1  # retry_count

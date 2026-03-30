@@ -87,6 +87,7 @@ async def query_claude(
     thinking: bool = False,
     max_turns: Optional[int] = None,
     backend: Optional[str] = None,
+    on_timeout: Optional[callable] = None,
 ) -> str:
     """Query Claude with retry logic and error handling.
 
@@ -189,6 +190,8 @@ async def query_claude(
                     "Timeout after %ds, retrying (%d/%d)",
                     timeout_sec, timeout_retries_used, max_timeout_retries,
                 )
+                if on_timeout is not None:
+                    on_timeout(timeout_sec, timeout_retries_used, max_timeout_retries)
                 await asyncio.sleep(2)
                 continue
             raise e from None

@@ -367,6 +367,12 @@ class ReviewLoopEngine:
 
             # --- Step 10: call Claude for revision (timed) -----------------
             _revision_t0 = time.monotonic()
+
+            def _on_revision_timeout(timeout_sec, retry_count, max_retries):
+                self._dispatch(
+                    "on_revision_timeout", round_num, timeout_sec, retry_count,
+                )
+
             revised_text = await query_claude(
                 messages=[{"role": "user", "content": revision_prompt}],
                 system_prompt=_REVISION_SYSTEM_PROMPT,
@@ -375,6 +381,7 @@ class ReviewLoopEngine:
                 thinking=self.config.get("thinking", False),
                 max_turns=self.config.get("max_turns"),
                 backend=self.config.get("claude_backend", "direct"),
+                on_timeout=_on_revision_timeout,
             )
             revision_latency_ms = int((time.monotonic() - _revision_t0) * 1000)
 
