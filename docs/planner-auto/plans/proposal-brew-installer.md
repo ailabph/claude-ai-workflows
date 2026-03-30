@@ -1,8 +1,13 @@
-# Homebrew Installer Proposal for planner-auto v0.5.0
+# Homebrew Installer Proposal for planner-auto v0.5.0 (v2)
+
+## Revision History
+
+- **v1:** Reviewed NO_GO — 1 blocker: TUI install strategy assumed `pip install planner-auto[tui]` after `brew install` would work, but Homebrew's managed virtualenv is isolated from pip. 1 non-blocking: bootstrap order for first release was underspecified.
+- **v2:** TUI included in formula (textual in resource blocks). Bootstrap sequence explicit (manual first release, then enable automation).
 
 ## Goal
 
-`brew install planner-auto` installs a working CLI with all core dependencies. Users run `planner-auto start --project my-app` immediately after install. TUI is a separate optional install via `pip install planner-auto[tui]` (Homebrew formula covers core deps only).
+`brew install planner-auto` installs a fully functional CLI including TUI support. Users run `planner-auto start --project my-app` and `planner-auto review <id> --tui` immediately after install — no additional `pip install` step needed.
 
 ---
 
@@ -85,29 +90,21 @@ The existing `HOMEBREW_TAP_TOKEN` secret (fine-grained PAT scoped to `ailabph/ho
 
 ## What Gets Installed
 
-### Core formula (Homebrew)
+The formula installs `planner-auto[tui]` — all core dependencies plus textual for TUI support. This ensures `--tui` works out of the box for brewed installs.
 
-Covers `[project.dependencies]` — everything needed for CLI use:
+**Why include textual:** Homebrew's `virtualenv_install_with_resources` creates an isolated virtualenv. Running `pip install planner-auto[tui]` afterwards installs into a *different* environment — the brew binary never sees it. Including textual in the formula is the only way to make `--tui` work for brewed installs. This matches orchestrator-auto's approach (its formula includes textual).
 
-| Dependency | Version | Purpose |
-|-----------|---------|---------|
-| `click` | >=8.0 | CLI framework |
-| `claude-agent-sdk` | >=0.1.50,<0.2.0 | Claude SDK (subprocess backend) |
-| `anthropic` | >=0.40.0 | Direct API backend |
-| `prompt_toolkit` | >=3.0 | Interactive discuss mode |
-| `openai` | >=2.0 | GPT-5.4 reviewer |
-| `python-dotenv` | >=1.0 | .env auto-loading |
+| Dependency | Version | Purpose | Group |
+|-----------|---------|---------|-------|
+| `click` | >=8.0 | CLI framework | core |
+| `claude-agent-sdk` | >=0.1.50,<0.2.0 | Claude SDK (subprocess backend) | core |
+| `anthropic` | >=0.40.0 | Direct API backend | core |
+| `prompt_toolkit` | >=3.0 | Interactive discuss mode | core |
+| `openai` | >=2.0 | GPT-5.4 reviewer | core |
+| `python-dotenv` | >=1.0 | .env auto-loading | core |
+| `textual` | >=0.80.0 | TUI review dashboard | tui extra |
 
-**NOT included in formula:** `textual` (TUI is optional). Users who want `--tui` run `pip install planner-auto[tui]` after brew install. This matches orchestrator-auto's pattern — the formula includes TUI resources but textual is a core dep there because the TUI is the primary interface. For planner-auto, the CLI is the primary interface.
-
-**Decision point:** Include `textual` in the formula or not?
-
-| Option | Pros | Cons |
-|--------|------|------|
-| **A: Core deps only** | Smaller install, faster, fewer resource blocks (~25 vs ~45) | `--tui` requires separate `pip install` step |
-| **B: Include textual** | `--tui` works out of the box | 20+ extra resource blocks for textual's transitive deps, bigger install |
-
-**Recommendation:** Option A (core only) for v1. The review loop works fine without TUI — it's an enhancement. Users who discover `--tui` are comfortable running `pip install`.
+**Expected resource block count:** ~35-40 (orchestrator-auto has ~45 with its additional deps). The extra blocks from textual's transitive deps (rich, markdown-it-py, linkify-it-py, etc.) are a one-time cost during formula creation.
 
 ---
 
@@ -205,8 +202,9 @@ File: `scripts/regenerate_brew_resources_planner.sh`
 #!/usr/bin/env bash
 # Regenerate Homebrew resource stanzas for planner-auto.
 #
-# Run when [project.dependencies] change in planner-auto/pyproject.toml.
-# Core deps only — TUI extras (textual) not included in formula.
+# Run when [project.dependencies] or [project.optional-dependencies]
+# change in planner-auto/pyproject.toml.
+# Includes TUI extras (textual) — brewed install supports --tui.
 #
 # USAGE
 #   ./scripts/regenerate_brew_resources_planner.sh
@@ -228,10 +226,10 @@ echo "==> Creating isolated venv at $VENV_DIR..." >&2
 python3 -m venv "$VENV_DIR"
 source "$VENV_DIR/bin/activate"
 
-echo "==> Installing homebrew-pypi-poet and planner-auto from local source..." >&2
+echo "==> Installing homebrew-pypi-poet and planner-auto[tui] from local source..." >&2
 pip install -q --upgrade pip
 pip install -q homebrew-pypi-poet
-pip install -q "$PKG_DIR"    # Core deps only, no [tui] extra
+pip install -q "$PKG_DIR[tui]"    # Include TUI deps — brew install supports --tui
 
 echo "==> Running poet planner-auto..." >&2
 echo "" >&2
@@ -260,7 +258,7 @@ echo "────────────────────────�
 # Tap (one-time, covers both tools)
 brew tap ailabph/orchestrator-auto
 
-# Install
+# Install (includes TUI support)
 brew install planner-auto
 
 # Auth setup
@@ -271,8 +269,7 @@ export OPENAI_API_KEY="sk-..."    # For GPT reviewer
 planner-auto --help
 planner-auto check
 
-# Optional: TUI support
-pip install planner-auto[tui]
+# TUI works immediately — no extra install needed
 planner-auto review <session-id> --tui
 ```
 
@@ -281,9 +278,61 @@ Or one-liner:
 brew install ailabph/orchestrator-auto/planner-auto
 ```
 
+**pip users** (not using Homebrew) still install the TUI separately:
+```bash
+pip install planner-auto        # Core only
+pip install planner-auto[tui]   # With TUI support
+```
+
 ---
 
 ## Release Flow (Developer)
+
+### First release (manual bootstrap — one time only)
+
+The automated workflow assumes `Formula/planner-auto.rb` already exists in the tap and `planner-auto` is registered on PyPI with Trusted Publishing. This bootstrap creates both from scratch.
+
+```
+Phase 1: PyPI (manual, one-time)
+  1. Complete all prerequisites (P1-P4)
+  2. cd planner-auto/
+  3. python -m build                    # Build sdist + wheel
+  4. Verify theme.tcss in both artifacts:
+       unzip -l dist/*.whl | grep theme.tcss
+       tar -tzf dist/*.tar.gz | grep theme.tcss
+  5. twine upload dist/*                # First publish (uses stored token or interactive login)
+  6. Verify: pip install planner-auto==0.5.0 && planner-auto --help
+  7. Configure Trusted Publishing on PyPI:
+       pypi.org → planner-auto → Settings → Publishing →
+       Add GitHub Actions publisher:
+         Repository: ailabph/claude-ai-workflows
+         Workflow: release-planner.yml
+         Environment: pypi
+
+Phase 2: Homebrew formula (manual, one-time)
+  8. Run: ./scripts/regenerate_brew_resources_planner.sh
+  9. Copy stanzas into Formula/planner-auto.rb (use template from this proposal)
+  10. Get sdist SHA256:
+        curl -s https://pypi.org/pypi/planner-auto/0.5.0/json | \
+          python3 -c "import sys,json; d=json.load(sys.stdin); \
+            [print(f['digests']['sha256']) for f in d['urls'] if f['packagetype']=='sdist']"
+  11. Update url + sha256 in formula
+  12. In tap repo (ailabph/homebrew-orchestrator-auto):
+        brew audit --strict Formula/planner-auto.rb
+        brew install --build-from-source ailabph/orchestrator-auto/planner-auto
+        brew test planner-auto
+        planner-auto --help
+        planner-auto review --help     # Verify --tui flag appears
+  13. git commit -m "planner-auto 0.5.0 — initial formula" && git push
+
+Phase 3: Enable automation
+  14. Create .github/workflows/release-planner.yml in this repo
+  15. Create scripts/regenerate_brew_resources_planner.sh in this repo
+  16. Update docs/RELEASE.md to cover both packages
+  17. Test: bump to 0.5.1, push to main, watch automated pipeline
+```
+
+After bootstrap, all subsequent releases are automated.
 
 ### Normal release (no dep changes)
 
@@ -299,7 +348,7 @@ brew install ailabph/orchestrator-auto/planner-auto
 
 ~2 minutes end-to-end.
 
-### Release with dep changes
+### Release with dep/extras changes
 
 ```
 1. Run: ./scripts/regenerate_brew_resources_planner.sh
@@ -307,6 +356,8 @@ brew install ailabph/orchestrator-auto/planner-auto
 3. Commit + push to tap: "planner-auto <version> — regenerate resources"
 4. Then follow normal release steps above
 ```
+
+**When to use this path:** Any change to `[project.dependencies]` or `[project.optional-dependencies]` in pyproject.toml, or when a transitive dep has a breaking update.
 
 ### Manual recovery (publish succeeded, tap update failed)
 
@@ -332,8 +383,9 @@ brew install ailabph/orchestrator-auto/planner-auto
 | `prompt_toolkit` | Yes | Stable |
 | `openai` | No (orchestrator doesn't use it) | GPT reviewer. Major version bumps may need resource regeneration |
 | `python-dotenv` | No | Stable, minimal transitive deps |
+| `textual` | Yes (both formulas include it) | TUI framework. Major version bumps need resource regeneration for BOTH formulas |
 
-**Shared dep upgrade strategy:** When `claude-agent-sdk` or `anthropic` bumps, regenerate resources for BOTH formulas in the same tap commit.
+**Shared dep upgrade strategy:** When `claude-agent-sdk`, `anthropic`, or `textual` bumps, regenerate resources for BOTH formulas in the same tap commit.
 
 ---
 
@@ -344,8 +396,8 @@ The existing `docs/planner-auto/plans/brew-installer-plan.md` was written at v0.
 | Aspect | Old plan (v0.3.0) | This proposal (v0.5.0) |
 |--------|-------------------|----------------------|
 | Version | 0.3.0 | 0.5.0 |
-| Dependencies | Missing `anthropic`, `python-dotenv` | All 6 core deps listed |
-| TUI | Not mentioned | Explicitly excluded from formula (optional `[tui]` extra) |
+| Dependencies | Missing `anthropic`, `python-dotenv` | All 6 core deps + textual |
+| TUI | Not mentioned | Included in formula — `--tui` works out of the box |
 | Release workflow | Used `twine upload` with stored secret | OIDC Trusted Publishing (no stored PyPI secret) |
 | Tap update | Used `mislav/bump-homebrew-formula-action` | Inline Python script (matches orchestrator-auto) |
 | Theme.tcss | Not mentioned | Explicit `package-data` prerequisite |
@@ -356,34 +408,38 @@ The existing `docs/planner-auto/plans/brew-installer-plan.md` was written at v0.
 
 ## Checklist
 
-### Prerequisites
-- [ ] Add `[tool.setuptools.package-data]` for `tui/styles/*.tcss` to `pyproject.toml`
-- [ ] Add PyPI metadata (authors, readme, classifiers, urls) to `pyproject.toml`
-- [ ] Verify `theme.tcss` included in `python -m build` output (both sdist and wheel)
-- [ ] Configure PyPI Trusted Publishing for `planner-auto` project
-- [ ] Verify `HOMEBREW_TAP_TOKEN` has write access to tap repo
+### Prerequisites (P1-P4)
+- [ ] P1: Add `[tool.setuptools.package-data]` for `tui/styles/*.tcss` to `pyproject.toml`
+- [ ] P2: Add PyPI metadata (authors, readme, classifiers, urls) to `pyproject.toml`
+- [ ] P1 verify: `python -m build` → `theme.tcss` present in both sdist and wheel
+- [ ] P3: Configure PyPI Trusted Publishing for `planner-auto` project
+- [ ] P4: Verify `HOMEBREW_TAP_TOKEN` has write access to tap repo
 
-### First publish
-- [ ] Build and publish to PyPI: `cd planner-auto && python -m build && twine upload dist/*`
-- [ ] Verify: `pip install planner-auto==0.5.0 && planner-auto --help`
-- [ ] Run `scripts/regenerate_brew_resources_planner.sh` → copy stanzas
-- [ ] Create `Formula/planner-auto.rb` in tap repo with resource stanzas
+### Bootstrap Phase 1: PyPI (manual, one-time)
+- [ ] `cd planner-auto && python -m build && twine upload dist/*`
+- [ ] `pip install planner-auto==0.5.0 && planner-auto --help`
+- [ ] Configure Trusted Publisher on PyPI (workflow: `release-planner.yml`, env: `pypi`)
+
+### Bootstrap Phase 2: Homebrew formula (manual, one-time)
+- [ ] Run `scripts/regenerate_brew_resources_planner.sh` → copy stanzas (includes textual deps)
+- [ ] Create `Formula/planner-auto.rb` in tap repo with resource stanzas + correct url/sha256
 - [ ] `brew audit --strict Formula/planner-auto.rb`
 - [ ] `brew install --build-from-source ailabph/orchestrator-auto/planner-auto`
 - [ ] `brew test planner-auto`
+- [ ] `planner-auto review --help` → verify `--tui` flag appears
 - [ ] Push formula to tap repo
 
-### Automation
+### Bootstrap Phase 3: Enable automation
 - [ ] Create `.github/workflows/release-planner.yml`
 - [ ] Create `scripts/regenerate_brew_resources_planner.sh`
 - [ ] Update `docs/RELEASE.md` to cover both packages
-- [ ] Test full automated flow: bump version → push → verify PyPI + brew
+- [ ] Test automated flow: bump to 0.5.1 → push → verify PyPI + brew
 
-### Verification
-- [ ] `brew tap ailabph/orchestrator-auto && brew install planner-auto`
+### Final verification
+- [ ] Clean machine: `brew tap ailabph/orchestrator-auto && brew install planner-auto`
 - [ ] `planner-auto --help` shows CLI help
 - [ ] `planner-auto check` validates environment
-- [ ] `pip install planner-auto[tui] && planner-auto review <id> --tui` works alongside brew install
+- [ ] `planner-auto review <id> --tui` launches TUI (no separate pip install needed)
 
 ---
 
@@ -394,7 +450,7 @@ The existing `docs/planner-auto/plans/brew-installer-plan.md` was written at v0.
 | theme.tcss missing from sdist | High (if P1 skipped) | High — TUI crashes | P1 is a hard prerequisite; build step verifies |
 | PyPI name collision | Low | High | `planner-auto` is not currently registered |
 | Tap token scope insufficient | Low | Medium | Verify before first publish |
-| Resource block count too high | Low | Low | Core-only formula has ~25 resources (manageable) |
+| Resource block count too high | Low | Low | ~35-40 resources (orchestrator-auto has ~45, proven manageable) |
 | Dual workflow conflicts | Low | Low | Path-based triggers ensure independence |
 | claude-agent-sdk upgrade breaks both formulas | Medium | Medium | Regenerate both formulas in same tap commit |
 
