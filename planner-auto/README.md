@@ -22,6 +22,7 @@ Each session follows a strict lifecycle: **SETUP → CONTEXT → DISCUSSION → 
 cd planner-auto/
 pip install -e .           # Production
 pip install -e ".[dev]"    # With pytest
+pip install -e ".[tui]"    # With TUI dashboard (textual)
 
 # Required
 export ANTHROPIC_API_KEY="your-key"     # For Claude (planner)
@@ -105,6 +106,7 @@ planner-auto complete <session-id>
 | `review <id> --reviewer-reasoning <level>` | Reasoning effort (default: high) |
 | `review <id> --complexity standard\|complex` | Override complexity detection |
 | `review <id> --repo-root <path>` | Override repo root for .kafra handoff |
+| `review <id> --tui` | Launch live TUI dashboard (requires `pip install planner-auto[tui]`) |
 
 **Review loop features:**
 - GPT-5.4 reviews with `resolution_guidance` + `target_section` per issue
@@ -117,6 +119,7 @@ planner-auto complete <session-id>
 - Cap with criticals = session paused for human review
 - Final plan copied to `<repo>/.kafra/a-01-plans/`
 - Review metadata persisted: model, cost, tokens, raw response per round
+- **TUI mode** (`--tui`): Live dashboard with round progress, convergence sparkline, disposition drill-down. Requires `pip install planner-auto[tui]`.
 
 ## Session Lifecycle
 
@@ -206,23 +209,33 @@ planner_auto/
 ├── session.py          # SessionManager — phase transitions, pause/resume
 ├── state.py            # Phase/Status enums, transition rules, command permissions
 ├── agents.py           # discuss(), synthesize_context(), generate_plan()
-├── sdk_wrapper.py      # Claude Agent SDK wrapper — retry, timeout, effort/thinking
+├── sdk_wrapper.py      # Claude SDK wrapper — retry, timeout, effort/thinking
+├── review_workflow.py  # Shared review orchestration (prepare/run/finalize)
 ├── prompts.py          # System prompts with version hashing
 ├── export.py           # Artifact export — plans, reviews, .kafra handoff
 ├── validation.py       # Plan format validation (milestone headers, checkboxes)
 ├── errors.py           # Custom exceptions (SDK, reviewer, session errors)
 ├── git_utils.py        # Repo root discovery (git rev-parse + --repo-root)
 ├── logging.py          # Session-scoped log file setup
+├── inspect.py          # DB inspection queries for debugging
 ├── reviewer/
 │   ├── contract.py     # ReviewerContract ABC, ReviewerResponse, ReviewIssue
 │   ├── direct_api.py   # DirectAPIAdapter — GPT-5.4 via OpenAI SDK
 │   ├── parser.py       # Response parser (JSON/XML/free-form fallback)
 │   └── prompts.py      # Reviewer system prompts (basic, guidance, keep_trim)
-└── loop/
-    ├── engine.py       # ReviewLoopEngine — review → revise → repeat
-    ├── feedback.py     # Validate feedback (ACCEPT/DEFER/REJECT per issue)
-    ├── history.py      # Review context builder (cumulative deferred)
-    └── convergence.py  # Complexity detection, caps, fast mode
+├── loop/
+│   ├── engine.py       # ReviewLoopEngine — review → revise → repeat
+│   ├── feedback.py     # Validate feedback (ACCEPT/DEFER/REJECT per issue)
+│   ├── history.py      # Review context builder (cumulative deferred)
+│   └── convergence.py  # Complexity detection, caps, fast mode
+└── tui/                # TUI Review Dashboard (optional: pip install planner-auto[tui])
+    ├── review_app.py   # ReviewTUI — main Textual app
+    ├── adapter.py      # Thread-safe engine → TUI bridge
+    ├── messages.py     # 8 Textual message types
+    ├── bindings.py     # Keybinding definitions
+    ├── widgets/        # SessionPanel, ConvergencePanel, RoundList, etc.
+    ├── screens/        # DispositionScreen, PlanScreen, RawResponseScreen, HelpScreen
+    └── styles/         # theme.tcss — dark theme, 3 responsive breakpoints
 ```
 
 ### Key Design Decisions
@@ -258,7 +271,7 @@ pytest tests/test_db.py -v                 # Single file
 pytest tests/test_session.py::TestCheckCommand -v  # Single class
 pytest -k "complete" -v                    # Filter by name
 
-# Current test count: 283 passing
+# Current test count: 464 passing
 ```
 
 ## Config Versioning
@@ -314,6 +327,6 @@ If you need to use the SDK backend (e.g., OAuth-only auth), be aware:
 - [x] **Plan 2: Reviewer Adapter** — GPT review loop, convergence, .kafra handoff
 - [x] **Direct API backend** — Bypass SDK subprocess, works alongside Claude Code sessions
 - [x] **Stress testing (Level 2)** — First end-to-end success: 3-round convergence, $0.12, GPT GO
-- [ ] **TUI mode** — Rich terminal UI (like orchestrator-auto's TUI)
+- [x] **TUI mode** — Review dashboard with live round progress, convergence sparkline, drill-down
 - [ ] **Telegram notifications** — Notify on plan approval or blocker
 - [ ] **Homebrew formula** — `brew install planner-auto`

@@ -5,6 +5,36 @@ All notable changes to planner-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-30
+
+### Added
+
+- **TUI Review Dashboard** — Textual-based terminal UI for the `review` command via `--tui` flag. Live round-by-round progress, convergence sparkline, GPT cost tracking, disposition details, and plan growth visualization. Read-only for v1.
+- **`review_workflow.py`** — Extracted review orchestration from CLI into shared `ReviewWorkflow` class with `prepare()`/`run()`/`finalize()` phases. Both CLI and TUI use the same workflow core. Thread-safe connection contract: prepare/finalize use caller's conn, engine uses its own.
+- **Engine callback infrastructure** — 7 callback dispatch points in `ReviewLoopEngine`: `on_round_start`, `on_review_complete`, `on_feedback_validated`, `on_revision_start`, `on_revision_complete`, `on_loop_finished`, `on_revision_timeout`. New `"tui"` verbosity mode suppresses all stdout and dispatches to callbacks only.
+- **`on_timeout` callback in `query_claude()`** — SDK wrapper invokes optional callback on timeout/retry, enabling TUI to show retry status during the highest-risk moment.
+- **`--tui` flag** on `review` command. Launches Textual app if installed, prints install instructions if not.
+- **TUI widgets** (7): SessionPanel, ConvergencePanel, PlanPanel, RoundList, RoundDetail, CurrentRound, LogPanel.
+- **TUI screens** (4): DispositionScreen, PlanScreen, RawResponseScreen, HelpScreen.
+- **TUI adapter** — Thread-safe bridge (`TUIAdapter`) translating engine callbacks into Textual messages via `app.call_from_thread()`.
+- **TUI theme** — Dark theme with orchestrator-auto color palette (`#00ff41` green, `#00d9ff` cyan). 3 responsive breakpoints (<80, 80-119, 120+ cols).
+- **`textual`** — Optional dependency (`pip install planner-auto[tui]`).
+
+### Changed
+
+- **`loop/engine.py`** — Accepts `callbacks` dict, new `"tui"` verbosity mode in `_emit_progress()` and `_emit_final()`.
+- **`sdk_wrapper.py`** — `query_claude()` gains `on_timeout` parameter for callback-driven timeout visibility.
+- **`cli.py`** — Review command refactored to use `ReviewWorkflow`. `--tui` flag added.
+
+### Design Decisions
+
+- **3 DB connections, 3 owners** — CLI thread for prepare/finalize, worker thread for engine, TUI main thread for read-only inspection. No connection shared across threads.
+- **LoopFinished single-source** — Engine callback is the only emitter. Worker thread posts `LoopError` only, never `LoopFinished`.
+- **Finalize handoff** — App stores `loop_result`, CLI reads it after `app.run()` returns, CLI calls `finalize()`. App never finalizes.
+- **Quit contract** — `q` during active review defers exit until current round completes. No mid-API-call termination.
+
+---
+
 ## [0.4.0] - 2026-03-28
 
 ### Added

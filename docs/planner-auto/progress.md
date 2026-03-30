@@ -1,6 +1,6 @@
 # Planner-Auto Progress Tracker
 
-## Project Status: v0.4.0 — Plan 1 + Plan 2 + Observability + Direct API Backend
+## Project Status: v0.5.0 — Plan 1 + Plan 2 + Observability + Direct API + TUI Review Dashboard
 
 ---
 
@@ -162,6 +162,33 @@ planner-auto review 765ac72b --verbose              → 3 rounds, GO, $0.12
   Final plan: .kafra/a-01-plans/stress-test-3.md
 ```
 
+### TUI Review Dashboard (v0.5.0) — COMPLETE
+
+Textual-based TUI for the `review` command via `--tui` flag. Live round progress, convergence sparkline, GPT cost tracking, disposition drill-down.
+
+| Module | Lines | Status |
+|--------|-------|--------|
+| `review_workflow.py` | 349 | Implemented — shared prepare/run/finalize |
+| `tui/review_app.py` | 671 | Implemented — main app + worker thread |
+| `tui/adapter.py` | 129 | Implemented — thread-safe callback bridge |
+| `tui/messages.py` | 135 | Implemented — 8 message types |
+| `tui/widgets/` | 787 | Implemented — 7 widgets |
+| `tui/screens/` | 410 | Implemented — 4 modal screens |
+| `tui/styles/theme.tcss` | 235 | Implemented — dark theme, 3 breakpoints |
+| `loop/engine.py` (callbacks) | +61 | Updated — 7 callbacks + tui verbosity |
+| `sdk_wrapper.py` (on_timeout) | +4 | Updated — callback on timeout/retry |
+| **Tests** | **1,670** | **464 passing** (was 401) |
+
+**Key design decisions:**
+- 3 DB connections, 3 thread owners (CLI, worker, TUI read-only)
+- LoopFinished single-sourced from engine callback (not worker)
+- Finalize handoff: app stores result, CLI reads after app.run() returns
+- Quit defers until current round completes (no mid-API-call termination)
+
+**Review rounds:** Plan went through 3 review iterations (v1→v2→v3) before GO. Key issues: scope too broad (narrowed from 3 modes to 1), paused-state UI had new workflow semantics (made read-only), SQLite threading unsafe (3-connection model), LoopFinished double-fire (single-sourced), finalize sequencing (explicit handoff).
+
+---
+
 ### Long Context Tests — Level 1 & 2 PASS, Level 3 Qualified PASS
 
 **Level 1 (93KB, 4 files):** Session `0ca49f61`. Plan referenced specific classes/file paths. Review: 5 rounds (2→1→1→1→GO), $0.29. History stable ~6.5-7.5K chars.
@@ -192,6 +219,8 @@ planner-auto review 765ac72b --verbose              → 3 rounds, GO, $0.12
 | Direct API proposal | `docs/planner-auto/plans/proposal-direct-api-fallback.md` | Direct Anthropic API backend (v5) |
 | Direct API plan | `docs/planner-auto/plans/plan-direct-api-fallback.md` | Implementation plan (3 milestones) |
 | Brew installer | `docs/planner-auto/plans/brew-installer-plan.md` | Homebrew formula plan |
+| TUI proposal | `docs/planner-auto/plans/proposal-tui.md` | TUI design (v2, Mode 1 only) |
+| TUI plan | `docs/planner-auto/plans/plan-tui-review-dashboard.md` | Implementation plan (v3, 4 milestones) |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
 | POC 5b readme | `scripts/poc/planner-auto/poc_review_loop_e2e_readme.md` | 11 experiment analysis |
 | AGENTS.md | `planner-auto/AGENTS.md` | Developer context |

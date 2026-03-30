@@ -23,10 +23,8 @@ from planner_auto.db import (
     create_session,
     get_all_plan_drafts,
     get_context_entries,
-    get_latest_plan_draft,
     get_messages,
     get_open_blockers,
-    get_review_by_round,
     get_schema_version,
     get_session,
     get_session_config,
@@ -41,7 +39,6 @@ from planner_auto.errors import (
     SDKError,
     SessionNotFoundError,
 )
-from planner_auto.export import export_review_artifacts, kafra_handoff
 from planner_auto.git_utils import discover_repo_root
 from planner_auto.sdk_wrapper import resolve_default_backend
 from planner_auto.inspect import (
@@ -53,9 +50,7 @@ from planner_auto.inspect import (
     reconstruct_history,
 )
 from planner_auto.logging import setup_session_logging
-from planner_auto.loop.convergence import detect_complexity, get_max_rounds
 from planner_auto.loop.engine import ReviewLoopEngine
-from planner_auto.reviewer.direct_api import DirectAPIAdapter
 from planner_auto.session import SessionManager
 from planner_auto.state import Phase
 
@@ -675,6 +670,7 @@ def complete(ctx, session_id, verbose, debug):
 @click.option("--repo-root", default=None, help="Override repository root for .kafra handoff.")
 @click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
 @click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
+@click.option("--tui", is_flag=True, default=False, help="Launch Textual TUI dashboard.")
 @click.pass_context
 def review(
     ctx,
@@ -688,101 +684,18 @@ def review(
     repo_root,
     verbose,
     debug,
+    tui,
 ):
     """Run the GPT review loop for a planning session."""
+    from planner_auto.review_workflow import FinalizeResult, PreparedReview, ReviewOpts, ReviewWorkflow
+
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
     setup_session_logging(session_id, verbose=verbose, debug=debug)
     logger.info(
-        "Command invoked: review, session_id=%s, fast=%s, reviewer_model=%s, verbose=%s, debug=%s",
-        session_id, fast, reviewer_model, verbose, debug,
+        "Command invoked: review, session_id=%s, fast=%s, reviewer_model=%s, verbose=%s, debug=%s, tui=%s",
+        session_id, fast, reviewer_model, verbose, debug, tui,
     )
-
-    session = get_session(conn, session_id)
-    if session is None:
-        click.echo(f"Error: Session not found: {session_id}", err=True)
-        ctx.exit(1)
-        return
-
-    sm = SessionManager(conn)
-    try:
-        sm.check_command(session_id, "review")
-    except CommandNotAllowedError as e:
-        click.echo(f"Error: {e}", err=True)
-        if ctx.obj.get("debug"):
-            import traceback
-            traceback.print_exc()
-        ctx.exit(1)
-        return
-
-    # Advance PLANNING → REVIEW if needed.
-    if session["phase"] == Phase.PLANNING.value:
-        sm.advance_phase(session_id, Phase.REVIEW.value)
-        click.echo("Phase advanced to REVIEW.")
-
-    # Require a plan draft.
-    draft = get_latest_plan_draft(conn, session_id)
-    if draft is None:
-        click.echo("Error: No plan draft found. Run 'generate' first.", err=True)
-        ctx.exit(1)
-        return
-    current_plan = draft["content"]
-
-    # Determine complexity and max rounds.
-    complexity = complexity_override or detect_complexity(conn, session_id)
-    if max_rounds is None:
-        max_rounds = get_max_rounds(complexity, fast=fast)
-
-    # Prompt mode: fast uses "basic", normal uses "keep_trim" (POC-proven default).
-    prompt_mode = "basic" if fast else "keep_trim"
-    review_history_enabled = not no_review_history
-    validate_fb = True
-
-    if fast:
-        review_history_enabled = False
-        validate_fb = False
-
-    # Load existing config for project name and model default.
-    base_config: dict = {}
-    existing_config_row = get_session_config(conn, session_id)
-    if existing_config_row:
-        try:
-            base_config = json.loads(existing_config_row["config_json"])
-        except (json.JSONDecodeError, TypeError):
-            pass
-
-    # Resolve repo_root override (absolute path if provided).
-    resolved_repo_root = os.path.abspath(repo_root) if repo_root is not None else base_config.get("repo_root")
-
-    # Save extended config snapshot capturing all reviewer settings.
-    review_config = {
-        **base_config,
-        "reviewer_model": reviewer_model,
-        "reasoning_effort": reviewer_reasoning,
-        "prompt_mode": prompt_mode,
-        "review_history": review_history_enabled,
-        "validate_feedback": validate_fb,
-        "filter_severity": ["critical", "major"],
-        "keep_trim": not fast,
-        "fast_mode": fast,
-        "complexity": complexity,
-        "max_rounds": max_rounds,
-        "mode": "fast" if fast else "standard",
-        "repo_root": resolved_repo_root,
-    }
-    save_session_config(conn, session_id, json.dumps(review_config))
-    conn.commit()
-
-    # Build reviewer adapter.
-    reviewer = DirectAPIAdapter(
-        model=reviewer_model,
-        reasoning_effort=reviewer_reasoning,
-        prompt_mode=prompt_mode,
-    )
-
-    # agents.py stores the key as "model"; start command stores as "model_default".
-    # Try both, preferring "model" (from generate_plan config).
-    planner_model = base_config.get("model") or base_config.get("model_default", "claude-sonnet-4-6")
 
     # Resolve verbosity from CLI flags: debug > verbose > quiet.
     if debug:
@@ -794,32 +707,104 @@ def review(
 
     claude_backend = _resolve_session_backend(conn, session_id)
 
-    engine_config: dict = {
-        "validate_feedback": validate_fb,
-        "filter_severity": ["critical", "major"],
-        "review_history": review_history_enabled,
-        "effort": "medium",       # POC-proven default for planner revision calls
-        "thinking": True,         # POC-proven default for planner revision calls
-        "max_turns": 0,           # unlimited for thinking mode
-        "verbosity": verbosity,
-        "claude_backend": claude_backend,
-    }
+    opts = ReviewOpts(
+        fast=fast,
+        max_rounds=max_rounds,
+        no_review_history=no_review_history,
+        reviewer_model=reviewer_model,
+        reviewer_reasoning=reviewer_reasoning,
+        complexity_override=complexity_override,
+        repo_root=repo_root,
+        verbosity=verbosity,
+        debug=debug,
+    )
 
+    # Track phase before prepare to detect advancement.
+    session_before = get_session(conn, session_id)
+    phase_before = session_before["phase"] if session_before else None
+
+    # --- Shared prepare phase ---
+    try:
+        prepared = ReviewWorkflow.prepare(conn, session_id, opts, claude_backend=claude_backend)
+    except SessionNotFoundError:
+        click.echo(f"Error: Session not found: {session_id}", err=True)
+        ctx.exit(1)
+        return
+    except CommandNotAllowedError as e:
+        click.echo(f"Error: {e}", err=True)
+        if ctx.obj.get("debug"):
+            import traceback
+            traceback.print_exc()
+        ctx.exit(1)
+        return
+    except ValueError as e:
+        click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
+        return
+
+    # Emit CLI status messages (prepare doesn't print).
+    if phase_before == Phase.PLANNING.value:
+        session_after = get_session(conn, session_id)
+        if session_after and session_after["phase"] == Phase.REVIEW.value:
+            click.echo("Phase advanced to REVIEW.")
+
+    # --- TUI path ---
+    if tui:
+        try:
+            from planner_auto.tui import get_review_app_class
+        except ImportError:
+            click.echo(
+                "Error: Textual is not installed. Install with: pip install planner-auto[tui]",
+                err=True,
+            )
+            ctx.exit(1)
+            return
+
+        # Resolve db_path for the TUI worker thread.
+        db_path = prepared.db_path
+        if not db_path:
+            db_path = ctx.obj.get("db_path")
+
+        prepared.engine_config["verbosity"] = "tui"
+
+        ReviewTUI = get_review_app_class()
+        app = ReviewTUI(prepared=prepared, session_id=session_id, db_path=db_path)
+        app.run()
+
+        # After TUI exits, handle finalize.
+        if getattr(app, "loop_result", None) is not None:
+            fin = ReviewWorkflow.finalize(conn, session_id, app.loop_result, prepared)
+            if fin.converged:
+                if verbosity != "quiet":
+                    click.echo(f"Exported {len(fin.export_paths)} artifact(s).")
+                    if fin.kafra_path:
+                        click.echo(f".kafra handoff: {fin.kafra_path}")
+                    click.echo(f"Session {session_id} completed.")
+            else:
+                click.echo(f"Session paused. Blocker: {(fin.blocker_text or '')[:120]}")
+        elif getattr(app, "loop_error", None) is not None:
+            click.echo(f"Error during review loop: {app.loop_error}", err=True)
+            ctx.exit(1)
+        # else: user quit before loop started — exit 0 silently
+        return
+
+    # --- CLI path ---
     engine = ReviewLoopEngine(
         conn=conn,
         session_id=session_id,
-        reviewer=reviewer,
-        planner_model=planner_model,
-        config=engine_config,
+        reviewer=prepared.reviewer,
+        planner_model=prepared.planner_model,
+        config=prepared.engine_config,
     )
 
     if verbosity != "quiet":
         click.echo(
-            f"Starting review loop (max_rounds={max_rounds}, complexity={complexity}, fast={fast})..."
+            f"Starting review loop (max_rounds={prepared.max_rounds}, "
+            f"complexity={prepared.complexity}, fast={fast})..."
         )
 
     try:
-        result = asyncio.run(engine.run(current_plan, max_rounds=max_rounds))
+        result = ReviewWorkflow.run(engine, prepared.current_plan, prepared.max_rounds)
     except Exception as exc:
         click.echo(f"Error during review loop: {exc}", err=True)
         if ctx.obj.get("debug"):
@@ -830,61 +815,16 @@ def review(
 
     # Engine owns the final summary line via _emit_final(). No CLI duplicate.
 
-    if result.converged:
-        # Advance REVIEW → COMPLETE.
-        try:
-            sm.advance_phase(session_id, Phase.COMPLETE.value)
-        except Exception as exc:
-            click.echo(f"Error advancing phase: {exc}", err=True)
-            if ctx.obj.get("debug"):
-                import traceback
-                click.echo(traceback.format_exc(), err=True)
+    fin = ReviewWorkflow.finalize(conn, session_id, result, prepared)
 
-        update_session_status(conn, session_id, "COMPLETE")
-        conn.commit()
-
-        # Export review artifacts.
-        export_paths = export_review_artifacts(session_id, conn, fast_mode=fast)
+    if fin.converged:
         if verbosity != "quiet":
-            click.echo(f"Exported {len(export_paths)} artifact(s).")
-
-        # .kafra handoff.
-        project = base_config.get("project", session_id)
-        kafra_path = kafra_handoff(
-            session_id,
-            conn,
-            result.final_plan,
-            project,
-            repo_root=resolved_repo_root,
-        )
-        if kafra_path and verbosity != "quiet":
-            click.echo(f".kafra handoff: {kafra_path}")
-
-        if verbosity != "quiet":
+            click.echo(f"Exported {len(fin.export_paths)} artifact(s).")
+            if fin.kafra_path:
+                click.echo(f".kafra handoff: {fin.kafra_path}")
             click.echo(f"Session {session_id} completed.")
-
     else:
-        # cap_with_criticals: pause with a blocker listing remaining criticals.
-        blocker_q = "Review cap reached with critical issues remaining."
-        final_review = get_review_by_round(conn, session_id, result.final_round_number)
-        if final_review and final_review["issues_json"]:
-            try:
-                issues = json.loads(final_review["issues_json"])
-                criticals = [
-                    i.get("description", "")
-                    for i in issues
-                    if i.get("severity") == "critical"
-                ]
-                if criticals:
-                    blocker_q = (
-                        "Review cap reached. Critical issues remaining:\n"
-                        + "\n".join(f"- {c}" for c in criticals)
-                    )
-            except (json.JSONDecodeError, TypeError):
-                pass
-
-        sm.pause_with_blocker(session_id, "reviewer", blocker_q)
-        click.echo(f"Session paused. Blocker: {blocker_q[:120]}")
+        click.echo(f"Session paused. Blocker: {(fin.blocker_text or '')[:120]}")
 
 
 # ---------------------------------------------------------------------------

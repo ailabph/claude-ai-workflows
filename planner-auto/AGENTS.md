@@ -17,7 +17,8 @@ planner_auto/
 ├── session.py          (192 lines)  # SessionManager — phase transitions, pause/resume
 ├── state.py            (50 lines)   # Phase/Status enums, transition rules
 ├── agents.py           (230 lines)  # discuss(), synthesize_context(), generate_plan()
-├── sdk_wrapper.py      (246 lines)  # Claude SDK wrapper — retry, timeout, effort/thinking
+├── sdk_wrapper.py      (248 lines)  # Claude SDK wrapper — retry, timeout, on_timeout callback
+├── review_workflow.py  (349 lines)  # Shared review orchestration (prepare/run/finalize)
 ├── prompts.py          (57 lines)   # Planner system prompts + version hashing
 ├── export.py           (340 lines)  # Artifact export — plans, reviews, .kafra handoff
 ├── validation.py       (92 lines)   # Plan format validation
@@ -30,14 +31,22 @@ planner_auto/
 │   ├── direct_api.py   (245 lines)  # GPT-5.4 adapter via OpenAI SDK
 │   ├── parser.py       (384 lines)  # JSON/XML/free-form response parser
 │   └── prompts.py      (171 lines)  # Reviewer system prompts (3 variants)
-└── loop/
-    ├── engine.py       (677 lines)  # ReviewLoopEngine — core review-fix loop
-    ├── feedback.py     (217 lines)  # ACCEPT/DEFER/REJECT per issue
-    ├── history.py      (201 lines)  # Cumulative review context builder
-    └── convergence.py  (126 lines)  # Complexity detection, caps, fast mode
+├── loop/
+│   ├── engine.py       (738 lines)  # ReviewLoopEngine + 7 TUI callbacks
+│   ├── feedback.py     (217 lines)  # ACCEPT/DEFER/REJECT per issue
+│   ├── history.py      (201 lines)  # Cumulative review context builder
+│   └── convergence.py  (126 lines)  # Complexity detection, caps, fast mode
+└── tui/                              # TUI Review Dashboard (optional dep)
+    ├── review_app.py   (671 lines)  # ReviewTUI — main Textual app + worker thread
+    ├── adapter.py      (129 lines)  # Thread-safe engine → TUI bridge
+    ├── messages.py     (135 lines)  # 8 Textual message types
+    ├── bindings.py     (16 lines)   # Keybinding definitions
+    ├── widgets/        (787 lines)  # 7 widgets: SessionPanel, ConvergencePanel, etc.
+    ├── screens/        (410 lines)  # 4 screens: Dispositions, Plan, RawResponse, Help
+    └── styles/theme.tcss (235 lines) # Dark theme, 3 responsive breakpoints
 ```
 
-**Total:** ~5,800 source lines, ~6,500 test lines, 368 tests.
+**Total:** ~8,500 source lines, ~8,800 test lines, 464 tests.
 
 ## Key Design Rules
 
