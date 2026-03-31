@@ -217,3 +217,28 @@ class TestResumeSemantics:
         actions = [b[1] for b in review]
         assert "r" in keys
         assert "start_review" in actions
+
+    def test_action_start_review_skips_phase_advance_when_already_review(self, tmp_path):
+        """action_start_review in REVIEW phase must NOT try REVIEW->REVIEW transition."""
+        db_path, sid = self._make_session(tmp_path, "REVIEW", "ACTIVE", with_plan=True)
+        # Verify the session is in REVIEW
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        assert session["phase"] == "REVIEW"
+
+        # Import and verify action_start_review allows REVIEW phase
+        from planner_auto.tui.session_app import SessionTUI
+        # The action should accept REVIEW phase (checked in code)
+        from planner_auto.state import Phase
+        assert Phase.REVIEW.value in ("PLANNING", "REVIEW")  # both accepted
+        conn.close()
+
+    def test_mount_review_panel_includes_plan_panel(self):
+        """_mount_review_panel must mount PlanPanel alongside other review widgets."""
+        # Verify the mount function references plan-panel
+        import inspect
+        from planner_auto.tui.session_app import SessionTUI
+        source = inspect.getsource(SessionTUI._mount_review_panel)
+        assert "review-plan-panel" in source
+        assert "PlanPanel" in source

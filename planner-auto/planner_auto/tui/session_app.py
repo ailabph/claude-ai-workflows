@@ -383,6 +383,7 @@ class SessionTUI(App):
         main.mount(RoundList(id="review-round-list"))
         main.mount(ConvergencePanel(id="review-convergence"))
         main.mount(CurrentRound(id="review-current-round"))
+        main.mount(PlanPanel(id="review-plan-panel"))
 
         # Reset review handler mixin state
         self._review_handlers = ReviewHandlerMixin()
@@ -940,10 +941,9 @@ class SessionTUI(App):
     def on_revision_complete(self, message: RevisionComplete) -> None:
         """Handle RevisionComplete — delegate to ReviewHandlerMixin."""
         try:
-            # Review panel doesn't have its own PlanPanel widget, use log only
             self._review_handlers.handle_revision_complete(
                 message,
-                PlanPanel(),  # dummy — session TUI doesn't have sidebar plan panel
+                self.query_one("#review-plan-panel", PlanPanel),
                 self.query_one("#review-current-round", CurrentRound),
                 self.query_one("#log-panel", LogPanel),
             )
@@ -1433,15 +1433,22 @@ class SessionTUI(App):
                 return
             self._plan_content = draft["content"]
 
-        # Advance phase to REVIEW
-        try:
-            sm = SessionManager(self._rw_conn)
-            old_phase = self._current_phase
-            sm.advance_phase(self._session_id, Phase.REVIEW.value)
-            self.post_message(PhaseAdvanced(old_phase, Phase.REVIEW.value))
-        except Exception as e:
-            self.post_message(SessionError(str(e), self._current_phase))
-            return
+        # Advance phase to REVIEW — only if not already in REVIEW
+        if self._current_phase != Phase.REVIEW.value:
+            try:
+                sm = SessionManager(self._rw_conn)
+                old_phase = self._current_phase
+                sm.advance_phase(self._session_id, Phase.REVIEW.value)
+                self.post_message(PhaseAdvanced(old_phase, Phase.REVIEW.value))
+            except Exception as e:
+                self.post_message(SessionError(str(e), self._current_phase))
+                return
+        else:
+            # Already in REVIEW — clear any stale review-resume UI and mount fresh widgets
+            main = self.query_one("#main-panel", Container)
+            for child in list(main.query("*")):
+                child.remove()
+            self._mount_review_panel()
 
         # Start the review loop worker
         self._run_review_loop()
@@ -1485,10 +1492,21 @@ class SessionTUI(App):
             self._log("info", "No review rounds available yet.")
             return
         latest = self._review_handlers.latest_round
-        if latest is not None:
-            from planner_auto.tui.widgets.round_detail import RoundDetail
-            rd = RoundDetail(round_data=self._review_handlers.round_data.get(latest, {}))
-            self.push_screen(rd) if hasattr(rd, 'run') else self._log("info", f"Round {latest} detail available via standalone TUI.")
+        if latest is not None and latest in self._review_handlers.round_data:
+            round_info = self._review_handlers.round_data[latest]
+            # Show round detail as a log summary (round detail is a widget, not a modal screen)
+            verdict = round_info.get("verdict", "?")
+            issues = round_info.get("issue_count", 0)
+            cost = round_info.get("cost", 0.0)
+            latency = round_info.get("latency_ms", 0)
+            self._log("info", f"Round {latest}: {verdict} — {issues} issues, ${cost:.4f}, {latency}ms")
+            # Show keep/trim if available
+            keep = round_info.get("keep_count", 0)
+            trim = round_info.get("trim_count", 0)
+            if keep or trim:
+                self._log("info", f"  Keep: {keep}, Trim: {trim}")
+        else:
+            self._log("info", "No round data available.")
 
     def action_back(self) -> None:
         """Back action (dismiss modal/detail view)."""
