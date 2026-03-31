@@ -1,4 +1,4 @@
-# TUI Session Mode - Implementation Plan
+# TUI Session Mode - Implementation Plan (v2)
 
 ## Overview
 
@@ -6,11 +6,15 @@ Add a full-lifecycle Session TUI to planner-auto via `planner-auto session --pro
 
 **Reference:** `docs/planner-auto/plans/proposal-tui-session.md` (v2)
 
+**Review History:**
+- **v1:** Reviewed NO_GO — 3 blockers: (1) no reusable context-write API (`add-context` is a Click command, not a library function), (2) `session` command not in `PHASE_ALLOWED_COMMANDS`, (3) review handler reuse overstated (handlers coupled to ReviewTUI widget tree). 1 non-blocking: M4 sneaks in new product behavior beyond `resolve_and_resume`.
+- **v2:** All 4 issues addressed. Added context service extraction task. Defined session as a launcher that bypasses phase permissions. Added explicit review handler refactor task. Removed M4 post-resolve product decision.
+
 **Key constraints:**
 - Per-operation workers, not a single long-lived worker (context: no worker, discuss: per-message, generate: one-shot, review: long-running)
 - Worker thread owns finalize during review (different from standalone ReviewTUI where CLI owns finalize)
 - Paused/blocker state is read-only until Milestone 4 (shows blocker + CLI commands)
-- Reuses existing review widgets (RoundList, ConvergencePanel, CurrentRound) — does not launch a separate ReviewTUI
+- Reuses existing review widgets (RoundList, ConvergencePanel, CurrentRound) — requires a refactor step to extract shared handler logic from ReviewTUI
 - Each milestone is independently shippable — unimplemented phases show "Use CLI for X" fallback
 
 ---
@@ -20,8 +24,18 @@ Add a full-lifecycle Session TUI to planner-auto via `planner-auto session --pro
 Persistent TUI shell with sidebar (session info + phase progress), context manager (file/note add modals), CLI `session` command, and phase-aware keybinding foundation. No worker threads — all context operations run on the TUI main thread.
 
 ### Tasks
-- [ ] `cli.py`: Add `session` command with two invocation patterns: `planner-auto session --project <name> --tui` (create new) and `planner-auto session <session-id> --tui` (resume existing). When `--tui` is not passed, print "Session TUI requires --tui flag" and exit (no CLI-only session mode yet). Lazy import of `planner_auto.tui.session_app`; print install instructions if textual not installed.
+
+**Context service extraction (prerequisite for TUI context management):**
+- [ ] `context_service.py` (new file): Extract context-write logic from `cli.py:292-336` into a reusable function `add_context_entry(conn, session_id, entry_type, path_or_content, *, sm=None) -> dict`. This function: (1) validates file exists, is readable, is UTF-8, is <500KB (for type="file"), (2) resolves to absolute path, (3) reads file content, (4) calls `db.add_context_entry()`, (5) advances phase SETUP→CONTEXT if needed (via `SessionManager`), (6) commits, (7) returns `{"entry_type": ..., "key": ..., "size": ...}`. No `click.echo()` — returns data, caller decides presentation. For type="note": auto-generates key, stores content directly.
+- [ ] `cli.py`: Refactor `add-context` command to call `context_service.add_context_entry()` and wrap result with `click.echo()`. Existing CLI behavior unchanged.
+- [ ] `tests/test_context_service.py` (new file): Test `add_context_entry()` with file type (valid path, missing path, >500KB, non-UTF-8). Test with note type. Test phase advance SETUP→CONTEXT. All with in-memory SQLite.
+
+**Session command permission model:**
+- [ ] `cli.py`: Add `session` command. The `session` command is a **launcher**, not a phase-gated operation. It does NOT appear in `PHASE_ALLOWED_COMMANDS` and does NOT call `SessionManager.check_command()`. Instead, it reads the session's current phase from the DB and renders the TUI at that phase. Any phase is valid for resume — the TUI's phase-driven layout handles the rest.
+- [ ] `cli.py`: Two invocation patterns: `planner-auto session --project <name> --tui` (create new) and `planner-auto session <session-id> --tui` (resume existing). When `--tui` is not passed, print "Session TUI requires --tui flag" and exit. Lazy import of `planner_auto.tui.session_app`; print install instructions if textual not installed.
 - [ ] `cli.py`: In the `session` command's `--tui` path: if creating new, call `create_session()` + `save_session_config()` (same logic as `start` command). If resuming, load session from DB and validate it exists. Pass `session_id` + `db_path` to `SessionTUI`. After `app.run()` returns, read `app.exit_code` for shell return (0=normal, 1=error).
+
+**TUI app + widgets:**
 - [ ] `tui/session_app.py` (new file): Create `SessionTUI(App)` class:
   - `__init__` accepts `session_id: str`, `db_path: str`
   - `TITLE`, `CSS_PATH` (reuse `theme.tcss`), `BINDINGS` (phase-aware)
@@ -36,8 +50,8 @@ Persistent TUI shell with sidebar (session info + phase progress), context manag
 - [ ] `tui/widgets/phase_list.py` (new file): Vertical widget showing 6 phases with status icons (`✓` completed, `▶` active, `○` pending, `⚠` paused). Each phase row shows: icon + phase name + optional count (e.g., "CONTEXT (4)"). Method `update_phase(phase, icon)` updates a single row. Method `set_active(phase)` highlights the current phase.
 - [ ] `tui/widgets/compact_phase_bar.py` (new file): Single-line widget for small terminals (<80 cols). Renders as `✓ ✓ ▶ ○ ○ ○  4ctx  6msg  $0.00`. Shows phase icons inline + key metrics. Method `update(phases, context_count, message_count, cost)`.
 - [ ] `tui/widgets/context_list.py` (new file): Scrollable list showing context entries. Each row: `#  Type  Path/Content  Size`. Types: `file` (shows path), `note` (shows first 40 chars), `synthesis` (shows "auto-generated"). Method `add_entry(entry_type, key, size)`. Method `get_total_size() -> int`.
-- [ ] `tui/screens/file_input_screen.py` (new file): Modal screen with single-line text input for file path. On submit: validates file exists, is readable, is <500KB, is UTF-8. On validation pass: reads content, calls `add_context()` on the main thread's `_rw_conn`, posts `ContextAdded` message, dismisses modal. On validation fail: shows error inline, keeps modal open.
-- [ ] `tui/screens/note_input_screen.py` (new file): Modal screen with multiline TextArea for note content. On submit: posts `ContextAdded` message after writing to DB via `_rw_conn`. Dismiss on submit or Esc.
+- [ ] `tui/screens/file_input_screen.py` (new file): Modal screen with single-line text input for file path. On submit: calls `context_service.add_context_entry(conn, session_id, "file", path)` on the main thread. On success: posts `ContextAdded` message, dismisses modal. On validation error (missing file, >500KB, non-UTF-8): shows error inline from the raised exception, keeps modal open.
+- [ ] `tui/screens/note_input_screen.py` (new file): Modal screen with multiline TextArea for note content. On submit: calls `context_service.add_context_entry(conn, session_id, "note", content)` on the main thread. Posts `ContextAdded` message, dismisses modal. Dismiss without saving on Esc.
 - [ ] `tui/session_app.py`: Wire keybindings for CONTEXT phase: `f` → push `FileInputScreen`, `n` → push `NoteInputScreen`, `d` → advance to DISCUSSION phase (calls `SessionManager.advance_phase()`), `e` → export, `l` → cycle log filter, `q` → quit, `?` → help. Disable phase-inappropriate keys (e.g., `f`/`n` only active in CONTEXT/SETUP phase).
 - [ ] `tui/session_bindings.py` (new file): Define `SESSION_BINDINGS` dict keyed by phase. Each phase maps to a list of `(key, action, label)` tuples. The app swaps bindings when phase changes via `self._bindings = [Binding(*b) for b in SESSION_BINDINGS[phase]]`.
 - [ ] `tui/session_messages.py` (new file): Define message types for M1: `SessionStarted(session_id, project)`, `ContextAdded(entry_type, key, size)`, `PhaseAdvanced(from_phase, to_phase)`, `SessionError(error_message, phase)`
@@ -56,7 +70,10 @@ Persistent TUI shell with sidebar (session info + phase progress), context manag
 - [ ] Phase list shows correct icons (`✓`/`▶`/`○`) and updates on phase change
 - [ ] Small terminal (<80 cols) shows compact phase bar instead of sidebar
 - [ ] `q` exits cleanly, session stays in current phase (resumable)
-- [ ] All existing 464 tests pass; 3 new test files pass
+- [ ] `context_service.add_context_entry()` works as a standalone library function (no Click dependency)
+- [ ] Existing `planner-auto add-context` CLI command still works (uses context_service internally)
+- [ ] `session` command bypasses `PHASE_ALLOWED_COMMANDS` — works at any phase
+- [ ] All existing 464 tests pass; 4 new test files pass (including `test_context_service.py`)
 
 ---
 
@@ -105,11 +122,15 @@ Generation progress display, plan view, embedded review dashboard using existing
 - [ ] `tui/session_app.py`: On `g` key (regenerate): confirm via log message, re-mount GenerationProgress, spawn new `run_generate()` worker
 - [ ] `tui/session_messages.py`: Add message types: `SynthesisStarted(file_count, note_count)`, `SynthesisComplete(output_size, latency_ms)`, `PlanGenerationStarted(model)`, `PlanGenerated(draft_number, size, milestone_count, latency_ms, validation_ok, warnings)`
 
+**Review handler refactor (prerequisite for embedding):**
+- [ ] `tui/review_handlers.py` (new file): Extract the review message handler logic from `tui/review_app.py` into a standalone mixin or helper class `ReviewHandlerMixin`. This class provides methods: `handle_round_started(msg, round_list, current_round, log_panel)`, `handle_review_complete(msg, round_list, convergence_panel, log_panel)`, `handle_feedback_validated(msg, current_round, log_panel)`, `handle_revision_started(msg, current_round)`, `handle_revision_complete(msg, plan_panel, current_round, log_panel)`, `handle_loop_finished(msg, session_panel, log_panel)`, `handle_revision_timeout(msg, current_round, log_panel)`. Each method takes the message + the target widgets as parameters — no `self.query_one()` calls, no coupling to a specific app's widget tree.
+- [ ] `tui/review_app.py`: Refactor existing ReviewTUI message handlers to delegate to `ReviewHandlerMixin`. Each `on_X` handler calls `self._review_handlers.handle_X(msg, self.query_one(...), ...)`. Existing ReviewTUI behavior unchanged.
+- [ ] `tests/test_review_handlers.py` (new file): Test each handler method with mock widgets. Verify ReviewTUI still works after refactor (run existing review TUI tests).
+
 **Review embed:**
-- [ ] `tui/session_app.py`: On `r` key in PLANNING phase: advance phase PLANNING → REVIEW, mount review widgets (RoundList, ConvergencePanel, CurrentRound, PlanPanel from existing `tui/widgets/`) into main panel. Spawn `run_review_loop()` worker.
+- [ ] `tui/session_app.py`: On `r` key in PLANNING phase: advance phase PLANNING → REVIEW, mount review widgets (RoundList, ConvergencePanel, CurrentRound, PlanPanel from existing `tui/widgets/`) into main panel. Instantiate `ReviewHandlerMixin` and wire message handlers to delegate to it with the mounted widgets.
 - [ ] `tui/session_app.py`: Add `run_review_loop()` as `@work(thread=True)`: opens own conn, runs `ReviewWorkflow.prepare()` to resolve complexity/cap/reviewer/config, creates `ReviewLoopEngine(conn=worker_conn, callbacks=adapter, verbosity="tui")`, calls `ReviewWorkflow.run(engine, plan, max_rounds)`. On convergence: calls `ReviewWorkflow.finalize(worker_conn, session_id, result, prepared)` — **worker owns finalize**. Posts `SessionCompleted(export_paths, kafra_path, total_cost)`. On cap+criticals: posts `BlockerCreated(source, question)`. Closes conn in finally.
 - [ ] `tui/session_app.py`: Reuse existing `TUIAdapter` from `tui/adapter.py` for review callbacks — same `RoundStarted`, `ReviewComplete`, `FeedbackValidated`, `RevisionStarted`, `RevisionComplete`, `LoopFinished`, `RevisionTimeout` messages
-- [ ] `tui/session_app.py`: Reuse existing review message handlers from ReviewTUI — `on_round_started`, `on_review_complete`, etc. These update RoundList, ConvergencePanel, CurrentRound, PlanPanel. Same handlers, mounted into the session app's main panel instead of ReviewTUI's main panel.
 - [ ] `tui/session_app.py`: Review quit contract — same deferred quit as standalone ReviewTUI (`_quit_requested` flag, wait for current round to finish)
 
 **Completion + paused:**
@@ -128,12 +149,13 @@ Generation progress display, plan view, embedded review dashboard using existing
 - [ ] Generation shows 2-step progress (synthesis + plan) with elapsed timers
 - [ ] Plan view shows draft text, milestone count, validation status
 - [ ] `g` key regenerates plan; `r` key starts review
-- [ ] Review phase embeds existing review widgets — same experience as standalone `planner-auto review <id> --tui`
+- [ ] `ReviewHandlerMixin` extracted — review handlers decoupled from ReviewTUI widget tree
+- [ ] Standalone `planner-auto review <id> --tui` still works after handler refactor (no regressions)
+- [ ] Review phase embeds existing review widgets via `ReviewHandlerMixin` — same experience as standalone
 - [ ] On convergence: worker calls finalize, session completes, ResultSummary shows artifacts + cost
 - [ ] On cap+criticals: paused state shows blocker + CLI commands (read-only, no interactive resolution)
 - [ ] Quit during review defers until current round completes
-- [ ] Standalone `planner-auto review <id> --tui` still works (no regressions)
-- [ ] All existing tests pass; 3 new test files pass
+- [ ] All existing tests pass; 4 new test files pass (including `test_review_handlers.py`)
 
 ---
 
@@ -145,7 +167,7 @@ Inline blocker resolution — user answers the blocker question directly in the 
 - [ ] `tui/screens/blocker_screen.py` (new file): Modal screen showing blocker details and answer input. Displays: blocker source (e.g., "reviewer"), question text (full, scrollable if long), TextArea for answer input. On Enter: submit answer. On Esc: dismiss without resolving (session stays paused).
 - [ ] `tui/session_app.py`: On `BlockerCreated` message (updated from M3): instead of showing read-only blocker display, push `BlockerScreen` modal. User can answer or dismiss.
 - [ ] `tui/session_app.py`: On blocker answer submitted: spawn `resolve_blocker()` as `@work(thread=True)`. Worker opens conn, calls `SessionManager.resolve_and_resume(session_id, blocker_id, answer)` (same function CLI `resume` uses), commits. If session status returns to ACTIVE: posts `BlockerResolved`. Closes conn in finally.
-- [ ] `tui/session_app.py`: On `BlockerResolved` message: dismiss BlockerScreen, update PhaseList (remove `⚠` icon), update sidebar status to ACTIVE, log "Blocker resolved. Session resumed." If the blocker was from the review cap: prompt user whether to continue review (spawn new review worker with extended rounds) or complete the session.
+- [ ] `tui/session_app.py`: On `BlockerResolved` message: dismiss BlockerScreen, update PhaseList (remove `⚠` icon, restore previous phase as active), update sidebar status to ACTIVE, log "Blocker resolved. Session resumed." Session returns to the phase it was in before pausing. User can then take the next action from the TUI (e.g., `r` to start a new review run, `q` to quit). No automatic re-entry into review — user decides.
 - [ ] `tui/session_messages.py`: Add `BlockerResolved` message type
 - [ ] `tui/session_bindings.py`: Update PAUSED bindings — replace read-only bindings with `Enter` → open blocker screen, `q` → quit paused
 - [ ] `tests/test_session_tui_blocker.py` (new file): Test BlockerScreen renders question and accepts answer. Test submitting answer calls `resolve_and_resume()`. Test dismissing with Esc keeps session paused. Test BlockerResolved updates phase icons and status.
