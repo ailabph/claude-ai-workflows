@@ -1,4 +1,9 @@
-# TUI Proposal — Session Mode (Full Lifecycle)
+# TUI Proposal — Session Mode (Full Lifecycle) (v2)
+
+## Revision History
+
+- **v1:** Reviewed NO_GO — 3 blockers: (1) finalize ownership contradicts between worker and CLI, (2) single long-lived worker too complex for one plan, (3) paused/blocker inline resolution is new product behavior. 1 scope concern: too broad for a single implementation plan.
+- **v2:** Finalize owned by worker thread (consistent). Worker model split per phase (no single long-lived worker). Blocker resolution deferred to v1d. Implementation split into 4 phased plans.
 
 ## Problem
 
@@ -30,12 +35,24 @@ planner-auto session abc123 --tui
 
 ## Scope
 
-**In scope:** Full session lifecycle TUI — one app from start to complete.
+**In scope:** Full session lifecycle TUI — one app from start to complete. Delivered in 4 phased plans:
+
+| Phase | Scope | Depends On |
+|-------|-------|------------|
+| **v1a** | Session shell + context manager | Review TUI (v0.5.0) |
+| **v1b** | Discussion mode | v1a |
+| **v1c** | Planning/generation + review embed + completion | v1b |
+| **v1d** | Blocker resolution from TUI | v1c |
+
+Each phase is independently shippable — the TUI works at each stage with graceful fallback for unimplemented phases (e.g., v1a shows "Use CLI for discussion" in the DISCUSSION panel).
 
 **Out of scope:**
 - Multi-session management (one session per TUI instance)
 - Replacing the CLI (TUI is opt-in, CLI commands continue to work)
 - Inspector TUI (read-only post-hoc analysis — separate proposal)
+
+**Explicitly deferred to v1d:**
+- Inline blocker resolution from TUI (current CLI `resume` command is the only way to resolve blockers until v1d)
 
 ## Design Principles
 
@@ -379,6 +396,40 @@ This delegates to the existing ReviewTUI widgets. The sidebar stays, but the mai
 
 ### Mode 6: Paused State (any phase)
 
+#### v1a-v1c: Read-only (show blocker + CLI commands)
+
+```
++------------------------------------------------------------------------------+
+|  planner-auto session -- my-api (abc123)                    [!!] PAUSED      |
++--------------------+---------------------------------------------------------+
+|  SESSION           |  SESSION PAUSED                                         |
+|                    |                                                         |
+|  (sidebar)         |  [!!] Blocker from: reviewer                           |
+|                    |                                                         |
+|  PHASES            |  Question:                                              |
+|                    |    "Review cap reached. Critical issues remaining:      |
+|  ok SETUP          |     - SQL injection risk in project name passed to     |
+|  ok CONTEXT (4)    |       raw query in discover_repo_root"                 |
+|  ok DISCUSSION (6) |                                                         |
+|  ok PLANNING       |  ─────────────────────────────────────────────────────  |
+|  !! REVIEW (R8/8)  |                                                         |
+|  oo COMPLETE       |  To resolve from CLI:                                   |
+|                    |    planner-auto resume abc123                           |
+|  BLOCKER           |    planner-auto review abc123 --max-rounds 12          |
+|                    |    planner-auto complete abc123                         |
+|  !! 1 open blocker |                                                         |
+|                    |                                                         |
++--------------------+---------------------------------------------------------+
+|  LOG                                                                         |
+|  10:45:22 Review cap reached at round 8 with critical issues               |
+|  10:45:22 Session paused. Blocker: SQL injection risk...                    |
++------------------------------------------------------------------------------+
+|  [p]lan  [l]og filter  [q]uit                                    !! R8/8   |
++------------------------------------------------------------------------------+
+```
+
+#### v1d: Interactive blocker resolution (future)
+
 ```
 +------------------------------------------------------------------------------+
 |  planner-auto session -- my-api (abc123)                    [!!] PAUSED      |
@@ -550,74 +601,87 @@ class BlockerResolved(Message):
     pass
 ```
 
-### Worker Thread Model
+### Worker Thread Model — Per-Operation, Not Per-Session
 
-The session TUI runs a single worker thread that drives the full lifecycle. Unlike the review TUI (one-shot engine call), the session worker manages multiple phases:
+Unlike v1 which proposed a single long-lived worker managing the full lifecycle, v2 uses **short-lived workers per operation**. This avoids the complexity of idle parking, cross-phase state sync, and long-lived thread management.
+
+**Phase → Worker mapping:**
+
+| Phase | Worker Pattern | Duration |
+|-------|---------------|----------|
+| CONTEXT | No worker — TUI main thread handles add-context directly (DB writes are fast, <10ms) | Instant |
+| DISCUSSION | One worker per message — spawns on Enter, dies after Claude responds (~2-5s each) | Short |
+| PLANNING | One-shot worker — synthesize + generate (~5-15s) | Medium |
+| REVIEW | Long-running worker — ReviewLoopEngine (5-25 min, existing pattern) | Long |
+| COMPLETE | One-shot worker — finalize + export (~1s) | Short |
 
 ```python
+# CONTEXT: no worker needed
+def action_add_file(self) -> None:
+    """Runs on TUI main thread — DB write is fast."""
+    self.push_screen(FileInputScreen(...))
+
+def on_file_input_submitted(self, path: str) -> None:
+    add_context(self._rw_conn, self._session_id, "file", path, content)
+    self._rw_conn.commit()
+    self.post_message(ContextAdded(...))
+
+# DISCUSSION: worker per message
 @work(thread=True)
-def run_session(self) -> None:
+def send_discuss_message(self, content: str) -> None:
     worker_conn = sqlite3.connect(self._db_path)
     try:
-        # Phase: CONTEXT (wait for user to add files + signal done)
-        # User interactions happen via input events, not in the worker
-        # Worker is idle during CONTEXT — user drives via keybindings
+        response = discuss(self._session_id, worker_conn, content, backend=...)
+        worker_conn.commit()
+        self._dispatch("on_discuss_response", response)
+    finally:
+        worker_conn.close()
 
-        # Phase: DISCUSSION (interactive loop)
-        # Each message: worker calls discuss(), posts response
-        # User triggers /done via Ctrl+D keybinding
-
-        # Phase: PLANNING
+# PLANNING: one-shot worker
+@work(thread=True)
+def run_generate(self) -> None:
+    worker_conn = sqlite3.connect(self._db_path)
+    try:
         self._dispatch("on_synthesis_started", ...)
-        synthesis = synthesize_context(session_id, worker_conn, ...)
-        self._dispatch("on_synthesis_complete", ...)
-
-        self._dispatch("on_plan_generation_started", ...)
-        plan = generate_plan(session_id, worker_conn, ...)
+        # synthesize_context + generate_plan
         self._dispatch("on_plan_generated", ...)
+    finally:
+        worker_conn.close()
 
-        # Phase: REVIEW (delegates to ReviewLoopEngine)
-        engine = ReviewLoopEngine(conn=worker_conn, callbacks=...)
+# REVIEW: long-running worker (same as ReviewTUI)
+@work(thread=True)
+def run_review_loop(self) -> None:
+    worker_conn = sqlite3.connect(self._db_path)
+    try:
+        engine = ReviewLoopEngine(conn=worker_conn, callbacks=adapter)
         result = ReviewWorkflow.run(engine, plan, max_rounds)
-
-        # Phase: COMPLETE
+        # Worker owns finalize — it has the write connection and LoopResult
         finalize_result = ReviewWorkflow.finalize(worker_conn, ...)
-        self._dispatch("on_session_completed", ...)
-    except Exception as e:
-        self._dispatch("on_error", str(e), current_phase)
+        self._dispatch("on_session_completed", finalize_result)
     finally:
         worker_conn.close()
 ```
 
-**Key difference from review TUI:** The worker has idle periods (context, discussion) where it waits for user input. During these phases, the worker thread is parked on a `threading.Event` and the TUI main thread handles user interactions. The worker wakes up when the user triggers a phase transition.
+**Why per-operation workers:**
+- No idle parking complexity (no `threading.Event` bridges)
+- Each worker is simple: open conn, do work, post result, close conn
+- Context phase has no worker at all (DB writes are <10ms)
+- Discussion messages are independent — no shared state between workers
+- Familiar pattern — the review worker is identical to the existing ReviewTUI
 
-### Input Bridge (for Discussion)
+### Discussion Input Flow (No Bridge Needed)
 
-```python
-class SessionInputBridge:
-    """Bridges TUI input to worker thread during discussion phase."""
+With per-message workers, there's no input bridge. The flow is:
 
-    def __init__(self):
-        self._event = threading.Event()
-        self._message: str | None = None
-        self._done: bool = False
-
-    def send_message(self, content: str) -> None:
-        """Called from TUI main thread when user presses Enter."""
-        self._message = content
-        self._event.set()
-
-    def signal_done(self) -> None:
-        """Called from TUI main thread when user presses Ctrl+D."""
-        self._done = True
-        self._event.set()
-
-    def wait_for_input(self) -> tuple[str | None, bool]:
-        """Called from worker thread. Blocks until input arrives."""
-        self._event.wait()
-        self._event.clear()
-        return self._message, self._done
 ```
+User presses Enter with message text
+  -> TUI main thread: disable input, show "thinking..."
+  -> TUI spawns send_discuss_message(content) as @work(thread=True)
+  -> Worker: opens conn, calls discuss(), posts DiscussResponseReceived
+  -> TUI main thread: appends response to chat view, re-enables input
+```
+
+Each message is a fire-and-forget worker. The TUI main thread simply disables input while the worker runs and re-enables it when the response arrives.
 
 ### Phase-Aware Keybindings
 
@@ -641,10 +705,12 @@ Keybindings change based on the current phase:
 
 ### DB Connection Model
 
-Same as review TUI — 3 connections, 3 owners:
-- **CLI thread:** `prepare()` and post-exit handoff (if needed)
-- **Worker thread:** own connection for all writes (discuss, generate, review engine)
-- **TUI main thread:** read-only connection for sidebar queries
+Two persistent connections + per-worker connections:
+- **TUI main thread:** Read-write connection for fast operations (add-context, phase queries). Also used for sidebar reads. Opened on mount, closed on exit.
+- **Worker threads:** Each worker opens its own connection, closes in `finally`. Short-lived workers (discuss, generate) live <15s. The review worker lives longer but follows the same pattern.
+- **CLI thread:** No post-exit handoff needed. The review worker owns finalize (it has the write connection and the `LoopResult`). CLI just calls `app.run()` and reads `app.exit_code` for shell return.
+
+**Finalize ownership (resolved from v1):** The review worker calls `ReviewWorkflow.finalize(worker_conn, ...)` directly. The CLI does NOT call finalize after `app.run()` returns. This is different from the standalone ReviewTUI (where CLI owns finalize) but correct for the session TUI because the worker manages the full review→complete lifecycle.
 
 ### Quit Contract
 
@@ -684,43 +750,82 @@ The `session` command is new. It combines `start` + full lifecycle in one invoca
 
 ---
 
-## Implementation Milestones (Estimated)
+## Implementation Phases
 
-### M1: Session Shell + Phase Navigation
-- `session_app.py` with persistent layout (sidebar + main + log + footer)
-- `phase_list.py` widget with phase icons and counts
+Each phase is a separate implementation plan, independently shippable. The TUI works at each stage — unimplemented phases show a "Use CLI for X" message in the main panel.
+
+### Phase v1a: Session Shell + Context Manager
+
+**Scope:** Persistent shell with sidebar + phase list + log panel. Context manager with file/note add modals. Resume existing sessions.
+
+**What works after v1a:**
+- `planner-auto session --project my-api --tui` creates session and shows context manager
+- `planner-auto session abc123 --tui` resumes at current phase
+- Add files and notes via `f`/`n` keybindings with modal input
+- Context list shows entries with types and sizes
+- Phase list shows progress icons
+- Advance to DISCUSSION via `d` key (but discussion panel shows "Use CLI: planner-auto discuss abc123 --interactive")
+
+**Key deliverables:**
+- `session_app.py` with persistent layout
+- `phase_list.py` widget
 - `compact_phase_bar.py` for small terminals
-- Phase-aware keybinding switching
+- `context_list.py` widget
+- `file_input_screen.py` + `note_input_screen.py` modals
 - CLI `session` command with `--tui` flag
-- Reuse `SessionPanel`, `LogPanel`, `theme.tcss`
+- Phase-aware keybinding switching
+- No worker threads needed (context operations run on main thread)
 
-### M2: Context Manager
-- `context_list.py` widget (file/note list with sizes)
-- `file_input_screen.py` modal (path input + validation + size display)
-- `note_input_screen.py` modal (multiline text area)
-- Worker thread: `add_context` calls on user input
-- Phase advance: CONTEXT -> DISCUSSION on `d` key
+### Phase v1b: Discussion Mode
 
-### M3: Discussion View
-- `chat_view.py` widget (scrollable message history, role-colored)
-- `SessionInputBridge` for worker/TUI input synchronization
-- Worker thread: `discuss()` calls, response posting
-- "Thinking..." indicator during Claude response
-- Phase advance: DISCUSSION -> PLANNING on `Ctrl+D`
+**Scope:** Interactive chat view with message history, per-message worker threads, "thinking" indicator.
 
-### M4: Planning + Generation
-- `generation_progress.py` widget (synthesis + plan generation steps)
-- `plan_view.py` widget (scrollable plan with milestone count)
-- Worker thread: `synthesize_context()` + `generate_plan()` calls
-- Validation display (OK or warnings)
-- Phase advance: PLANNING -> REVIEW on `r` key
+**What works after v1b:**
+- Discussion phase is fully interactive in the TUI
+- Messages appear in real-time with role coloring
+- "Thinking..." indicator while Claude responds
+- `Ctrl+D` advances to PLANNING (but planning panel shows "Use CLI: planner-auto generate abc123")
 
-### M5: Review Embed + Completion
-- Embed review widgets (`RoundList`, `ConvergencePanel`, `CurrentRound`) in main panel
-- Reuse `TUIAdapter` + existing review messages
-- `result_summary.py` widget (completion stats, artifacts, .kafra path)
-- `blocker_screen.py` modal (blocker question + answer input)
-- Auto-advance REVIEW -> COMPLETE on convergence
+**Key deliverables:**
+- `chat_view.py` widget (scrollable, role-colored, input at bottom)
+- Per-message worker pattern (`send_discuss_message` as `@work(thread=True)`)
+- `DiscussThinking` / `DiscussResponseReceived` messages
+- Input disable/enable during Claude response
+
+### Phase v1c: Planning + Review Embed + Completion
+
+**Scope:** Generation progress display, plan view, embedded review dashboard (reuse existing widgets), completion summary with artifacts.
+
+**What works after v1c:**
+- Full lifecycle in one TUI: start → context → discuss → generate → review → complete
+- Generation shows synthesis + plan progress
+- Review phase embeds existing review widgets (RoundList, ConvergencePanel, CurrentRound)
+- Completion shows summary, artifacts, .kafra path
+- Paused state is read-only (shows blocker + CLI commands)
+
+**Key deliverables:**
+- `generation_progress.py` widget (synthesis + plan steps)
+- `plan_view.py` widget (scrollable plan, milestone count, validation)
+- Review widget embedding (mount/unmount on phase change)
+- `result_summary.py` widget
+- Review worker with finalize (worker owns finalize, not CLI)
+- Paused state: read-only (show blocker + CLI resume commands)
+
+### Phase v1d: Blocker Resolution (Future)
+
+**Scope:** Inline blocker resolution from TUI. User answers blocker question directly instead of switching to CLI.
+
+**What works after v1d:**
+- Paused state shows blocker question + text input
+- User submits answer → session resumes → review continues
+- Matches existing `session.py:resolve_and_resume()` semantics
+
+**Key deliverables:**
+- `blocker_screen.py` modal (question display + answer input)
+- Worker: resolve blocker, resume session, restart review loop
+- Explicit contract: TUI calls same `resolve_and_resume()` as CLI `resume` command
+
+**Why deferred:** This is new product behavior (inline resolution vs command-driven). The existing CLI `resume` command works. v1d adds convenience, not capability.
 
 ---
 
@@ -729,26 +834,45 @@ The `session` command is new. It combines `start` + full lifecycle in one invoca
 | Risk | Likelihood | Impact | Mitigation |
 |------|-----------|--------|------------|
 | Phase transition bugs | Medium | High | Reuse existing `SessionManager` phase rules |
-| Worker thread idle state management | Medium | Medium | `threading.Event` for input bridge, clear state machine |
 | Keybinding conflicts across phases | Low | Medium | Phase-aware binding swap, test each phase |
 | Review widget embedding conflicts | Medium | Medium | Mount/unmount review widgets on phase change |
-| Discussion input race conditions | Medium | High | Input bridge with explicit event signaling |
+| Per-message worker spawning overhead | Low | Low | Workers are lightweight (~2-5s each, no idle state) |
 | Large context files slow down context list | Low | Low | Show size only, lazy content loading |
+| Finalize in worker vs CLI inconsistency | Low | High | Explicit contract: session TUI worker owns finalize, standalone ReviewTUI CLI owns finalize |
 
 ---
 
 ## Success Criteria
 
+### v1a (Shell + Context)
 | Criterion | Measurement |
 |-----------|-------------|
-| Full lifecycle in one TUI session | Start -> add context -> discuss -> generate -> review -> complete without exiting |
-| Phase transitions visible | Phase list updates icons in real-time |
-| Discussion interactive | Messages sent/received with "thinking" indicator |
-| Review embedded | Same round-by-round experience as standalone review TUI |
-| Blocker resolution | Paused state shows blocker, accepts answer, resumes |
-| Small terminal usable | 60-column terminal shows compact phase bar + essential content |
+| Session created from TUI | `planner-auto session --project X --tui` creates session |
+| Context management works | Add files/notes via modals, see them in list |
 | Resume works | `planner-auto session <id> --tui` picks up at correct phase |
+| Small terminal usable | 60-column terminal shows compact phase bar |
+
+### v1b (Discussion)
+| Criterion | Measurement |
+|-----------|-------------|
+| Discussion interactive | Messages sent/received with "thinking" indicator |
+| Per-message workers | No hangs, no race conditions across 10+ messages |
+| Phase advance | Ctrl+D advances to PLANNING |
+
+### v1c (Planning + Review + Complete)
+| Criterion | Measurement |
+|-----------|-------------|
+| Full lifecycle | Start → context → discuss → generate → review → complete without exiting |
+| Review embedded | Same round-by-round experience as standalone review TUI |
+| Finalize in worker | Worker calls finalize, CLI does not |
+| Paused state read-only | Shows blocker + CLI commands, no interactive resolution |
 | No regressions | Standalone `planner-auto review <id> --tui` still works |
+
+### v1d (Blocker Resolution)
+| Criterion | Measurement |
+|-----------|-------------|
+| Blocker resolution | Paused state accepts answer, resumes session |
+| Same semantics as CLI | Uses `resolve_and_resume()` from `session.py` |
 
 ---
 
