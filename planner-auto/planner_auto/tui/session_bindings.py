@@ -39,9 +39,6 @@ SESSION_BINDINGS: dict[str, list[tuple[str, str, str]]] = {
         ("d", "dispositions", "Dispositions"),
         ("p", "plan", "Plan"),
         ("r", "start_review", "Start/restart review"),
-        ("enter", "select_round", "Round detail"),
-        ("escape", "back", "Back"),
-        ("n", "next_round", "Next round"),
         *_COMMON,
     ],
     "COMPLETE": [

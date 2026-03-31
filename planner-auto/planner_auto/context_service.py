@@ -82,7 +82,11 @@ def _add_file(conn: sqlite3.Connection, session_id: str, file_path: str) -> dict
     if not os.path.exists(abs_path):
         raise ContextError(f"File not found: {file_path}")
 
-    file_size = os.path.getsize(abs_path)
+    try:
+        file_size = os.path.getsize(abs_path)
+    except OSError as e:
+        raise ContextError(f"Cannot read file metadata: {file_path} ({e})")
+
     if file_size > MAX_FILE_SIZE:
         raise ContextError(
             f"File too large ({file_size} bytes). Maximum is {MAX_FILE_SIZE} bytes (500KB)."
