@@ -78,8 +78,11 @@ echo " RESOURCE STANZAS — paste into Formula/planner-auto.rb" >&2
 echo "──────────────────────────────────────────────────────────────────────────" >&2
 echo "" >&2
 
-# poet writes stanzas to stdout; all our progress messages go to stderr
-poet planner-auto
+# poet writes stanzas to stdout; all our progress messages go to stderr.
+# --also textual: poet only resolves required deps from PyPI metadata.
+# textual is an optional extra ([tui]), so we must explicitly include it
+# and its transitive deps (rich, markdown-it-py, etc.) via --also.
+poet --resources planner-auto --also textual
 
 echo "" >&2
 echo "──────────────────────────────────────────────────────────────────────────" >&2
