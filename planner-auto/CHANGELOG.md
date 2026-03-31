@@ -5,6 +5,34 @@ All notable changes to planner-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-31
+
+### Added
+
+- **Session TUI** — Full session lifecycle in one dashboard via `planner-auto session --project my-api --tui`. Covers: context management, interactive discussion, plan generation, embedded review, completion summary, and blocker resolution.
+- **`context_service.py`** — Reusable context-write API extracted from CLI `add-context` command. File validation, phase advance, consistent error handling via `ContextError`. No Click dependency.
+- **`session` CLI command** — Launcher that bypasses `PHASE_ALLOWED_COMMANDS`. Works at any phase for resume. Calls `setup_session_logging()` before TUI launch.
+- **`ReviewHandlerMixin`** — Extracted review message handlers from `ReviewTUI` into a reusable mixin. Handlers take widgets as parameters — no `self.query_one()` coupling.
+- **Session TUI widgets** (7 new): PhaseList, CompactPhaseBar, ContextList, ChatView, GenerationProgress, PlanView, ResultSummary.
+- **Session TUI screens** (3 new): FileInputScreen, NoteInputScreen, BlockerScreen.
+- **Phase-aware keybindings** — Bindings change per phase. Only working controls are exposed (no dead keybindings).
+- **Per-operation workers** — Context: no worker (main thread). Discussion: per-message. Planning: one-shot. Review: long-running. No single long-lived worker.
+
+### Changed
+
+- **`cli.py`** — `add-context` refactored to use `context_service.py`. New `session` command added.
+- **`review_app.py`** — Refactored to delegate message handling to `ReviewHandlerMixin`.
+- **`session_bindings.py`** — REVIEW bindings: only `d` (dispositions), `p` (plan), `r` (start/restart) + common. No dead enter/escape/n bindings.
+
+### Design Decisions
+
+- **Worker owns finalize** — In session TUI, the review worker calls `ReviewWorkflow.finalize()` directly (different from standalone ReviewTUI where CLI owns finalize).
+- **Event ownership** — `LoopFinished` updates review widgets only. `SessionCompleted`/`BlockerCreated` trigger phase transitions. Two separate responsibilities.
+- **Resume semantics** — `on_mount()` checks both phase AND status. PAUSED loads blocker from DB. COMPLETE populates ResultSummary from DB. REVIEW shows plan + option to restart.
+- **Blocker resolution** — `BlockerCreated` includes `blocker_id`. `resolve_and_resume()` uses same semantics as CLI `resume` command. No auto re-enter review after resolve.
+
+---
+
 ## [0.5.0] - 2026-03-30
 
 ### Added

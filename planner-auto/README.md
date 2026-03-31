@@ -44,6 +44,23 @@ export OPENAI_API_KEY="your-key"        # For GPT-5.4 (reviewer)
 
 ## Quick Start
 
+### Session TUI (recommended — full lifecycle in one dashboard)
+
+```bash
+planner-auto session --project my-api --tui
+# Add files with [f], notes with [n], start discussion with [d]
+# Chat with Claude, press Ctrl+D when ready
+# Plan generates automatically, press [r] to start review
+# Review runs until GPT says GO — session completes
+```
+
+Resume an existing session:
+```bash
+planner-auto session <session-id> --tui
+```
+
+### CLI (individual commands)
+
 ```bash
 # Start a session
 planner-auto start --project my-api
@@ -74,6 +91,13 @@ planner-auto complete <session-id>
 ```
 
 ## CLI Reference
+
+### Session TUI
+
+| Command | Description |
+|---------|-------------|
+| `session --project <name> --tui` | Create new session and launch TUI dashboard |
+| `session <id> --tui` | Resume existing session in TUI (any phase) |
 
 ### Session Commands (Plan 1)
 
@@ -220,6 +244,7 @@ planner_auto/
 ├── agents.py           # discuss(), synthesize_context(), generate_plan()
 ├── sdk_wrapper.py      # Claude SDK wrapper — retry, timeout, effort/thinking
 ├── review_workflow.py  # Shared review orchestration (prepare/run/finalize)
+├── context_service.py  # Reusable context-write API (no Click dependency)
 ├── prompts.py          # System prompts with version hashing
 ├── export.py           # Artifact export — plans, reviews, .kafra handoff
 ├── validation.py       # Plan format validation (milestone headers, checkboxes)
@@ -237,13 +262,17 @@ planner_auto/
 │   ├── feedback.py     # Validate feedback (ACCEPT/DEFER/REJECT per issue)
 │   ├── history.py      # Review context builder (cumulative deferred)
 │   └── convergence.py  # Complexity detection, caps, fast mode
-└── tui/                # TUI Review Dashboard (optional: pip install planner-auto[tui])
-    ├── review_app.py   # ReviewTUI — main Textual app
+└── tui/                # TUI dashboards (optional: pip install planner-auto[tui])
+    ├── review_app.py   # ReviewTUI — standalone review dashboard
+    ├── session_app.py  # SessionTUI — full lifecycle dashboard
+    ├── review_handlers.py # Reusable review message handler mixin
     ├── adapter.py      # Thread-safe engine → TUI bridge
-    ├── messages.py     # 8 Textual message types
-    ├── bindings.py     # Keybinding definitions
-    ├── widgets/        # SessionPanel, ConvergencePanel, RoundList, etc.
-    ├── screens/        # DispositionScreen, PlanScreen, RawResponseScreen, HelpScreen
+    ├── messages.py     # Review message types (8)
+    ├── session_messages.py # Session message types (12)
+    ├── bindings.py     # Review keybindings
+    ├── session_bindings.py # Phase-aware session keybindings
+    ├── widgets/        # SessionPanel, PhaseList, ChatView, PlanView, etc.
+    ├── screens/        # Dispositions, Plan, RawResponse, Help, File, Note, Blocker
     └── styles/         # theme.tcss — dark theme, 3 responsive breakpoints
 ```
 
@@ -280,7 +309,7 @@ pytest tests/test_db.py -v                 # Single file
 pytest tests/test_session.py::TestCheckCommand -v  # Single class
 pytest -k "complete" -v                    # Filter by name
 
-# Current test count: 464 passing
+# Current test count: 614 passing
 ```
 
 ## Config Versioning

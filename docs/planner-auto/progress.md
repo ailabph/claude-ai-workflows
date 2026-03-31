@@ -1,6 +1,6 @@
 # Planner-Auto Progress Tracker
 
-## Project Status: v0.5.0 — Plan 1 + Plan 2 + Observability + Direct API + TUI + Homebrew
+## Project Status: v0.6.0 — Plan 1 + Plan 2 + Observability + Direct API + TUI + Session TUI + Homebrew
 
 ---
 
@@ -189,6 +189,32 @@ Textual-based TUI for the `review` command via `--tui` flag. Live round progress
 
 ---
 
+### Session TUI (v0.6.0) — COMPLETE
+
+Full session lifecycle in one TUI dashboard via `planner-auto session --project my-api --tui`. Covers: context management, interactive discussion, plan generation, embedded review, completion summary, and blocker resolution.
+
+| Module | Lines | Status |
+|--------|-------|--------|
+| `context_service.py` | 105 | Implemented — reusable context-write API |
+| `tui/session_app.py` | 1,500 | Implemented — main app + per-operation workers |
+| `tui/review_handlers.py` | 250 | Implemented — extracted from ReviewTUI |
+| `tui/session_messages.py` | 155 | Implemented — 12 message types |
+| `tui/session_bindings.py` | 53 | Implemented — phase-aware bindings |
+| `tui/widgets/` (7 new) | 1,013 | Implemented — PhaseList, ChatView, PlanView, etc. |
+| `tui/screens/` (3 new) | 290 | Implemented — File, Note, Blocker modals |
+| **Tests** | **1,879** | **614 passing** (was 464) |
+
+**Key design decisions:**
+- Per-operation workers (no single long-lived worker)
+- Worker owns finalize during review (different from standalone ReviewTUI)
+- Resume checks both phase AND status (PAUSED loads blocker, COMPLETE populates from DB)
+- Phase-aware keybindings — only working controls exposed (no dead bindings)
+- Event ownership: LoopFinished = widget updates, SessionCompleted = phase transition
+
+**Review rounds:** Proposal went through 2 iterations (v1→v2). Plan went through 4 iterations (v1→v4) before GO. Key issues resolved: finalize ownership, worker model, blocker resolution scope, resume semantics, review parity, dead keybindings.
+
+---
+
 ### Homebrew Installer (v0.5.0) — COMPLETE
 
 Published to PyPI and Homebrew. `brew install planner-auto` installs full CLI + TUI.
@@ -246,8 +272,10 @@ Published to PyPI and Homebrew. `brew install planner-auto` installs full CLI + 
 | Brew installer (old) | `docs/planner-auto/plans/brew-installer-plan.md` | Original plan (v0.3.0, superseded) |
 | Brew proposal | `docs/planner-auto/plans/proposal-brew-installer.md` | Homebrew proposal (v2, textual included) |
 | Brew plan | `docs/planner-auto/plans/plan-brew-installer.md` | Implementation plan (4 milestones) |
-| TUI proposal | `docs/planner-auto/plans/proposal-tui.md` | TUI design (v2, Mode 1 only) |
-| TUI plan | `docs/planner-auto/plans/plan-tui-review-dashboard.md` | Implementation plan (v3, 4 milestones) |
+| TUI proposal | `docs/planner-auto/plans/proposal-tui.md` | Review TUI design (v2, Mode 1 only) |
+| TUI plan | `docs/planner-auto/plans/plan-tui-review-dashboard.md` | Review TUI plan (v3, 4 milestones) |
+| Session TUI proposal | `docs/planner-auto/plans/proposal-tui-session.md` | Session TUI design (v2, full lifecycle) |
+| Session TUI plan | `docs/planner-auto/plans/plan-tui-session.md` | Session TUI plan (v4, 4 milestones) |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
 | POC 5b readme | `scripts/poc/planner-auto/poc_review_loop_e2e_readme.md` | 11 experiment analysis |
 | AGENTS.md | `planner-auto/AGENTS.md` | Developer context |

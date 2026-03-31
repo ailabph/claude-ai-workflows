@@ -36,17 +36,22 @@ planner_auto/
 │   ├── feedback.py     (217 lines)  # ACCEPT/DEFER/REJECT per issue
 │   ├── history.py      (201 lines)  # Cumulative review context builder
 │   └── convergence.py  (126 lines)  # Complexity detection, caps, fast mode
-└── tui/                              # TUI Review Dashboard (optional dep)
-    ├── review_app.py   (671 lines)  # ReviewTUI — main Textual app + worker thread
+├── context_service.py (105 lines)   # Reusable context-write API
+└── tui/                              # TUI dashboards (optional dep)
+    ├── review_app.py   (671 lines)  # ReviewTUI — standalone review dashboard
+    ├── session_app.py  (1500 lines) # SessionTUI — full lifecycle dashboard
+    ├── review_handlers.py (250 lines) # Reusable review handler mixin
     ├── adapter.py      (129 lines)  # Thread-safe engine → TUI bridge
-    ├── messages.py     (135 lines)  # 8 Textual message types
-    ├── bindings.py     (16 lines)   # Keybinding definitions
-    ├── widgets/        (787 lines)  # 7 widgets: SessionPanel, ConvergencePanel, etc.
-    ├── screens/        (410 lines)  # 4 screens: Dispositions, Plan, RawResponse, Help
+    ├── messages.py     (135 lines)  # Review message types
+    ├── session_messages.py (155 lines) # Session message types
+    ├── bindings.py     (16 lines)   # Review keybindings
+    ├── session_bindings.py (53 lines) # Phase-aware session keybindings
+    ├── widgets/        (1800 lines) # 14 widgets total (7 review + 7 session)
+    ├── screens/        (700 lines)  # 7 screens total (4 review + 3 session)
     └── styles/theme.tcss (235 lines) # Dark theme, 3 responsive breakpoints
 ```
 
-**Total:** ~8,500 source lines, ~8,800 test lines, 464 tests.
+**Total:** ~11,500 source lines, ~10,700 test lines, 614 tests.
 
 ## Key Design Rules
 
