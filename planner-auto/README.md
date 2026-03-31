@@ -19,6 +19,15 @@ Each session follows a strict lifecycle: **SETUP → CONTEXT → DISCUSSION → 
 ## Installation
 
 ```bash
+# Option A: Homebrew (recommended — includes TUI)
+brew tap ailabph/orchestrator-auto
+brew install planner-auto
+
+# Option B: pip
+pip install planner-auto              # Core only
+pip install "planner-auto[tui]"       # With TUI dashboard
+
+# Option C: Development (from source)
 cd planner-auto/
 pip install -e .           # Production
 pip install -e ".[dev]"    # With pytest
@@ -329,4 +338,4 @@ If you need to use the SDK backend (e.g., OAuth-only auth), be aware:
 - [x] **Stress testing (Level 2)** — First end-to-end success: 3-round convergence, $0.12, GPT GO
 - [x] **TUI mode** — Review dashboard with live round progress, convergence sparkline, drill-down
 - [ ] **Telegram notifications** — Notify on plan approval or blocker
-- [ ] **Homebrew formula** — `brew install planner-auto`
+- [x] **Homebrew formula** — `brew install ailabph/orchestrator-auto/planner-auto`

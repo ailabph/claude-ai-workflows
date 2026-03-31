@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **TUI adapter** — Thread-safe bridge (`TUIAdapter`) translating engine callbacks into Textual messages via `app.call_from_thread()`.
 - **TUI theme** — Dark theme with orchestrator-auto color palette (`#00ff41` green, `#00d9ff` cyan). 3 responsive breakpoints (<80, 80-119, 120+ cols).
 - **`textual`** — Optional dependency (`pip install planner-auto[tui]`).
+- **Published to PyPI** — `pip install planner-auto==0.5.0` works. OIDC Trusted Publishing configured for automated releases.
+- **Homebrew formula** — `brew install ailabph/orchestrator-auto/planner-auto`. Formula includes textual (48 resource blocks). TUI works out of the box from brewed binary. `rust` build dep for `cryptography`.
+- **Automated release pipeline** — `.github/workflows/release-planner.yml`: 3-job workflow (detect → publish → update-homebrew). Path-triggered on `planner-auto/pyproject.toml` changes.
+- **Resource regeneration script** — `scripts/regenerate_brew_resources_planner.sh`. Uses `poet --resources planner-auto --also textual` to include TUI deps.
 
 ### Changed
 

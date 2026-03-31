@@ -1,6 +1,6 @@
 # Planner-Auto Progress Tracker
 
-## Project Status: v0.5.0 — Plan 1 + Plan 2 + Observability + Direct API + TUI Review Dashboard
+## Project Status: v0.5.0 — Plan 1 + Plan 2 + Observability + Direct API + TUI + Homebrew
 
 ---
 
@@ -189,6 +189,31 @@ Textual-based TUI for the `review` command via `--tui` flag. Live round progress
 
 ---
 
+### Homebrew Installer (v0.5.0) — COMPLETE
+
+Published to PyPI and Homebrew. `brew install planner-auto` installs full CLI + TUI.
+
+| Step | Status |
+|------|--------|
+| PyPI publish (v0.5.0) | Done — `pip install planner-auto==0.5.0` works |
+| Trusted Publishing (OIDC) | Done — configured for `release-planner.yml` |
+| Formula created | Done — `Formula/planner-auto.rb` in `ailabph/homebrew-orchestrator-auto` tap |
+| 48 resource blocks | Done — includes textual + transitive deps |
+| `rust` build dep | Added — required for `cryptography` C extension compilation |
+| `brew install` verified | Done — 4,034 files, 39.2MB, 5m 25s build |
+| `brew test` | Passed |
+| `--tui` flag present | Verified from brewed binary |
+| textual importable | Verified — `textual 8.2.1`, `planner_auto.tui` OK from brewed Python |
+| Release workflow | Done — `.github/workflows/release-planner.yml` (3-job: detect → publish → update-homebrew) |
+| Resource regen script | Done — `scripts/regenerate_brew_resources_planner.sh` (uses `--also textual`) |
+
+**Issues found during implementation:**
+- `poet planner-auto` only resolves required deps, not optional extras. Fixed with `poet --resources planner-auto --also textual`.
+- `cryptography` requires Rust/maturin to build from source. Fixed with `depends_on "rust" => :build` in formula.
+- Outdated CLT blocked brew install (unrelated to formula). Resolved with `xcode-select --install`.
+
+---
+
 ### Long Context Tests — Level 1 & 2 PASS, Level 3 Qualified PASS
 
 **Level 1 (93KB, 4 files):** Session `0ca49f61`. Plan referenced specific classes/file paths. Review: 5 rounds (2→1→1→1→GO), $0.29. History stable ~6.5-7.5K chars.
@@ -218,7 +243,9 @@ Textual-based TUI for the `review` command via `--tui` flag. Live round progress
 | Stress testing | `docs/planner-auto/plans/proposal-stress-testing.md` | 3-level testing strategy |
 | Direct API proposal | `docs/planner-auto/plans/proposal-direct-api-fallback.md` | Direct Anthropic API backend (v5) |
 | Direct API plan | `docs/planner-auto/plans/plan-direct-api-fallback.md` | Implementation plan (3 milestones) |
-| Brew installer | `docs/planner-auto/plans/brew-installer-plan.md` | Homebrew formula plan |
+| Brew installer (old) | `docs/planner-auto/plans/brew-installer-plan.md` | Original plan (v0.3.0, superseded) |
+| Brew proposal | `docs/planner-auto/plans/proposal-brew-installer.md` | Homebrew proposal (v2, textual included) |
+| Brew plan | `docs/planner-auto/plans/plan-brew-installer.md` | Implementation plan (4 milestones) |
 | TUI proposal | `docs/planner-auto/plans/proposal-tui.md` | TUI design (v2, Mode 1 only) |
 | TUI plan | `docs/planner-auto/plans/plan-tui-review-dashboard.md` | Implementation plan (v3, 4 milestones) |
 | POC status | `scripts/poc/planner-auto/POC_STATUS.md` | Full experiment log |
