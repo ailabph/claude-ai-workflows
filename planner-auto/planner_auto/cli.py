@@ -279,9 +279,6 @@ def resume(ctx, session_id, verbose, debug):
     click.echo(f"Status: {session['status']}")
 
 
-MAX_FILE_SIZE = 500 * 1024  # 500 KB
-
-
 @cli.command("add-context")
 @click.argument("session_id")
 @click.option("--file", "file_path", type=click.Path(), default=None, help="Path to a file to add as context.")
@@ -324,64 +321,32 @@ def add_context(ctx, session_id, file_path, note, verbose, debug):
         ctx.exit(1)
         return
 
+    from planner_auto.context_service import ContextError, add_context_entry as svc_add_context
+
     if file_path is not None:
-        _add_file_context(ctx, conn, session_id, file_path)
+        try:
+            result = svc_add_context(conn, session_id, "file", file_path, sm=sm)
+            click.echo(f"Context added: file '{result['key']}' ({result['size']} chars)")
+        except ContextError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+            return
     else:
-        _add_note_context(conn, session_id, note)
+        try:
+            result = svc_add_context(conn, session_id, "note", note, sm=sm)
+            click.echo(f"Context added: note '{result['key']}'")
+        except ContextError as e:
+            click.echo(f"Error: {e}", err=True)
+            ctx.exit(1)
+            return
 
-    # Advance phase to CONTEXT if currently in SETUP
-    if session["phase"] == Phase.SETUP.value:
-        sm.advance_phase(session_id, Phase.CONTEXT.value)
-        click.echo("Phase advanced to CONTEXT.")
-
-
-def _add_file_context(ctx, conn, session_id, file_path):
-    """Validate and store a file as context.
-
-    Resolves the path to an absolute path so context entries are
-    unambiguous regardless of the working directory at query time.
-    """
-    # Resolve to absolute path at add-context time.
-    abs_path = os.path.abspath(file_path)
-
-    if not os.path.exists(abs_path):
-        click.echo(f"Error: File not found: {file_path}", err=True)
-        ctx.exit(1)
-        return
-
-    file_size = os.path.getsize(abs_path)
-    if file_size > MAX_FILE_SIZE:
-        click.echo(
-            f"Error: File too large ({file_size} bytes). Maximum is {MAX_FILE_SIZE} bytes (500KB).",
-            err=True,
-        )
-        ctx.exit(1)
-        return
-
-    # Read and validate UTF-8
-    try:
-        with open(abs_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        click.echo("Error: File is not valid UTF-8 (binary files are not supported).", err=True)
-        ctx.exit(1)
-        return
-
-    # Use the absolute path as the key so it's unambiguous.
-    key = abs_path
-    add_context_entry(conn, session_id, key, "file", content)
-    conn.commit()
-    click.echo(f"Context added: file '{abs_path}' ({len(content)} chars)")
+    # Report phase advancement if it happened
+    session_after = get_session(conn, session_id)
+    if session_after and session_after["phase"] != session["phase"]:
+        click.echo(f"Phase advanced to {session_after['phase']}.")
 
 
-def _add_note_context(conn, session_id, note):
-    """Store a note as context with auto-generated key."""
-    from datetime import datetime
-
-    key = f"note-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
-    add_context_entry(conn, session_id, key, "note", note)
-    conn.commit()
-    click.echo(f"Context added: note '{key}'")
+    # Legacy helpers removed — context_service handles validation and storage.
 
 
 @cli.command()
@@ -651,6 +616,105 @@ def complete(ctx, session_id, verbose, debug):
     click.echo(f"Exported {len(paths)} file(s):")
     for p in paths:
         click.echo(f"  {p}")
+
+
+@cli.command()
+@click.argument("session_id", required=False, default=None)
+@click.option("--project", default=None, help="Project name (creates new session).")
+@click.option("--tui", is_flag=True, default=False, help="Launch the session TUI.")
+@click.option(
+    "--repo-root",
+    default=None,
+    help="Override repository root path.",
+)
+@click.option(
+    "--claude-backend",
+    "claude_backend",
+    default=None,
+    type=click.Choice(["direct", "sdk"]),
+    help="Claude backend: 'direct' or 'sdk'.",
+)
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
+@click.pass_context
+def session(ctx, session_id, project, tui, repo_root, claude_backend, verbose, debug):
+    """Launch the session TUI for a new or existing session.
+
+    Two invocation patterns:
+      planner-auto session --project <name> --tui   (create new)
+      planner-auto session <session-id> --tui        (resume existing)
+    """
+    ctx.obj["debug"] = debug
+
+    if not tui:
+        click.echo("Session TUI requires --tui flag.", err=True)
+        ctx.exit(1)
+        return
+
+    # Validate invocation: need either --project or session_id
+    if session_id is None and project is None:
+        click.echo("Error: Provide either --project <name> (new) or <session-id> (resume).", err=True)
+        ctx.exit(1)
+        return
+
+    if session_id is not None and project is not None:
+        click.echo("Error: Provide either --project (new session) or session-id (resume), not both.", err=True)
+        ctx.exit(1)
+        return
+
+    conn = _get_conn(ctx)
+
+    if project is not None:
+        # Create new session (same logic as `start` command)
+        sid = create_session(conn, project)
+
+        if repo_root is not None:
+            resolved_repo_root = os.path.abspath(repo_root)
+        else:
+            resolved_repo_root = discover_repo_root()
+
+        if claude_backend is None:
+            claude_backend = resolve_default_backend()
+
+        config = {
+            "project": project,
+            "model_default": "claude-sonnet-4-6",
+            "repo_root": resolved_repo_root,
+            "claude_backend": claude_backend,
+        }
+        save_session_config(conn, sid, json.dumps(config))
+        conn.commit()
+    else:
+        # Resume existing session
+        sid = session_id
+        sess = get_session(conn, sid)
+        if sess is None:
+            click.echo(f"Error: Session not found: {sid}", err=True)
+            ctx.exit(1)
+            return
+
+    # Set up session logging
+    setup_session_logging(sid, verbose=verbose, debug=debug)
+    logger.info("Command invoked: session, session_id=%s, project=%s, tui=%s", sid, project, tui)
+
+    # Lazy import of session TUI
+    try:
+        from planner_auto.tui.session_app import SessionTUI
+    except ImportError:
+        click.echo(
+            "Error: Textual is not installed. Install with: pip install 'textual>=0.40'",
+            err=True,
+        )
+        ctx.exit(1)
+        return
+
+    # Resolve db_path for TUI
+    db_path = ctx.obj.get("db_path")
+
+    app = SessionTUI(session_id=sid, db_path=db_path)
+    app.run()
+
+    ctx.exit(app.exit_code)
 
 
 @cli.command()

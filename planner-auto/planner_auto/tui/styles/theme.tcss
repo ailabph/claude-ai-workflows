@@ -233,3 +233,238 @@ HelpScreen .help-section {
 HelpScreen .help-row {
     height: 1;
 }
+
+/* --- Session TUI layout --- */
+#session-grid {
+    layout: grid;
+    grid-size: 4 1;
+    grid-columns: 1fr 3fr;
+    grid-gutter: 1;
+    height: 1fr;
+}
+
+/* --- Session TUI responsive --- */
+.layout-stacked #session-grid {
+    layout: vertical;
+    grid-size: 1 1;
+}
+
+.layout-stacked #sidebar {
+    height: auto;
+    max-height: 12;
+}
+
+.layout-wide #session-grid {
+    grid-columns: 1fr 4fr;
+}
+
+/* --- Phase list rows --- */
+PhaseList .pl-active {
+    color: $accent;
+    text-style: bold;
+}
+
+PhaseList .pl-completed {
+    color: #00ff41;
+}
+
+PhaseList .pl-pending {
+    color: $text-muted;
+}
+
+PhaseList .pl-paused {
+    color: $warning;
+    text-style: bold;
+}
+
+/* --- Context list --- */
+ContextList .cl-file {
+    color: $accent;
+}
+
+ContextList .cl-note {
+    color: #00ff41;
+}
+
+ContextList .cl-synthesis {
+    color: $warning;
+}
+
+/* --- Compact phase bar --- */
+CompactPhaseBar {
+    height: 1;
+    padding: 0 1;
+    color: $accent;
+}
+
+/* --- File/Note modal screens --- */
+FileInputScreen,
+NoteInputScreen {
+    align: center middle;
+}
+
+FileInputScreen #file-container,
+NoteInputScreen #note-container {
+    border: solid $accent;
+    background: $surface;
+}
+
+/* --- Chat view (discussion phase) --- */
+#chat-view {
+    height: 1fr;
+}
+
+ChatView #chat-scroll {
+    height: 1fr;
+}
+
+ChatView .chat-user {
+    color: #00ff41;
+    margin: 0 0 1 0;
+}
+
+ChatView .chat-assistant {
+    color: #00d9ff;
+    margin: 0 0 1 0;
+}
+
+ChatView .chat-thinking {
+    color: $text-muted;
+    text-style: italic;
+    margin: 0 0 1 0;
+}
+
+ChatView #chat-input-area {
+    height: auto;
+    max-height: 3;
+    dock: bottom;
+    border-top: solid $surface;
+    padding: 0 1;
+}
+
+ChatView #chat-input {
+    width: 100%;
+}
+
+/* --- Generation progress (planning phase) --- */
+#generation-progress {
+    height: auto;
+    padding: 1 2;
+}
+
+GenerationProgress .gp-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+GenerationProgress .gp-active {
+    color: $accent;
+}
+
+GenerationProgress .gp-done {
+    color: #00ff41;
+}
+
+GenerationProgress .gp-pending {
+    color: $text-muted;
+}
+
+/* --- Plan view (planning phase) --- */
+#plan-view {
+    height: 1fr;
+}
+
+PlanView .pv-title {
+    text-style: bold;
+    color: $primary;
+}
+
+PlanView .pv-meta {
+    color: $accent;
+}
+
+PlanView .pv-warning {
+    color: $warning;
+}
+
+PlanView .pv-ok {
+    color: #00ff41;
+}
+
+PlanView #pv-scroll {
+    height: 1fr;
+    padding: 0 1;
+}
+
+/* --- Result summary (complete phase) --- */
+ResultSummary .rs-title {
+    text-style: bold;
+    color: $primary;
+    margin-bottom: 1;
+}
+
+ResultSummary .rs-check {
+    color: #00ff41;
+}
+
+ResultSummary .rs-metric {
+    color: $accent;
+}
+
+ResultSummary .rs-section {
+    text-style: bold;
+    color: $accent;
+    margin-top: 1;
+}
+
+ResultSummary .rs-path {
+    color: $text;
+    padding: 0 0 0 2;
+}
+
+/* --- Blocker display (paused state) --- */
+#blocker-display {
+    padding: 2;
+    height: auto;
+}
+
+/* --- Blocker screen modal --- */
+BlockerScreen {
+    align: center middle;
+}
+
+BlockerScreen #blocker-container {
+    border: solid $warning;
+    background: $surface;
+}
+
+BlockerScreen .bk-title {
+    color: $warning;
+}
+
+BlockerScreen .bk-source {
+    color: $accent;
+}
+
+BlockerScreen .bk-answer-label {
+    color: $primary;
+}
+
+BlockerScreen .bk-hint {
+    color: $text-muted;
+}
+
+/* --- Review widgets in session TUI --- */
+#review-round-list {
+    height: auto;
+    max-height: 10;
+}
+
+#review-convergence {
+    height: auto;
+}
+
+#review-current-round {
+    height: auto;
+}

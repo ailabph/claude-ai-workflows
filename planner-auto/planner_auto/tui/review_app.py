@@ -23,6 +23,7 @@ from planner_auto.loop.engine import LoopResult, ReviewLoopEngine
 from planner_auto.review_workflow import ReviewWorkflow
 from planner_auto.tui.adapter import TUIAdapter
 from planner_auto.tui.bindings import REVIEW_BINDINGS
+from planner_auto.tui.review_handlers import ReviewHandlerMixin
 from planner_auto.tui.messages import (
     FeedbackValidated,
     LoopError,
@@ -94,13 +95,27 @@ class ReviewTUI(App):
         # Tick timer handle.
         self._tick_timer = None
 
-        # Track round data for internal use.
-        self._round_data: dict[int, dict] = {}
-        self._latest_round: int = 0
+        # Shared review handler logic (decoupled from widget tree).
+        self._review_handlers = ReviewHandlerMixin()
+        self._review_handlers.original_plan_size = self._original_plan_size
+
+        # Track round data via the handler mixin.
         self._loop_finished_count: int = 0
 
         # Round detail view state.
         self._detail_round: Optional[int] = None  # None = dashboard view
+
+    @property
+    def _round_data(self) -> dict[int, dict]:
+        return self._review_handlers.round_data
+
+    @property
+    def _latest_round(self) -> int:
+        return self._review_handlers.latest_round
+
+    @_latest_round.setter
+    def _latest_round(self, value: int) -> None:
+        self._review_handlers.latest_round = value
 
     # ------------------------------------------------------------------
     # Compose
@@ -257,142 +272,47 @@ class ReviewTUI(App):
     # ------------------------------------------------------------------
 
     def on_round_started(self, message: RoundStarted) -> None:
-        """Handle RoundStarted — add round to list, update current-round."""
-        self._latest_round = message.round_num
-        self._round_data[message.round_num] = {"max_rounds": message.max_rounds}
-
-        round_list: RoundList = self.query_one("#round-list", RoundList)
-        round_list.add_round(message.round_num)
-
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.set_gpt_review(message.round_num)
-
-        log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_message(
-            f"R{message.round_num}/{message.max_rounds}: GPT reviewing...",
-            level="info",
+        """Handle RoundStarted — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_round_started(
+            message,
+            self.query_one("#round-list", RoundList),
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
         )
 
     def on_review_complete(self, message: ReviewComplete) -> None:
-        """Handle ReviewComplete — update round list and convergence."""
-        rdata = self._round_data.setdefault(message.round_num, {})
-        rdata.update({
-            "verdict": message.verdict,
-            "issue_count": message.issue_count,
-            "cost": message.cost,
-            "latency_ms": message.latency_ms,
-            "input_tokens": message.input_tokens,
-            "output_tokens": message.output_tokens,
-            "keep_count": message.keep_count,
-            "trim_count": message.trim_count,
-            "issues": message.issues,
-        })
-
-        # Update round list.
-        round_list: RoundList = self.query_one("#round-list", RoundList)
-        round_list.update_round(
-            message.round_num,
-            verdict=message.verdict,
-            issue_count=message.issue_count,
-            cost=message.cost,
+        """Handle ReviewComplete — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_review_complete(
+            message,
+            self.query_one("#round-list", RoundList),
+            self.query_one("#convergence-panel", ConvergencePanel),
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
         )
-
-        # Update convergence panel.
-        total_tokens = (message.input_tokens or 0) + (message.output_tokens or 0)
-        conv: ConvergencePanel = self.query_one("#convergence-panel", ConvergencePanel)
-        conv.update(
-            message.round_num,
-            message.issue_count,
-            message.cost or 0.0,
-            total_tokens,
-        )
-
-        # Log.
-        log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-        cost_str = f"${message.cost:.4f}" if message.cost else "$?"
-        level = "success" if message.verdict == "GO" else "info"
-        log_panel.log_message(
-            f"R{message.round_num}: {message.verdict} — {message.issue_count} issues, "
-            f"{message.latency_ms}ms, {cost_str}",
-            level=level,
-        )
-
-        # If GO, clear current-round (no revision follows).
-        if message.verdict == "GO":
-            current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-            current_round.clear()
 
     def on_feedback_validated(self, message: FeedbackValidated) -> None:
-        """Handle FeedbackValidated — show disposition summary."""
-        accepted = deferred = rejected = 0
-        if message.dispositions:
-            for d in message.dispositions:
-                disp = d.get("disposition", "")
-                if disp == "ACCEPT":
-                    accepted += 1
-                elif "DEFER" in disp:
-                    deferred += 1
-                elif "REJECT" in disp:
-                    rejected += 1
-
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.set_feedback(accepted, deferred, rejected)
-
-        if message.dispositions:
-            log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-            log_panel.log_message(
-                f"R{message.round_num}: Dispositions — "
-                f"{accepted}A/{deferred}D/{rejected}R",
-                level="info",
-            )
+        """Handle FeedbackValidated — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_feedback_validated(
+            message,
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
+        )
 
     def on_revision_started(self, message: RevisionStarted) -> None:
-        """Handle RevisionStarted — switch to Claude revising phase."""
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.set_revision(message.round_num)
-
-        log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_message(
-            f"R{message.round_num}: Claude revising... "
-            f"({message.accepted_count}A/{message.deferred_count}D/{message.rejected_count}R)",
-            level="info",
+        """Handle RevisionStarted — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_revision_started(
+            message,
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
         )
 
     def on_revision_complete(self, message: RevisionComplete) -> None:
-        """Handle RevisionComplete — update plan panel, clear current-round."""
-        # Store revision data for round detail view.
-        rdata = self._round_data.setdefault(message.round_num, {})
-        rdata.update({
-            "revision_latency_ms": message.latency_ms,
-            "prev_size": message.prev_size,
-            "new_size": message.new_size,
-            "history_context_size": message.history_context_size,
-        })
-
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.record_revision_latency(message.latency_ms)
-        current_round.clear()
-
-        # Update plan panel.
-        plan_panel: PlanPanel = self.query_one("#plan-panel", PlanPanel)
-        # We don't have the plan text here — just update size metrics.
-        # draft_num is approximate: round_num + 1 (original is #1).
-        plan_panel.update(
-            draft_num=message.round_num + 1,
-            size=message.new_size,
-            original_size=self._original_plan_size,
-            plan_text="",  # text not available from callback — milestones show 0
-        )
-
-        delta = message.new_size - message.prev_size
-        sign = "+" if delta >= 0 else ""
-
-        log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_message(
-            f"R{message.round_num}: Revision done — "
-            f"{message.prev_size}→{message.new_size} chars ({sign}{delta}), "
-            f"{message.latency_ms}ms",
-            level="info",
+        """Handle RevisionComplete — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_revision_complete(
+            message,
+            self.query_one("#plan-panel", PlanPanel),
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
         )
 
     def on_loop_finished(self, message: LoopFinished) -> None:
@@ -404,9 +324,6 @@ class ReviewTUI(App):
         self._loop_finished_count += 1
 
         # Construct LoopResult for CLI handoff.
-        # We don't have final_plan text or draft_number from the message,
-        # but the CLI's finalize() reads them from DB, so we provide
-        # the fields we have and set defaults for the rest.
         self.loop_result = LoopResult(
             converged=message.converged,
             rounds=message.rounds,
@@ -423,11 +340,16 @@ class ReviewTUI(App):
         if self._tick_timer:
             self._tick_timer.stop()
 
-        # Update session panel.
-        panel: SessionPanel = self.query_one("#session-panel", SessionPanel)
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.clear()
+        # Delegate widget updates to the mixin.
+        self._review_handlers.handle_loop_finished(
+            message,
+            self.query_one("#session-panel", SessionPanel),
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
+        )
 
+        # ReviewTUI-specific: update result summary and session panel status.
+        panel: SessionPanel = self.query_one("#session-panel", SessionPanel)
         log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
         result_widget: Static = self.query_one("#result-summary", Static)
 
@@ -440,15 +362,9 @@ class ReviewTUI(App):
                 f"${message.total_cost:.4f} total."
             )
             result_widget.update(summary)
-            log_panel.log_message(
-                f"Converged ({message.stop_reason}) in {message.rounds} rounds. "
-                f"${message.total_cost:.4f} total.",
-                level="success",
-            )
         else:
             panel.update_status("PAUSED")
 
-            # Show blocker info with CLI commands.
             blocker_lines = [
                 f"[yellow]Review cap reached[/yellow] after {message.rounds} rounds.",
                 f"Stop reason: {message.stop_reason}",
@@ -460,11 +376,6 @@ class ReviewTUI(App):
                 f"  planner-auto complete {self._session_id}",
             ]
             result_widget.update("\n".join(blocker_lines))
-            log_panel.log_message(
-                f"Cap reached ({message.stop_reason}) after {message.rounds} rounds. "
-                f"${message.total_cost:.4f} total.",
-                level="warning",
-            )
 
         log_panel.log_message("Press q to exit.", level="info")
 
@@ -504,15 +415,11 @@ class ReviewTUI(App):
             self.exit()
 
     def on_revision_timeout(self, message: RevisionTimeout) -> None:
-        """Handle RevisionTimeout — show retry status."""
-        current_round: CurrentRound = self.query_one("#current-round", CurrentRound)
-        current_round.set_retry(message.round_num, message.timeout_sec, message.retry_count)
-
-        log_panel: LogPanel = self.query_one("#log-panel", LogPanel)
-        log_panel.log_message(
-            f"R{message.round_num}: Timeout after {message.timeout_sec}s — "
-            f"retry #{message.retry_count}",
-            level="warning",
+        """Handle RevisionTimeout — delegate to ReviewHandlerMixin."""
+        self._review_handlers.handle_revision_timeout(
+            message,
+            self.query_one("#current-round", CurrentRound),
+            self.query_one("#log-panel", LogPanel),
         )
 
     # ------------------------------------------------------------------
