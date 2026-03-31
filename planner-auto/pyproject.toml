@@ -33,7 +33,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/ailabph/claude-ai-workflows"
 Repository = "https://github.com/ailabph/claude-ai-workflows"
-Changelog = "https://github.com/ailabph/claude-ai-workflows/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/ailabph/claude-ai-workflows/blob/main/planner-auto/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
