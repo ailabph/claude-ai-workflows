@@ -130,3 +130,90 @@ class TestContextListFormatting:
 
     def test_format_size_mb(self):
         assert ContextList._format_size(2 * 1024 * 1024) == "2.0MB"
+
+
+class TestResumeSemantics:
+    """Tests for resuming sessions in different states."""
+
+    def _make_session(self, tmp_path, phase, status, *, with_blocker=False, with_plan=False):
+        """Create a test DB with a session in a specific phase/status."""
+        db_path = str(tmp_path / "resume_test.db")
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys=ON")
+        init_schema(conn)
+        sid = create_session(conn, "resume-test")
+        save_session_config(conn, sid, '{"project": "resume-test"}')
+        # Set phase and status directly
+        conn.execute("UPDATE sessions SET phase = ?, status = ? WHERE id = ?", (phase, status, sid))
+        if with_plan:
+            from planner_auto.db import add_plan_draft
+            add_plan_draft(conn, sid, "## Milestone 1: Test\n### Tasks\n- [ ] task", "claude-sonnet")
+        if with_blocker:
+            from planner_auto.db import create_blocker
+            create_blocker(conn, sid, "reviewer", "Critical issue found")
+        conn.commit()
+        conn.close()
+        return db_path, sid
+
+    def test_resume_paused_session_has_blocker_info(self, tmp_path):
+        """Resuming a PAUSED session should load blocker from DB."""
+        db_path, sid = self._make_session(tmp_path, "REVIEW", "PAUSED", with_blocker=True)
+
+        # Verify the DB state is correct
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        assert session["status"] == "PAUSED"
+        blockers = conn.execute(
+            "SELECT * FROM blockers WHERE session_id = ? AND status = 'open'", (sid,)
+        ).fetchall()
+        assert len(blockers) >= 1
+        conn.close()
+
+    def test_resume_complete_session_has_plan_data(self, tmp_path):
+        """Resuming a COMPLETE session should have plan data available for summary."""
+        db_path, sid = self._make_session(tmp_path, "COMPLETE", "COMPLETE", with_plan=True)
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        assert session["status"] == "COMPLETE"
+        assert session["phase"] == "COMPLETE"
+        from planner_auto.db import get_latest_plan_draft
+        draft = get_latest_plan_draft(conn, sid)
+        assert draft is not None
+        assert "Milestone 1" in draft["content"]
+        conn.close()
+
+    def test_resume_review_session_has_plan_content(self, tmp_path):
+        """Resuming a REVIEW session should load the plan for review restart."""
+        db_path, sid = self._make_session(tmp_path, "REVIEW", "ACTIVE", with_plan=True)
+
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        session = conn.execute("SELECT * FROM sessions WHERE id = ?", (sid,)).fetchone()
+        assert session["phase"] == "REVIEW"
+        assert session["status"] == "ACTIVE"
+        from planner_auto.db import get_latest_plan_draft
+        draft = get_latest_plan_draft(conn, sid)
+        assert draft is not None
+        conn.close()
+
+    def test_paused_bindings_include_enter_for_blocker(self):
+        """PAUSED bindings must include Enter to open blocker screen."""
+        from planner_auto.tui.session_bindings import SESSION_BINDINGS
+        paused = SESSION_BINDINGS.get("PAUSED", [])
+        keys = [b[0] for b in paused]
+        actions = [b[1] for b in paused]
+        assert "enter" in keys
+        assert "open_blocker" in actions
+
+    def test_review_bindings_include_r_for_start_review(self):
+        """REVIEW bindings must include r to start/restart review loop."""
+        from planner_auto.tui.session_bindings import SESSION_BINDINGS
+        review = SESSION_BINDINGS.get("REVIEW", [])
+        keys = [b[0] for b in review]
+        actions = [b[1] for b in review]
+        assert "r" in keys
+        assert "start_review" in actions

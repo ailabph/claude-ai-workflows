@@ -93,6 +93,10 @@ def _add_file(conn: sqlite3.Connection, session_id: str, file_path: str) -> dict
             content = f.read()
     except UnicodeDecodeError:
         raise ContextError("File is not valid UTF-8 (binary files are not supported).")
+    except PermissionError:
+        raise ContextError(f"Permission denied reading file: {file_path}")
+    except OSError as e:
+        raise ContextError(f"Cannot read file: {file_path} ({e})")
 
     key = abs_path
     db_add_context_entry(conn, session_id, key, "file", content)

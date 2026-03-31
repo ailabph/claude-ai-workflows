@@ -188,13 +188,12 @@ class SessionTUI(App):
         sp.set_field("phase", session["phase"])
         sp.set_field("status", session["status"])
 
-        # Set current phase
+        # Set current phase — check status for PAUSED sessions
+        session_status = session["status"]
         self._current_phase = session["phase"]
-        self._update_bindings(self._current_phase)
 
         # Populate phase list
         pl = self.query_one("#phase-list", PhaseList)
-        pl.set_active(self._current_phase)
 
         # Load existing context entries
         entries = get_context_entries(self._rw_conn, self._session_id)
@@ -206,8 +205,45 @@ class SessionTUI(App):
         if entries:
             pl.set_count("CONTEXT", str(len(entries)))
 
-        # Set initial main panel content
-        self._switch_main_panel(self._current_phase)
+        # Load messages count for phase list
+        messages = get_messages(self._rw_conn, self._session_id)
+        if messages:
+            pl.set_count("DISCUSSION", str(len(messages)))
+
+        # Handle resume based on BOTH phase and status
+        if session_status == "PAUSED":
+            # Paused session — show blocker UI, not normal phase UI
+            pl.set_paused(self._current_phase)
+            self._update_bindings("PAUSED")
+            # Load blocker info from DB
+            from planner_auto.db import get_open_blockers
+            blockers = get_open_blockers(self._rw_conn, self._session_id)
+            if blockers:
+                b = blockers[0]
+                self._blocker_id = b["id"]
+                self._blocker_source = b.get("source", "unknown")
+                self._blocker_question = b.get("question", "")
+                self._mount_paused_panel()
+            else:
+                # No open blockers but status is PAUSED — show info
+                pl.set_active(self._current_phase)
+                self._update_bindings(self._current_phase)
+                self._switch_main_panel(self._current_phase)
+        elif session_status == "COMPLETE" or self._current_phase == Phase.COMPLETE.value:
+            # Completed session — populate result summary from DB
+            pl.set_active(self._current_phase)
+            self._update_bindings(self._current_phase)
+            self._mount_complete_panel_from_db()
+        elif self._current_phase == Phase.REVIEW.value:
+            # Resuming into REVIEW — show plan + option to start review
+            pl.set_active(self._current_phase)
+            self._update_bindings(self._current_phase)
+            self._mount_review_resume_panel()
+        else:
+            # Normal active session — show phase-appropriate content
+            pl.set_active(self._current_phase)
+            self._update_bindings(self._current_phase)
+            self._switch_main_panel(self._current_phase)
 
         # Responsive layout
         self._apply_responsive_layout()
@@ -354,11 +390,132 @@ class SessionTUI(App):
             self._review_handlers.original_plan_size = len(self._plan_content)
 
     def _mount_complete_panel(self) -> None:
-        """Mount completion phase widgets into the main panel."""
+        """Mount completion phase widgets (live — waits for SessionCompleted message)."""
         main = self.query_one("#main-panel", Container)
         from planner_auto.tui.widgets.result_summary import ResultSummary
         rs = ResultSummary(id="result-summary")
         main.mount(rs)
+
+    def _mount_complete_panel_from_db(self) -> None:
+        """Mount and populate completion panel from DB (resume scenario)."""
+        main = self.query_one("#main-panel", Container)
+        # Remove existing content
+        for child in list(main.query("*")):
+            child.remove()
+
+        from planner_auto.tui.widgets.result_summary import ResultSummary
+        rs = ResultSummary(id="result-summary")
+        main.mount(rs)
+
+        # Populate from DB data
+        if self._rw_conn:
+            from planner_auto.db import get_latest_plan_draft
+            import re
+
+            draft = get_latest_plan_draft(self._rw_conn, self._session_id)
+            draft_number = draft["draft_number"] if draft else 0
+            plan_size = len(draft["content"]) if draft else 0
+            plan_text = draft["content"] if draft else ""
+            milestone_count = len(re.findall(r"^## Milestone \d+:", plan_text, re.MULTILINE))
+
+            # Count review rounds
+            review_count_row = self._rw_conn.execute(
+                "SELECT COUNT(*) as cnt FROM reviews WHERE session_id = ?",
+                (self._session_id,),
+            ).fetchone()
+            review_rounds = review_count_row["cnt"] if review_count_row else 0
+
+            # Get total cost from reviews
+            cost_row = self._rw_conn.execute(
+                "SELECT COALESCE(SUM(cost), 0.0) as total FROM reviews WHERE session_id = ?",
+                (self._session_id,),
+            ).fetchone()
+            total_cost = cost_row["total"] if cost_row else 0.0
+
+            # Get export paths (check if session dir exists)
+            import os
+            from planner_auto.export import DEFAULT_SESSIONS_DIR
+            session_dir = os.path.join(DEFAULT_SESSIONS_DIR, self._session_id)
+            export_paths = []
+            if os.path.isdir(session_dir):
+                export_paths = [os.path.join(session_dir, f) for f in sorted(os.listdir(session_dir))]
+
+            # Check .kafra
+            from planner_auto.db import get_session_config
+            cfg_row = get_session_config(self._rw_conn, self._session_id)
+            kafra_path = None
+            if cfg_row:
+                import json
+                try:
+                    cfg = json.loads(cfg_row["config_json"])
+                    repo_root = cfg.get("repo_root")
+                    project = cfg.get("project", self._session_id)
+                    if repo_root:
+                        candidate = os.path.join(repo_root, ".kafra", "a-01-plans", f"{project}.md")
+                        if os.path.exists(candidate):
+                            kafra_path = candidate
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            self.call_later(lambda: rs.set_summary(
+                export_paths=export_paths,
+                kafra_path=kafra_path,
+                total_cost=total_cost,
+                review_rounds=review_rounds,
+                draft_number=draft_number,
+                plan_size=plan_size,
+                milestone_count=milestone_count,
+            ))
+            self._log("info", f"Session completed — {review_rounds} review rounds, ${total_cost:.4f}")
+
+    def _mount_paused_panel(self) -> None:
+        """Mount the paused/blocker display (resume scenario)."""
+        main = self.query_one("#main-panel", Container)
+        for child in list(main.query("*")):
+            child.remove()
+
+        blocker_text = (
+            f"[bold $warning]Session Paused[/bold $warning]\n\n"
+            f"[bold]Source:[/bold] {self._blocker_source}\n"
+            f"[bold]Question:[/bold]\n{self._blocker_question}\n\n"
+            f"Press [bold]Enter[/bold] to answer the blocker.\n"
+            f"Press [bold]q[/bold] to exit."
+        )
+        main.mount(Static(blocker_text, id="blocker-display"))
+        self._log("warning", f"Session is paused — {self._blocker_source} blocker")
+
+    def _mount_review_resume_panel(self) -> None:
+        """Mount review resume panel — shows last plan + option to start review."""
+        main = self.query_one("#main-panel", Container)
+        for child in list(main.query("*")):
+            child.remove()
+
+        # Load the plan
+        if self._rw_conn:
+            draft = get_latest_plan_draft(self._rw_conn, self._session_id)
+            if draft:
+                self._plan_content = draft["content"]
+
+        # Show existing review history if any
+        review_count_row = self._rw_conn.execute(
+            "SELECT COUNT(*) as cnt FROM reviews WHERE session_id = ?",
+            (self._session_id,),
+        ).fetchone() if self._rw_conn else None
+        review_count = review_count_row["cnt"] if review_count_row else 0
+
+        info_text = (
+            f"[bold $accent]Review Phase[/bold $accent]\n\n"
+            f"Session is in REVIEW phase."
+        )
+        if review_count > 0:
+            info_text += f"\n{review_count} previous review round(s) found.\n"
+        info_text += (
+            f"\nPress [bold]r[/bold] to start a new review loop.\n"
+            f"Press [bold]p[/bold] to view the current plan.\n"
+            f"Press [bold]q[/bold] to exit."
+        )
+        main.mount(Static(info_text, id="review-resume-info"))
+        self._log("info", f"Review phase — {review_count} previous rounds. Press r to start review.")
 
     # --- Message handlers ---
 
@@ -673,30 +830,19 @@ class SessionTUI(App):
                 except (json.JSONDecodeError, TypeError):
                     pass
 
-            # Signal Step 1 start (synthesis happens inside generate_plan)
+            # generate_plan() internally calls synthesize_context() then
+            # generates the plan — one call covers both steps.
+            # We signal a single "generating" event (not two fake steps).
             self.call_from_thread(
                 self.post_message,
-                SynthesisStarted(file_count, note_count),
+                PlanGenerationStarted(model),
             )
 
-            # generate_plan() internally calls synthesize_context() then
-            # generates the plan — one call covers both steps
             t_gen = time.monotonic()
             plan_content = asyncio.run(
                 generate_plan(self._session_id, worker_conn, model=model, backend=backend)
             )
             gen_ms = int((time.monotonic() - t_gen) * 1000)
-
-            # Signal both steps complete (synthesis was internal to generate_plan)
-            self.call_from_thread(
-                self.post_message,
-                SynthesisComplete(len(plan_content), gen_ms),
-            )
-            self.call_from_thread(
-                self.post_message,
-                PlanGenerationStarted(model),
-            )
-            plan_ms = gen_ms
 
             # Validate plan
             warnings = validate_plan_format(plan_content)
@@ -960,6 +1106,8 @@ class SessionTUI(App):
 
     def on_session_completed(self, message: SessionCompleted) -> None:
         """Handle SessionCompleted — advance to COMPLETE phase."""
+        self._review_active = False
+
         old_phase = self._current_phase
         self.post_message(PhaseAdvanced(old_phase, Phase.COMPLETE.value))
 
@@ -968,6 +1116,9 @@ class SessionTUI(App):
 
         sp = self.query_one("#session-panel", SessionPanel)
         sp.set_field("status", "COMPLETE")
+
+        if self._quit_requested:
+            self.call_later(self._cleanup_and_exit)
 
     def _populate_result_summary(self, message: SessionCompleted) -> None:
         """Populate the ResultSummary widget with completion data."""
@@ -1265,8 +1416,8 @@ class SessionTUI(App):
         self._run_generate()
 
     def action_start_review(self) -> None:
-        """Start the review loop (r key in PLANNING phase)."""
-        if self._current_phase != Phase.PLANNING.value:
+        """Start the review loop (r key in PLANNING or REVIEW phase)."""
+        if self._current_phase not in (Phase.PLANNING.value, Phase.REVIEW.value):
             return
         if not self._rw_conn:
             return
@@ -1299,14 +1450,30 @@ class SessionTUI(App):
         """Show dispositions screen (review phase)."""
         if self._current_phase != Phase.REVIEW.value:
             return
-        self._log("info", "Dispositions: use standalone review TUI for full features.")
+        from planner_auto.tui.screens.disposition_screen import DispositionScreen
+        round_data = self._review_handlers.round_data if self._review_handlers else []
+        self.push_screen(DispositionScreen(
+            session_id=self._session_id,
+            round_data=round_data,
+            conn=self._rw_conn,
+        ))
 
     def action_plan(self) -> None:
-        """Show plan text (review/complete phases)."""
-        if self._current_phase not in (Phase.REVIEW.value, Phase.COMPLETE.value):
+        """Show plan text (review/planning/complete phases)."""
+        if self._current_phase not in (Phase.PLANNING.value, Phase.REVIEW.value, Phase.COMPLETE.value):
             return
-        if self._plan_content:
-            self._log("info", f"Plan: {len(self._plan_content):,} chars (use CLI for full view)")
+        plan_text = self._plan_content
+        if not plan_text and self._rw_conn:
+            draft = get_latest_plan_draft(self._rw_conn, self._session_id)
+            if draft:
+                plan_text = draft["content"]
+        if plan_text:
+            from planner_auto.tui.screens.plan_screen import PlanScreen
+            self.push_screen(PlanScreen(
+                plan_text=plan_text,
+                conn=self._rw_conn,
+                session_id=self._session_id,
+            ))
         else:
             self._log("info", "No plan content available.")
 
@@ -1314,21 +1481,22 @@ class SessionTUI(App):
         """Select round for detail (review phase)."""
         if self._current_phase != Phase.REVIEW.value:
             return
-        self._log("info", "Round detail: use standalone review TUI for full features.")
+        if not self._review_handlers or not self._review_handlers.round_data:
+            self._log("info", "No review rounds available yet.")
+            return
+        latest = self._review_handlers.latest_round
+        if latest is not None:
+            from planner_auto.tui.widgets.round_detail import RoundDetail
+            rd = RoundDetail(round_data=self._review_handlers.round_data.get(latest, {}))
+            self.push_screen(rd) if hasattr(rd, 'run') else self._log("info", f"Round {latest} detail available via standalone TUI.")
 
     def action_back(self) -> None:
-        """Back action (review phase)."""
+        """Back action (dismiss modal/detail view)."""
         pass
 
     def action_next_round(self) -> None:
         """Next round action (review phase)."""
         pass
-
-    def action_raw_response(self) -> None:
-        """Raw response action (review phase)."""
-        if self._current_phase != Phase.REVIEW.value:
-            return
-        self._log("info", "Raw response: use standalone review TUI for full features.")
 
     def action_copy_plan_path(self) -> None:
         """Copy plan path to clipboard (complete phase)."""

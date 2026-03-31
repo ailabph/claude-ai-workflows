@@ -86,6 +86,7 @@ class BlockerScreen(ModalScreen[str | None]):
 
     BINDINGS = [
         Binding("escape", "dismiss_modal", "Cancel"),
+        Binding("ctrl+s", "submit_answer", "Submit"),
     ]
 
     def __init__(
@@ -118,6 +119,10 @@ class BlockerScreen(ModalScreen[str | None]):
         """Handle submit button press."""
         if event.button.id == "bk-submit":
             self._submit()
+
+    def action_submit_answer(self) -> None:
+        """Submit answer via Ctrl+S keybinding."""
+        self._submit()
 
     def _submit(self) -> None:
         """Submit the answer."""
