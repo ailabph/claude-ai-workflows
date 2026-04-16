@@ -221,8 +221,8 @@ class SessionTUI(App):
             if blockers:
                 b = blockers[0]
                 self._blocker_id = b["id"]
-                self._blocker_source = b.get("source", "unknown")
-                self._blocker_question = b.get("question", "")
+                self._blocker_source = b["source"]
+                self._blocker_question = b["question"]
                 self._mount_paused_panel()
             else:
                 # No open blockers but status is PAUSED — show info
@@ -350,7 +350,7 @@ class SessionTUI(App):
                 from planner_auto.validation import validate_plan_format
                 warnings = validate_plan_format(draft["content"])
                 self._plan_content = draft["content"]
-                self._plan_model = draft.get("model", "unknown")
+                self._plan_model = draft["model"]
 
                 from planner_auto.tui.widgets.plan_view import PlanView
                 pv = PlanView(id="plan-view")
@@ -358,7 +358,7 @@ class SessionTUI(App):
                 self.call_later(lambda: pv.set_plan(
                     draft_number=draft["draft_number"],
                     content=draft["content"],
-                    model=draft.get("model", "unknown"),
+                    model=draft["model"],
                     validation_ok=len(warnings) == 0,
                     warnings=warnings if warnings else None,
                 ))
@@ -745,7 +745,7 @@ class SessionTUI(App):
             draft = get_latest_plan_draft(self._rw_conn, self._session_id)
             if draft:
                 self._plan_content = draft["content"]
-                self._plan_model = draft.get("model", "unknown")
+                self._plan_model = draft["model"]
 
         # Replace GenerationProgress with PlanView
         main = self.query_one("#main-panel", Container)
