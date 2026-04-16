@@ -37,8 +37,8 @@ VALID_PHASE_TRANSITIONS: dict[Phase, set[Phase]] = {
 # Commands allowed in each phase
 # 'export' is allowed in any phase (handled separately)
 PHASE_ALLOWED_COMMANDS: dict[Phase, set[str]] = {
-    Phase.SETUP: {"start", "add-context", "status", "export"},
-    Phase.CONTEXT: {"add-context", "status", "export"},
+    Phase.SETUP: {"start", "add-context", "scan", "status", "export"},
+    Phase.CONTEXT: {"add-context", "scan", "status", "export"},
     Phase.DISCUSSION: {"discuss", "status", "export"},
     Phase.PLANNING: {"generate", "review", "complete", "status", "export"},
     Phase.REVIEW: {"review", "complete", "status", "export"},

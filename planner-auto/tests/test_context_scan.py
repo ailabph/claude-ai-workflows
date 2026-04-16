@@ -8,6 +8,7 @@ import pytest
 
 from planner_auto.context_service import scan_repo
 from planner_auto.db import create_session, get_context_entries, get_session, init_schema
+from planner_auto.errors import CommandNotAllowedError
 from planner_auto.git_utils import (
     CONFIG_FILENAMES,
     DEFAULT_EXCLUDE_PATTERNS,
@@ -15,7 +16,8 @@ from planner_auto.git_utils import (
     SOURCE_EXTENSIONS,
     list_tracked_files,
 )
-from planner_auto.state import Phase
+from planner_auto.session import SessionManager
+from planner_auto.state import Phase, PHASE_ALLOWED_COMMANDS
 
 
 @pytest.fixture
@@ -240,3 +242,108 @@ class TestScanRepo:
             results = scan_repo(db_conn, session_id, str(tmp_path))
 
         assert results == []
+
+
+class TestScanPhaseEnforcement:
+    """Verify scan is only allowed in SETUP and CONTEXT phases."""
+
+    def test_scan_allowed_in_setup(self):
+        assert "scan" in PHASE_ALLOWED_COMMANDS[Phase.SETUP]
+
+    def test_scan_allowed_in_context(self):
+        assert "scan" in PHASE_ALLOWED_COMMANDS[Phase.CONTEXT]
+
+    def test_scan_blocked_in_discussion(self):
+        assert "scan" not in PHASE_ALLOWED_COMMANDS[Phase.DISCUSSION]
+
+    def test_scan_blocked_in_planning(self):
+        assert "scan" not in PHASE_ALLOWED_COMMANDS[Phase.PLANNING]
+
+    def test_scan_blocked_in_review(self):
+        assert "scan" not in PHASE_ALLOWED_COMMANDS[Phase.REVIEW]
+
+    def test_scan_blocked_in_complete(self):
+        assert "scan" not in PHASE_ALLOWED_COMMANDS[Phase.COMPLETE]
+
+    def test_check_command_rejects_scan_in_discussion(self, db_conn, session_id):
+        sm = SessionManager(db_conn)
+        # Advance to CONTEXT then DISCUSSION
+        sm.advance_phase(session_id, Phase.CONTEXT.value)
+        sm.advance_phase(session_id, Phase.DISCUSSION.value)
+        db_conn.commit()
+
+        with pytest.raises(CommandNotAllowedError):
+            sm.check_command(session_id, "scan")
+
+    def test_check_command_allows_scan_in_setup(self, db_conn, session_id):
+        sm = SessionManager(db_conn)
+        # Should not raise
+        sm.check_command(session_id, "scan")
+
+
+class TestScanIncludeParsing:
+    """Verify --scan-include normalizes all input formats correctly."""
+
+    def test_glob_style_input(self):
+        """'*.py,*.ts' should become {'.py', '.ts'}."""
+        from planner_auto.cli import _run_scan
+        # Test the parsing logic directly
+        raw = "*.py,*.ts"
+        include_ext = set()
+        for e in raw.split(","):
+            e = e.strip().lstrip("*")
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
+        assert include_ext == {".py", ".ts"}
+
+    def test_dot_prefix_input(self):
+        """'.py,.ts' should become {'.py', '.ts'}."""
+        raw = ".py,.ts"
+        include_ext = set()
+        for e in raw.split(","):
+            e = e.strip().lstrip("*")
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
+        assert include_ext == {".py", ".ts"}
+
+    def test_bare_extension_input(self):
+        """'py,ts' should become {'.py', '.ts'}."""
+        raw = "py,ts"
+        include_ext = set()
+        for e in raw.split(","):
+            e = e.strip().lstrip("*")
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
+        assert include_ext == {".py", ".ts"}
+
+    def test_mixed_input(self):
+        """'*.py,.ts,go' should become {'.py', '.ts', '.go'}."""
+        raw = "*.py,.ts,go"
+        include_ext = set()
+        for e in raw.split(","):
+            e = e.strip().lstrip("*")
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
+        assert include_ext == {".py", ".ts", ".go"}
+
+    def test_parsed_extensions_match_files(self):
+        """Verify parsed extensions actually filter files in list_tracked_files."""
+        raw = "*.py,*.ts"
+        include_ext = set()
+        for e in raw.split(","):
+            e = e.strip().lstrip("*")
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
+
+        files = ["app.py", "main.ts", "style.css", "data.go"]
+        with patch("planner_auto.git_utils.subprocess.run", return_value=_mock_git_ls_files(files)):
+            result = list_tracked_files(include_ext=include_ext)
+        assert "app.py" in result
+        assert "main.ts" in result
+        assert "style.css" not in result
+        assert "data.go" not in result

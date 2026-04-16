@@ -367,8 +367,12 @@ def _run_scan(conn, session_id, repo_root, scan_max, scan_include, scan_exclude)
 
     include_ext = None
     if scan_include:
-        include_ext = {e.strip() if e.strip().startswith(".") else f".{e.strip()}"
-                       for e in scan_include.split(",")}
+        include_ext = set()
+        for e in scan_include.split(","):
+            e = e.strip().lstrip("*")  # "*.py" → ".py", ".py" → ".py", "py" → "py"
+            if not e.startswith("."):
+                e = f".{e}"
+            include_ext.add(e)
 
     exclude_pats = None
     if scan_exclude:
@@ -402,6 +406,15 @@ def scan_cmd(ctx, session_id, scan_max, scan_include, scan_exclude, verbose, deb
     session = get_session(conn, session_id)
     if session is None:
         click.echo(f"Error: Session not found: {session_id}", err=True)
+        ctx.exit(1)
+        return
+
+    # Check command permission (scan only allowed in SETUP/CONTEXT phases)
+    sm = SessionManager(conn)
+    try:
+        sm.check_command(session_id, "scan")
+    except CommandNotAllowedError as e:
+        click.echo(f"Error: {e}", err=True)
         ctx.exit(1)
         return
 
