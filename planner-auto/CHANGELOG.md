@@ -5,6 +5,25 @@ All notable changes to planner-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-04-17
+
+### Added
+
+- **`--scan` flag** — Auto-discover and add key codebase files as session context via `git ls-files`. Available on `start`, `session`, and standalone `scan` command. Priority sorting (configs > docs > shallow source), 100KB size guard, extension filtering (`--scan-include`), exclusion patterns (`--scan-exclude`), configurable cap (`--scan-max`, default 20).
+- **`--plans-dir` flag** — Copy final plan to a local directory on session completion (e.g. `--plans-dir .plans`). Saved in session config, triggered from `complete`, `review` finalize, and `export` paths. Plan written as `<project>.md`.
+- **Context-aware discussion** — `discuss()` now injects scanned file and note context entries into the system prompt, so Claude references existing project files instead of asking generic questions.
+- **`scan` command** — Standalone `planner-auto scan <session-id>` for adding repo context to existing sessions. Phase-gated to SETUP/CONTEXT only.
+
+### Fixed
+
+- **TUI duplicate widget crash** — `_switch_main_panel()` now async with `await remove_children()` before mounting new phase content. Prevents `DuplicateIds` error on session launch.
+- **TUI stale widgets across phase transitions** — Previous fix only handled `#main-content`; now removes ALL children (ChatView, PlanView, review widgets) before switching phases.
+- **TUI async caller regression** — `on_mount`, `on_phase_advanced`, and `on_blocker_resolved` made async to properly `await _switch_main_panel()` instead of discarding the coroutine.
+- **`--scan-include` parsing** — Strip leading `*` before normalizing extensions so `"*.py,*.ts"` correctly becomes `{".py", ".ts"}` instead of `{".*.py", ".*.ts"}`.
+- **`scan` command lifecycle enforcement** — Registered `"scan"` in `PHASE_ALLOWED_COMMANDS` for SETUP/CONTEXT. `scan_cmd()` calls `SessionManager.check_command()` to prevent context mutation on PAUSED/REVIEW/COMPLETE sessions.
+
+---
+
 ## [0.6.0] - 2026-03-31
 
 ### Added

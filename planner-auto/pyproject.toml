@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "planner-auto"
-version = "0.6.0"
+version = "0.6.1"
 description = "Interactive planning session manager with SQLite persistence and artifact export"
 license = {text = "MIT"}
 requires-python = ">=3.10"

@@ -1,6 +1,6 @@
 """Planner-auto: Interactive planning session manager with SQLite persistence."""
 
-__version__ = "0.6.0"
+__version__ = "0.6.1"
 
 
 def load_env() -> bool:
