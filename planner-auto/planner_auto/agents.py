@@ -73,6 +73,23 @@ async def discuss(
     sm = SessionManager(conn)
     sm.check_command(session_id, "discuss")
 
+    # Build system prompt with context entries if available
+    system_prompt = DISCUSSION_SYSTEM_PROMPT
+    file_entries = get_context_entries(conn, session_id, entry_type="file")
+    note_entries = get_context_entries(conn, session_id, entry_type="note")
+    if file_entries or note_entries:
+        context_parts = [system_prompt.rstrip(), "", "## Project Context", ""]
+        if file_entries:
+            for entry in file_entries:
+                context_parts.append(f"### {entry['entry_key']}\n```\n{entry['content']}\n```\n")
+        if note_entries:
+            context_parts.append("### Notes")
+            for entry in note_entries:
+                context_parts.append(f"- {entry['content']}")
+        context_parts.append("")
+        context_parts.append("Use this context to inform your questions. Do not ask about information already provided above.")
+        system_prompt = "\n".join(context_parts)
+
     # Load message history
     existing_messages = get_messages(conn, session_id)
     messages = [
@@ -86,7 +103,7 @@ async def discuss(
     _discuss_t0 = time.monotonic()
     response = await query_claude(
         messages=messages,
-        system_prompt=DISCUSSION_SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         model=DEFAULT_MODEL,
         backend=backend,
     )
