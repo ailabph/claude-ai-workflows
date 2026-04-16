@@ -285,6 +285,49 @@ def kafra_handoff(
     return dest
 
 
+def copy_final_plan(
+    session_id: str,
+    conn,
+    plans_dir: str,
+) -> Optional[str]:
+    """Copy the latest plan draft to a local plans directory.
+
+    Args:
+        session_id: Session ID.
+        conn: SQLite connection.
+        plans_dir: Target directory (e.g. ``./.plans/``).
+
+    Returns:
+        Path to the written file, or ``None`` if no plan drafts exist.
+    """
+    drafts = get_all_plan_drafts(conn, session_id)
+    if not drafts:
+        logger.warning("copy_final_plan: no plan drafts for session %s", session_id)
+        return None
+
+    os.makedirs(plans_dir, exist_ok=True)
+
+    # Use project name from config if available, else session_id
+    config_row = get_session_config(conn, session_id)
+    project = session_id
+    if config_row:
+        try:
+            import json as _json
+            cfg = _json.loads(config_row["config_json"])
+            project = cfg.get("project", session_id)
+        except (ValueError, TypeError):
+            pass
+
+    filename = f"{project}.md"
+    dest = os.path.join(plans_dir, filename)
+
+    with open(dest, "w", encoding="utf-8") as f:
+        f.write(drafts[-1]["content"])
+
+    logger.info("Copied final plan to %s", dest)
+    return dest
+
+
 def _format_review_export(review_row) -> str:
     """Format a DB review row as a Markdown artifact string."""
     verdict = review_row["verdict"] or "UNKNOWN"

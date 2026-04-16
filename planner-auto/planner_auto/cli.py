@@ -108,8 +108,9 @@ def cli(ctx, db_path):
 @click.option("--scan-max", default=20, type=int, help="Max files to add during scan (default: 20).")
 @click.option("--scan-include", default=None, help="Comma-separated extensions to include (e.g. '.py,.ts').")
 @click.option("--scan-exclude", default=None, help="Comma-separated glob patterns to exclude.")
+@click.option("--plans-dir", default=None, help="Copy final plan to this directory on completion (e.g. '.plans').")
 @click.pass_context
-def start(ctx, project, verbose, debug, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude):
+def start(ctx, project, verbose, debug, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude, plans_dir):
     """Start a new planning session."""
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
@@ -135,11 +136,13 @@ def start(ctx, project, verbose, debug, repo_root, claude_backend, scan, scan_ma
             )
 
     # Save initial config snapshot (includes repo_root for .kafra handoff)
+    resolved_plans_dir = os.path.abspath(plans_dir) if plans_dir else None
     config = {
         "project": project,
         "model_default": "claude-sonnet-4-6",
         "repo_root": resolved_repo_root,
         "claude_backend": claude_backend,
+        "plans_dir": resolved_plans_dir,
     }
     save_session_config(conn, session_id, json.dumps(config))
     conn.commit()
@@ -355,6 +358,26 @@ def add_context(ctx, session_id, file_path, note, verbose, debug):
 
 
     # Legacy helpers removed — context_service handles validation and storage.
+
+
+def _copy_plan_if_configured(conn, session_id):
+    """Copy final plan to plans_dir if set in session config."""
+    from planner_auto.export import copy_final_plan
+
+    cfg_row = get_session_config(conn, session_id)
+    if not cfg_row:
+        return
+    try:
+        cfg = json.loads(cfg_row["config_json"])
+        plans_dir = cfg.get("plans_dir")
+    except (json.JSONDecodeError, TypeError):
+        return
+    if not plans_dir:
+        return
+
+    dest = copy_final_plan(session_id, conn, plans_dir)
+    if dest:
+        click.echo(f"Plan copied to: {dest}")
 
 
 def _run_scan(conn, session_id, repo_root, scan_max, scan_include, scan_exclude):
@@ -701,6 +724,9 @@ def complete(ctx, session_id, verbose, debug):
     for p in paths:
         click.echo(f"  {p}")
 
+    # Copy final plan to plans_dir if configured
+    _copy_plan_if_configured(conn, session_id)
+
 
 @cli.command()
 @click.argument("session_id", required=False, default=None)
@@ -722,10 +748,11 @@ def complete(ctx, session_id, verbose, debug):
 @click.option("--scan-max", default=20, type=int, help="Max files to add during scan (default: 20).")
 @click.option("--scan-include", default=None, help="Comma-separated extensions to include (e.g. '.py,.ts').")
 @click.option("--scan-exclude", default=None, help="Comma-separated glob patterns to exclude.")
+@click.option("--plans-dir", default=None, help="Copy final plan to this directory on completion (e.g. '.plans').")
 @click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
 @click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def session(ctx, session_id, project, tui, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude, verbose, debug):
+def session(ctx, session_id, project, tui, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude, plans_dir, verbose, debug):
     """Launch the session TUI for a new or existing session.
 
     Two invocation patterns:
@@ -764,11 +791,13 @@ def session(ctx, session_id, project, tui, repo_root, claude_backend, scan, scan
         if claude_backend is None:
             claude_backend = resolve_default_backend()
 
+        resolved_plans_dir = os.path.abspath(plans_dir) if plans_dir else None
         config = {
             "project": project,
             "model_default": "claude-sonnet-4-6",
             "repo_root": resolved_repo_root,
             "claude_backend": claude_backend,
+            "plans_dir": resolved_plans_dir,
         }
         save_session_config(conn, sid, json.dumps(config))
         conn.commit()
@@ -931,6 +960,7 @@ def review(
         if getattr(app, "loop_result", None) is not None:
             fin = ReviewWorkflow.finalize(conn, session_id, app.loop_result, prepared)
             if fin.converged:
+                _copy_plan_if_configured(conn, session_id)
                 if verbosity != "quiet":
                     click.echo(f"Exported {len(fin.export_paths)} artifact(s).")
                     if fin.kafra_path:
@@ -974,6 +1004,7 @@ def review(
     fin = ReviewWorkflow.finalize(conn, session_id, result, prepared)
 
     if fin.converged:
+        _copy_plan_if_configured(conn, session_id)
         if verbosity != "quiet":
             click.echo(f"Exported {len(fin.export_paths)} artifact(s).")
             if fin.kafra_path:

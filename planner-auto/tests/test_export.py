@@ -20,7 +20,7 @@ from planner_auto.db import (
     update_session_phase,
     update_session_status,
 )
-from planner_auto.export import export_session
+from planner_auto.export import copy_final_plan, export_session
 from planner_auto.session import SessionManager
 
 
@@ -270,3 +270,58 @@ class TestExportCLI:
         assert result.exit_code == 0
         assert "Exported" in result.output
         assert os.path.exists(os.path.join(output_dir, "chat.csv"))
+
+
+class TestCopyFinalPlan:
+    """Tests for copy_final_plan()."""
+
+    def test_copies_latest_draft(self, db_conn, populated_session, tmp_path):
+        import json
+        from planner_auto.db import save_session_config
+        sid = populated_session
+        # Save config so project name is used as filename
+        save_session_config(db_conn, sid, json.dumps({"project": "myapp"}))
+        db_conn.commit()
+
+        plans_dir = str(tmp_path / "plans")
+        dest = copy_final_plan(sid, db_conn, plans_dir)
+        assert dest is not None
+        assert os.path.exists(dest)
+        assert dest.endswith("myapp.md")
+        with open(dest) as f:
+            content = f.read()
+        # Should be the latest (second) draft
+        assert "Revised content" in content
+
+    def test_returns_none_when_no_drafts(self, db_conn, tmp_path):
+        sid = create_session(db_conn, "empty-project")
+        db_conn.commit()
+        plans_dir = str(tmp_path / "plans")
+        dest = copy_final_plan(sid, db_conn, plans_dir)
+        assert dest is None
+
+    def test_creates_directory(self, db_conn, populated_session, tmp_path):
+        sid = populated_session
+        plans_dir = str(tmp_path / "nested" / "deep" / "plans")
+        dest = copy_final_plan(sid, db_conn, plans_dir)
+        assert dest is not None
+        assert os.path.isdir(plans_dir)
+
+    def test_cli_plans_dir_flag(self, tmp_path):
+        """--plans-dir is saved in session config."""
+        db_path = str(tmp_path / "test.db")
+        plans_dir = str(tmp_path / "my-plans")
+        r = CliRunner()
+        base_args = ["--db-path", db_path]
+        result = r.invoke(cli, [*base_args, "start", "--project", "testproj", "--plans-dir", plans_dir])
+        assert result.exit_code == 0
+
+        # Extract session ID and check config
+        import json
+        sid = result.output.split("Session created: ")[1].split("\n")[0].strip()
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT config_json FROM session_config WHERE session_id=?", (sid,)).fetchone()
+        cfg = json.loads(row["config_json"])
+        assert cfg["plans_dir"] == os.path.abspath(plans_dir)
+        conn.close()
