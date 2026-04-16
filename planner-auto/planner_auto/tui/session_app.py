@@ -856,7 +856,7 @@ class SessionTUI(App):
                     draft_number=draft_number,
                     size=len(plan_content),
                     milestone_count=milestone_count,
-                    latency_ms=plan_ms,
+                    latency_ms=gen_ms,
                     validation_ok=len(warnings) == 0,
                     warnings=warnings,
                 ),
