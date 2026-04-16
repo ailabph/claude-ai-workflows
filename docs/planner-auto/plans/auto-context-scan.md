@@ -135,15 +135,15 @@ def scan_cmd(session_id, scan_max):
 
 Skip files larger than 100KB to avoid blowing up context. Log a warning for skipped files.
 
-## Test plan
+## Status: Implemented
 
-- `test_list_tracked_files`: mock `subprocess.run`, verify extension filtering and exclusion
-- `test_scan_repo_adds_entries`: in-memory DB, mock `list_tracked_files`, verify context entries created
-- `test_scan_max_cap`: verify file count respects max
-- `test_scan_priority_order`: config files sort before deep source files
-- `test_scan_no_repo`: verify graceful no-op when not in a git repo
-- `test_scan_large_file_skipped`: verify 100KB+ files excluded
-- `test_cli_scan_flag`: CLI integration test with `--scan`
+Implemented and merged. 34 tests in `tests/test_context_scan.py`, 648 total passing.
+
+### Design decisions made during implementation
+
+- **Phase enforcement**: `scan` is registered in `PHASE_ALLOWED_COMMANDS` for SETUP and CONTEXT only. The standalone `scan` command calls `SessionManager.check_command()` to prevent context mutation on PAUSED/REVIEW/COMPLETE sessions.
+- **`--scan-include` parsing**: Accepts `*.py`, `.py`, or `py` formats — all normalized to `.py` by stripping leading `*` before adding the dot prefix.
+- **File size guard**: 100KB (not 500KB like manual `add-context`) to keep scanned context lean.
 
 ## Not in scope
 

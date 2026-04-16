@@ -47,8 +47,9 @@ export OPENAI_API_KEY="your-key"        # For GPT-5.4 (reviewer)
 ### Session TUI (recommended — full lifecycle in one dashboard)
 
 ```bash
-planner-auto session --project my-api --tui
-# Add files with [f], notes with [n], start discussion with [d]
+planner-auto session --project my-api --tui --scan
+# --scan auto-discovers key files from the repo (git ls-files)
+# Add more files with [f], notes with [n], start discussion with [d]
 # Chat with Claude, press Ctrl+D when ready
 # Plan generates automatically, press [r] to start review
 # Review runs until GPT says GO — session completes
@@ -62,13 +63,16 @@ planner-auto session <session-id> --tui
 ### CLI (individual commands)
 
 ```bash
-# Start a session
-planner-auto start --project my-api
+# Start a session (with auto-scan)
+planner-auto start --project my-api --scan
 
-# Add context files
+# Or add context files manually
 planner-auto add-context <session-id> --file src/app.py
 planner-auto add-context <session-id> --file src/models.py
 planner-auto add-context <session-id> --note "Uses PostgreSQL, deployed on AWS"
+
+# Scan an existing session's repo
+planner-auto scan <session-id>
 
 # Discuss the feature (interactive mode)
 planner-auto discuss <session-id> --interactive
@@ -97,6 +101,7 @@ planner-auto complete <session-id>
 | Command | Description |
 |---------|-------------|
 | `session --project <name> --tui` | Create new session and launch TUI dashboard |
+| `session --project <name> --tui --scan` | Create new session with auto-scanned repo context |
 | `session <id> --tui` | Resume existing session in TUI (any phase) |
 
 ### Session Commands (Plan 1)
@@ -104,6 +109,11 @@ planner-auto complete <session-id>
 | Command | Description |
 |---------|-------------|
 | `start --project <name>` | Create a new planning session |
+| `start --project <name> --scan` | Create session and auto-scan repo for context files |
+| `scan <id>` | Scan repo and add key files to existing session (SETUP/CONTEXT only) |
+| `scan <id> --max <n>` | Limit scan to n files (default: 20) |
+| `scan <id> --include ".py,.ts"` | Only include specific extensions |
+| `scan <id> --exclude "migrations/*"` | Exclude glob patterns |
 | `add-context <id> --file <path>` | Add a file to session context |
 | `add-context <id> --note "text"` | Add a text note to session context |
 | `discuss <id> "message"` | Send a single discussion message |
@@ -309,7 +319,7 @@ pytest tests/test_db.py -v                 # Single file
 pytest tests/test_session.py::TestCheckCommand -v  # Single class
 pytest -k "complete" -v                    # Filter by name
 
-# Current test count: 614 passing
+# Current test count: 648 passing
 ```
 
 ## Config Versioning
