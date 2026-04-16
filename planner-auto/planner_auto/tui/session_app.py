@@ -286,18 +286,6 @@ class SessionTUI(App):
         """Switch the main panel content based on the current phase."""
         main = self.query_one("#main-panel", Container)
 
-        # Remove old content (all known IDs)
-        _known_ids = (
-            "#main-content", "#phase-fallback", "#chat-view",
-            "#generation-progress", "#plan-view", "#result-summary",
-            "#review-round-list", "#review-convergence", "#review-current-round",
-            "#review-plan-panel", "#blocker-display",
-        )
-        for sel in _known_ids:
-            old = main.query(sel)
-            for widget in old:
-                widget.remove()
-
         # Stop thinking timer if switching away from discussion
         if self._thinking_timer is not None:
             self._thinking_timer.stop()
@@ -308,16 +296,28 @@ class SessionTUI(App):
             self._generation_timer.stop()
             self._generation_timer = None
 
+        # Try to reuse existing #main-content Static; otherwise remove old
+        # content and mount fresh widgets. Both remove() and remove_children()
+        # are async in Textual, so we avoid them on the hot path by reusing
+        # the widget that compose() already placed in the DOM.
+        existing_static = main.query("#main-content")
+        static_widget = existing_static.first() if existing_static else None
+
         # Context phase shows contextual info
         if phase in (Phase.SETUP.value, Phase.CONTEXT.value):
-            main.mount(Static(
+            content = (
                 f"[bold $primary]Context Manager[/bold $primary]\n\n"
                 f"  [f] Add file    [n] Add note    [d] Done\n\n"
-                f"  Add files and notes to provide context for plan generation.",
-                id="main-content",
-            ))
+                f"  Add files and notes to provide context for plan generation."
+            )
+            if static_widget:
+                static_widget.update(content)
+            else:
+                main.mount(Static(content, id="main-content"))
         elif phase == Phase.DISCUSSION.value:
-            # Mount ChatView for discussion phase
+            # Remove the placeholder static before mounting ChatView
+            if static_widget:
+                static_widget.remove()
             from planner_auto.tui.widgets.chat_view import ChatView
             chat = ChatView(id="chat-view")
             main.mount(chat)
@@ -328,17 +328,24 @@ class SessionTUI(App):
                 if msg_list:
                     self.call_later(lambda: chat.load_messages(msg_list))
         elif phase == Phase.PLANNING.value:
+            if static_widget:
+                static_widget.remove()
             self._mount_planning_panel()
         elif phase == Phase.REVIEW.value:
+            if static_widget:
+                static_widget.remove()
             self._mount_review_panel()
         elif phase == Phase.COMPLETE.value:
+            if static_widget:
+                static_widget.remove()
             self._mount_complete_panel()
         else:
-            # Unknown phase — show info
-            main.mount(Static(
-                f"[bold $accent]Phase: {phase}[/bold $accent]",
-                id="main-content",
-            ))
+            # Unknown phase — update existing or mount new
+            content = f"[bold $accent]Phase: {phase}[/bold $accent]"
+            if static_widget:
+                static_widget.update(content)
+            else:
+                main.mount(Static(content, id="main-content"))
 
     # ------------------------------------------------------------------
     # Planning panel mounting

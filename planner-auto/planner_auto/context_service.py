@@ -114,3 +114,75 @@ def _add_note(conn: sqlite3.Connection, session_id: str, content: str) -> dict:
     db_add_context_entry(conn, session_id, key, "note", content)
 
     return {"entry_type": "note", "key": key, "size": len(content)}
+
+
+SCAN_MAX_FILE_SIZE = 100 * 1024  # 100 KB for scanned files
+
+
+def scan_repo(
+    conn: sqlite3.Connection,
+    session_id: str,
+    repo_root: str,
+    *,
+    max_files: int = 20,
+    include_ext: Optional[set] = None,
+    exclude_patterns: Optional[list] = None,
+) -> list:
+    """Scan a git repo and add key files as context entries.
+
+    Args:
+        conn: SQLite connection.
+        session_id: Session ID.
+        repo_root: Absolute path to the repository root.
+        max_files: Maximum number of files to add.
+        include_ext: Extensions to include (defaults to SOURCE_EXTENSIONS).
+        exclude_patterns: Extra glob patterns to exclude.
+
+    Returns:
+        List of dicts with keys: entry_type, key, size for each file added.
+        Files that are too large, binary, or unreadable are skipped silently.
+    """
+    from planner_auto.git_utils import list_tracked_files
+
+    files = list_tracked_files(
+        cwd=repo_root,
+        include_ext=include_ext,
+        exclude_patterns=exclude_patterns,
+        max_files=max_files,
+    )
+
+    results = []
+    for rel_path in files:
+        abs_path = os.path.join(repo_root, rel_path)
+
+        # Size guard
+        try:
+            size = os.path.getsize(abs_path)
+        except OSError:
+            logger.debug("scan: skipping %s (cannot stat)", rel_path)
+            continue
+        if size > SCAN_MAX_FILE_SIZE:
+            logger.debug("scan: skipping %s (%d bytes > 100KB)", rel_path, size)
+            continue
+
+        # Read file
+        try:
+            with open(abs_path, "r", encoding="utf-8") as f:
+                content = f.read()
+        except (UnicodeDecodeError, PermissionError, OSError) as exc:
+            logger.debug("scan: skipping %s (%s)", rel_path, exc)
+            continue
+
+        db_add_context_entry(conn, session_id, abs_path, "file", content)
+        results.append({"entry_type": "file", "key": abs_path, "size": len(content)})
+
+    # Advance SETUP → CONTEXT if we added anything
+    if results:
+        session = get_session(conn, session_id)
+        if session and session["phase"] == Phase.SETUP.value:
+            sm = SessionManager(conn)
+            sm.advance_phase(session_id, Phase.CONTEXT.value)
+
+    conn.commit()
+    logger.info("scan_repo: added %d files for session %s", len(results), session_id)
+    return results

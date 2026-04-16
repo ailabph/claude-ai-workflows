@@ -104,8 +104,12 @@ def cli(ctx, db_path):
     type=click.Choice(["direct", "sdk"]),
     help="Claude backend: 'direct' (Anthropic API) or 'sdk' (CLI subprocess). Auto-detected from auth if not set.",
 )
+@click.option("--scan", is_flag=True, default=False, help="Auto-scan repo and add key files as context.")
+@click.option("--scan-max", default=20, type=int, help="Max files to add during scan (default: 20).")
+@click.option("--scan-include", default=None, help="Comma-separated extensions to include (e.g. '.py,.ts').")
+@click.option("--scan-exclude", default=None, help="Comma-separated glob patterns to exclude.")
 @click.pass_context
-def start(ctx, project, verbose, debug, repo_root, claude_backend):
+def start(ctx, project, verbose, debug, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude):
     """Start a new planning session."""
     ctx.obj["debug"] = debug
     conn = _get_conn(ctx)
@@ -152,6 +156,10 @@ def start(ctx, project, verbose, debug, repo_root, claude_backend):
     click.echo(f"Claude backend: {claude_backend}")
     if resolved_repo_root:
         click.echo(f"Repo root: {resolved_repo_root}")
+
+    # Auto-scan repo if requested
+    if scan:
+        _run_scan(conn, session_id, resolved_repo_root, scan_max, scan_include, scan_exclude)
 
 
 @cli.command("list")
@@ -347,6 +355,69 @@ def add_context(ctx, session_id, file_path, note, verbose, debug):
 
 
     # Legacy helpers removed — context_service handles validation and storage.
+
+
+def _run_scan(conn, session_id, repo_root, scan_max, scan_include, scan_exclude):
+    """Shared scan logic for start and session commands."""
+    from planner_auto.context_service import scan_repo
+
+    if not repo_root:
+        click.echo("Warning: --scan ignored (no repo root detected).", err=True)
+        return
+
+    include_ext = None
+    if scan_include:
+        include_ext = {e.strip() if e.strip().startswith(".") else f".{e.strip()}"
+                       for e in scan_include.split(",")}
+
+    exclude_pats = None
+    if scan_exclude:
+        exclude_pats = [p.strip() for p in scan_exclude.split(",")]
+
+    results = scan_repo(
+        conn, session_id, repo_root,
+        max_files=scan_max,
+        include_ext=include_ext,
+        exclude_patterns=exclude_pats,
+    )
+    click.echo(f"Scanned: {len(results)} file(s) added as context")
+    for r in results:
+        click.echo(f"  {r['key']}")
+
+
+@cli.command("scan")
+@click.argument("session_id")
+@click.option("--max", "scan_max", default=20, type=int, help="Max files to add (default: 20).")
+@click.option("--include", "scan_include", default=None, help="Comma-separated extensions (e.g. '.py,.ts').")
+@click.option("--exclude", "scan_exclude", default=None, help="Comma-separated glob patterns to exclude.")
+@click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
+@click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
+@click.pass_context
+def scan_cmd(ctx, session_id, scan_max, scan_include, scan_exclude, verbose, debug):
+    """Scan the repo and add key files to an existing session's context."""
+    ctx.obj["debug"] = debug
+    conn = _get_conn(ctx)
+    setup_session_logging(session_id, verbose=verbose, debug=debug)
+
+    session = get_session(conn, session_id)
+    if session is None:
+        click.echo(f"Error: Session not found: {session_id}", err=True)
+        ctx.exit(1)
+        return
+
+    # Get repo root from session config or auto-detect
+    cfg_row = get_session_config(conn, session_id)
+    repo_root = None
+    if cfg_row:
+        try:
+            cfg = json.loads(cfg_row["config_json"])
+            repo_root = cfg.get("repo_root")
+        except (json.JSONDecodeError, TypeError):
+            pass
+    if not repo_root:
+        repo_root = discover_repo_root()
+
+    _run_scan(conn, session_id, repo_root, scan_max, scan_include, scan_exclude)
 
 
 @cli.command()
@@ -634,10 +705,14 @@ def complete(ctx, session_id, verbose, debug):
     type=click.Choice(["direct", "sdk"]),
     help="Claude backend: 'direct' or 'sdk'.",
 )
+@click.option("--scan", is_flag=True, default=False, help="Auto-scan repo and add key files as context.")
+@click.option("--scan-max", default=20, type=int, help="Max files to add during scan (default: 20).")
+@click.option("--scan-include", default=None, help="Comma-separated extensions to include (e.g. '.py,.ts').")
+@click.option("--scan-exclude", default=None, help="Comma-separated glob patterns to exclude.")
 @click.option("--verbose", is_flag=True, default=False, help="Verbose logging to stderr.")
 @click.option("--debug", is_flag=True, default=False, help="Debug logging to stderr.")
 @click.pass_context
-def session(ctx, session_id, project, tui, repo_root, claude_backend, verbose, debug):
+def session(ctx, session_id, project, tui, repo_root, claude_backend, scan, scan_max, scan_include, scan_exclude, verbose, debug):
     """Launch the session TUI for a new or existing session.
 
     Two invocation patterns:
@@ -684,6 +759,10 @@ def session(ctx, session_id, project, tui, repo_root, claude_backend, verbose, d
         }
         save_session_config(conn, sid, json.dumps(config))
         conn.commit()
+
+        # Auto-scan repo if requested
+        if scan:
+            _run_scan(conn, sid, resolved_repo_root, scan_max, scan_include, scan_exclude)
     else:
         # Resume existing session
         sid = session_id
