@@ -164,7 +164,7 @@ class SessionTUI(App):
             yield LogPanel(id="log-panel")
         yield Footer()
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         """Initialize the app with session data from DB."""
         # Open read-write connection
         if self._db_path:
@@ -228,7 +228,7 @@ class SessionTUI(App):
                 # No open blockers but status is PAUSED — show info
                 pl.set_active(self._current_phase)
                 self._update_bindings(self._current_phase)
-                self._switch_main_panel(self._current_phase)
+                await self._switch_main_panel(self._current_phase)
         elif session_status == "COMPLETE" or self._current_phase == Phase.COMPLETE.value:
             # Completed session — populate result summary from DB
             pl.set_active(self._current_phase)
@@ -243,7 +243,7 @@ class SessionTUI(App):
             # Normal active session — show phase-appropriate content
             pl.set_active(self._current_phase)
             self._update_bindings(self._current_phase)
-            self._switch_main_panel(self._current_phase)
+            await self._switch_main_panel(self._current_phase)
 
         # Responsive layout
         self._apply_responsive_layout()
@@ -533,7 +533,7 @@ class SessionTUI(App):
                 old_phase = self._current_phase
                 self.post_message(PhaseAdvanced(old_phase, session["phase"]))
 
-    def on_phase_advanced(self, message: PhaseAdvanced) -> None:
+    async def on_phase_advanced(self, message: PhaseAdvanced) -> None:
         """Handle phase transitions."""
         self._current_phase = message.to_phase
         self._update_bindings(self._current_phase)
@@ -551,7 +551,7 @@ class SessionTUI(App):
         cpb.set_active_phase(self._current_phase)
 
         # Switch main panel
-        self._switch_main_panel(self._current_phase)
+        await self._switch_main_panel(self._current_phase)
 
         self._log("info", f"Phase: {message.from_phase} \u2192 {message.to_phase}")
 
@@ -1264,7 +1264,7 @@ class SessionTUI(App):
                 except Exception:
                     pass
 
-    def on_blocker_resolved(self, message: BlockerResolved) -> None:
+    async def on_blocker_resolved(self, message: BlockerResolved) -> None:
         """Handle BlockerResolved — restore session to active state.
 
         Updates PhaseList (removes paused icon, restores previous phase),
@@ -1293,7 +1293,7 @@ class SessionTUI(App):
         cpb.set_active_phase(self._current_phase)
 
         # Replace blocker display with phase-appropriate content
-        self._switch_main_panel(self._current_phase)
+        await self._switch_main_panel(self._current_phase)
 
         self._log("success", "Blocker resolved. Session resumed.")
 
