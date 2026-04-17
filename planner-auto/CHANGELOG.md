@@ -5,6 +5,16 @@ All notable changes to planner-auto will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-04-17
+
+### Fixed
+
+- **Dynamic revision timeout** — Revision calls now scale timeout based on plan size (120s base + 60s per 10K chars). A 25K plan gets ~270s instead of the fixed 120s that caused timeouts on later review rounds.
+- **TUI plan generation `NameError`** — `plan_ms` variable renamed to `gen_ms` but one reference was missed, crashing the generation worker on DISCUSSION → PLANNING transition.
+- **TUI session resume crash** — `sqlite3.Row` doesn't support `.get()`; replaced with direct key access for `draft["model"]`, `blocker["source"]`, `blocker["question"]`.
+
+---
+
 ## [0.6.1] - 2026-04-17
 
 ### Added
