@@ -373,6 +373,10 @@ class ReviewLoopEngine:
                     "on_revision_timeout", round_num, timeout_sec, retry_count,
                 )
 
+            # Dynamic timeout: 120s base + 60s per 10K chars of plan content
+            _plan_chars = len(revision_prompt)
+            _revision_timeout = 120 + int((_plan_chars / 10000) * 60)
+
             revised_text = await query_claude(
                 messages=[{"role": "user", "content": revision_prompt}],
                 system_prompt=_REVISION_SYSTEM_PROMPT,
@@ -382,6 +386,7 @@ class ReviewLoopEngine:
                 max_turns=self.config.get("max_turns"),
                 backend=self.config.get("claude_backend", "direct"),
                 on_timeout=_on_revision_timeout,
+                timeout_sec=_revision_timeout,
             )
             revision_latency_ms = int((time.monotonic() - _revision_t0) * 1000)
 
